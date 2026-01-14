@@ -1,198 +1,151 @@
-#include <algorithm>
+#include "crypto/threshold/tpke.hpp"
+#include "crypto/blst/P1.hpp"
+#include "crypto/blst/P2.hpp"
+#include "crypto/blst/PT.hpp"
+#include "crypto/blst/Scalar.hpp"
+#include "crypto/common.hpp"
+#include "crypto/threshold/math.hpp"
+#include "crypto/threshold/utils.hpp"
+#include <array>
 #include <cstring>
-#include <iomanip>
-#include <iostream>
-#include <random>
-#include <set>
+#include <expected>
+#include <openssl/rand.h>
+#include <span>
 #include <stdexcept>
-#include <string>
+#include <system_error>
 #include <vector>
 
-#include <openssl/aes.h>
-#include <openssl/evp.h>
-#include <openssl/rand.h>
-#include <openssl/sha.h>
+namespace Honey::Crypto::Tpke {
 
-#include "crypto/tpke.hpp"
-#include "crypto/utils.hpp"
-
-using namespace blst;
-
-namespace TPKE {
-void dealer(int l, int k, PublicKey& pk, std::vector<PrivateKeyShare>& sks)
+Ciphertext encrypt_key(const TpkeVerificationParameters& public_params,
+    std::span<const Byte, 32> symmetric_key)
 {
-    std::vector<Fr> a;
-    for (int i = 0; i < k; ++i)
-        a.push_back(Fr::random());
-    Fr secret = a[0];
+    auto random_scalar = *Scalar::random();
 
-    auto poly_eval = [&](Fr x) {
-        Fr y = Fr(0);
-        Fr xx = Fr(1);
-        for (const auto& c : a) {
-            y = y + (c * xx);
-            xx = xx * x;
-        }
-        return y;
-    };
+    P1 u = P1::generator();
+    u.mult(random_scalar);
 
-    blst::P1 VK_G1 = blst::P1::generator();
-    VK_G1.mult(secret.val);
+    P1 mask_point = public_params.master_public_key;
+    mask_point.mult(random_scalar);
+    auto mask = Utils::hashG(mask_point);
 
-    std::vector<blst::P2> VKs_G2;
-    std::vector<Fr> SKs;
+    std::vector<Byte> v = Utils::xor_bytes(
+        { symmetric_key.begin(), symmetric_key.end() }, mask);
 
-    for (int i = 1; i <= l; ++i) {
-        Fr sk = poly_eval(Fr(i));
-        SKs.push_back(sk);
+    P2 h = Utils::hashH(u, v);
+    P2 w = h;
+    w.mult(random_scalar);
 
-        blst::P2 vk_i = blst::P2::generator();
-        vk_i.mult(sk.val);
-        VKs_G2.push_back(vk_i);
-    }
-
-    pk = { l, k, VK_G1, VKs_G2 };
-    sks.clear();
-    for (int i = 0; i < l; ++i) {
-        sks.push_back({ i + 1, SKs[i], VK_G1, VKs_G2 });
-    }
+    return { u, v, w };
 }
 
-Ciphertext encrypt_key(const PublicKey& pk, const std::vector<byte>& message_32b)
-{
-    if (message_32b.size() != 32)
-        throw std::runtime_error("Message key must be 32 bytes");
-
-    Fr r = Fr::random();
-
-    blst::P1 U = blst::P1::generator();
-    U.mult(r.val);
-
-    blst::P1 mask_point = pk.vk_g1;
-    mask_point.mult(r.val);
-    std::vector<byte> mask = CryptoUtils::hashG(mask_point);
-
-    std::vector<byte> V = CryptoUtils::xor_bytes(message_32b, mask);
-
-    blst::P2 H = CryptoUtils::hashH(U, V);
-    blst::P2 W = H;
-    W.mult(r.val);
-
-    return { U, V, W };
-}
+using P1_Affine = Crypto::bls::P1_Affine;
+using P2_Affine = Crypto::bls::P2_Affine;
+using PT = Crypto::bls::PT;
 
 bool verify_ciphertext(const Ciphertext& C)
 {
     // e(g1, W) == e(U, H)
-    blst::P1_Affine g1_aff(blst::P1::generator());
-    blst::P2_Affine W_aff(C.W);
+    auto g1_aff = P1_Affine::from_P1(P1::generator());
+    auto W_aff = P2_Affine::from_P2(C.w_component);
 
-    blst::P1_Affine U_aff(C.U);
-    blst::P2_Affine H_aff(CryptoUtils::hashH(C.U, C.V));
+    auto U_aff = P1_Affine::from_P1(C.u_component);
+    auto H_aff = P2_Affine::from_P2(Utils::hashH(C.u_component, C.v_component));
 
     // PT(P2, P1) -> MillerLoop(P2, P1)
-    blst::PT lhs(W_aff, g1_aff);
+    PT lhs(W_aff, g1_aff);
     lhs.final_exp();
 
-    blst::PT rhs(H_aff, U_aff);
+    PT rhs(H_aff, U_aff);
     rhs.final_exp();
 
     return lhs.is_equal(rhs);
 }
 
-blst::P1 decrypt_share(const PrivateKeyShare& sk, const Ciphertext& C)
+DecryptionShare decrypt_share(const TpkePrivateKeyShare& private_share,
+    const Ciphertext& ciphertext)
 {
-    if (!verify_ciphertext(C))
-        throw std::runtime_error("Invalid Ciphertext");
+    // 可以在内部增加验证，或者假设调用者已验证
+    // if (!verify_ciphertext(ciphertext)) { ... }
 
-    blst::P1 Ui = C.U;
-    Ui.mult(sk.sk.val);
-    return Ui;
+    DecryptionShare share_ui = ciphertext.u_component;
+    share_ui.mult(private_share.secret);
+    return share_ui;
 }
-bool verify_share(const PublicKey& pk, int id, const Ciphertext& C, const blst::P1& Ui)
+
+bool verify_share(const TpkeVerificationParameters& public_params,
+    const PartialDecryption& decryption,
+    const Ciphertext& ciphertext)
 {
-    if (id < 1 || id > pk.l)
+    int id = decryption.player_id;
+    if (id < 1 || id > public_params.total_players)
         return false;
 
-    // e(Ui, g2) == e(U, Y_i)
-    blst::P1_Affine Ui_aff(Ui);
-    blst::P2_Affine g2_aff(blst::P2::generator());
+    auto ui_aff = P1_Affine::from_P1(decryption.value);
+    auto g2_aff = P2_Affine::from_P2(P2::generator());
+    auto u_aff = P1_Affine::from_P1(ciphertext.u_component);
+    auto yi_aff = P2_Affine::from_P2(public_params.verification_vector[id - 1]);
 
-    blst::P1_Affine U_aff(C.U);
-    blst::P2_Affine Yi_aff(pk.vks_g2[id - 1]);
-
-    blst::PT lhs(g2_aff, Ui_aff);
+    PT lhs(g2_aff, ui_aff);
     lhs.final_exp();
-
-    blst::PT rhs(Yi_aff, U_aff);
+    PT rhs(yi_aff, u_aff);
     rhs.final_exp();
 
     return lhs.is_equal(rhs);
 }
 
-std::vector<byte> combine_shares(const PublicKey& pk, const Ciphertext& C,
-    const std::vector<int>& ids,
-    const std::vector<blst::P1>& shares)
-{
-    if (ids.size() != (size_t)pk.k)
-        throw std::runtime_error("Need k shares");
+namespace Hybrid {
 
-    std::set<int> S(ids.begin(), ids.end());
-    blst::P1 res_point; // Identity
+    HybridCiphertext encrypt(const TpkeVerificationParameters& public_params,
+        BytesSpan plaintext)
+    {
+        std::array<Byte, 32> session_key;
+        RAND_bytes(session_key.data(), session_key.size());
 
-    for (size_t i = 0; i < ids.size(); ++i) {
-        int id = ids[i];
+        Ciphertext key_ciphertext = encrypt_key(public_params, session_key);
 
-        Fr num = Fr(1);
-        Fr den = Fr(1);
-        for (int jj : S) {
-            if (jj == id)
-                continue;
-            num = num * (Fr(0) - Fr(jj));
-            den = den * (Fr(id) - Fr(jj));
-        }
-        Fr coeff = num * den.inverse();
+        std::vector<Byte> pt_bytes(plaintext.begin(), plaintext.end());
+        std::vector<Byte> data_ciphertext = Utils::aes_encrypt({ session_key.begin(), session_key.end() }, pt_bytes);
 
-        blst::P1 part = shares[i];
-        part.mult(coeff.val);
-        res_point.add(part);
+        return { key_ciphertext, data_ciphertext };
     }
+    [[nodiscard]]
+    auto decrypt(const TpkeVerificationParameters& public_params,
+        const HybridCiphertext& ciphertext,
+        std::span<const PartialDecryption> shares)
+        -> std::expected<std::vector<Byte>, std::error_code>
+    {
+        // 1. 检查份额数量是否达到门限
+        if (shares.size() < static_cast<size_t>(public_params.threshold)) {
+            // Use a more specific error code if you have one
+            return std::unexpected(std::make_error_code(std::errc::message_size));
+        }
 
-    std::vector<byte> mask = CryptoUtils::hashG(res_point);
-    return CryptoUtils::xor_bytes(C.V, mask);
+        // 2. **调用通用数学工具进行拉格朗日插值**
+        //    这是一个零拷贝调用，直接在解密份额上操作。
+        auto interpolation_result = Crypto::Math::interpolate_at_zero(shares);
+        if (!interpolation_result) {
+            // Propagate the error from the math function (e.g., duplicate IDs)
+            return std::unexpected(interpolation_result.error());
+        }
+        // 我们得到了恢复出的 G1 点: r * P_pub
+        const P1& recovered_point = *interpolation_result;
+
+        // 3. 从恢复的点计算出对称密钥的掩码 (mask)
+        Utils::Hash256 mask = Utils::hashG(recovered_point);
+
+        // 4. 使用掩码恢复出会话密钥
+        std::vector<Byte> session_key = Utils::xor_bytes(
+            ciphertext.key_ciphertext.v_component,
+            mask);
+
+        // 5. 使用恢复的会话密钥解密最终的数据
+        try {
+            return Utils::aes_decrypt(session_key, ciphertext.data_ciphertext);
+        } catch (const std::runtime_error& e) {
+            // If AES decrypt fails (e.g., bad padding), return an error.
+            return std::unexpected(std::make_error_code(std::errc::illegal_byte_sequence));
+        }
+    }
 }
-};
-
-namespace HybridEnc {
-HybridCiphertext encrypt(const TPKE::PublicKey& pk,
-    const std::string& plaintext)
-{
-    std::vector<byte> session_key(32);
-    RAND_bytes(session_key.data(), 32);
-
-    TPKE::Ciphertext c_key = TPKE::encrypt_key(pk, session_key);
-
-    std::vector<byte> pt_bytes(plaintext.begin(), plaintext.end());
-    std::vector<byte> c_data = CryptoUtils::aes_encrypt(session_key, pt_bytes);
-
-    return { c_key, c_data };
-}
-
-std::string decrypt(const TPKE::PublicKey& pk,
-    const HybridCiphertext& hc,
-    const std::vector<int>& ids,
-    const std::vector<blst::P1>& shares)
-{
-    std::vector<byte> session_key = TPKE::combine_shares(pk, hc.tpke_c, ids, shares);
-    std::vector<byte> pt_bytes = CryptoUtils::aes_decrypt(session_key, hc.aes_c);
-    return std::string(pt_bytes.begin(), pt_bytes.end());
-}
-};
-
-void print_hex(const std::string& label, const std::vector<byte>& data)
-{
-    std::cout << label << ": ";
-    for (byte b : data)
-        std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)b;
-    std::cout << std::dec << std::endl;
 }

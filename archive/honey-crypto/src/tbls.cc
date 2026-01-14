@@ -1,151 +1,114 @@
-#include <algorithm>
+#include "crypto/threshold/tbls.hpp"
+#include "crypto/blst/P1.hpp"
+#include "crypto/blst/P2.hpp"
+#include "crypto/blst/Scalar.hpp"
+#include "crypto/common.hpp"
+#include "crypto/threshold/math.hpp"
+#include <blst.h>
 #include <cstring>
 #include <expected>
-#include <iostream>
-#include <random>
-#include <ranges>
-#include <set>
-#include <stdexcept>
+#include <span>
 #include <string>
+#include <system_error>
 #include <vector>
 
-#include "crypto/tbls.hpp"
+namespace Honey::Crypto::Tbls {
+using Scalar = Honey::Crypto::bls::Scalar;
+using P1_Affine = Honey::Crypto::bls::P1_Affine;
+using P2_Affine = Honey::Crypto::bls::P2_Affine;
 
-using blst::byte;
+namespace {
+    // 优化：使用 Horner's Rule (霍纳法则) 减少乘法次数
+    // poly = a0 + a1*x + ... + an*x^n
+    //      = a0 + x(a1 + x(a2 + ...))
+    [[nodiscard]]
+    inline Scalar polynom_eval(const Scalar& x, std::span<const Scalar> coeffs)
+    {
+        if (coeffs.empty())
+            return Scalar::from_uint64(0);
 
-namespace TBLS {
+        // 从高次项开始计算
+        // result = coeffs[n]
+        // result = result * x + coeffs[n-1]
+        // ...
+        Scalar res = coeffs.back();
+        for (auto it = coeffs.rbegin() + 1; it != coeffs.rend(); ++it) {
+            res = res * x + (*it);
+        }
+        return res;
+    }
+
+}
 
 namespace Constants {
-    constexpr std::string_view DST_SIG = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
+    inline const std::string DST_SIG = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
 }
 
+// 生成签名份额
 [[nodiscard]]
-auto dealer(int players, int k) -> std::expected<DealerResult, std::error_code>
+PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message)
 {
-    if (k < 1 || k > players)
-        return std::unexpected(Error::InvalidThreshold);
-    if (players < 1)
-        return std::unexpected(Error::InvalidPlayerCount);
+    auto h = P1::from_hash(message, as_span(Constants::DST_SIG));
 
-    std::vector<Fr> a;
-    a.reserve(k);
-    for (int i = 0; i < k; ++i)
-        a.push_back(Fr::random());
+    h.sign_with(share.secret);
 
-    Fr secret = a[0];
-
-    auto sk_view = std::views::iota(1, players + 1)
-        | std::views::transform([&](int i) {
-              return TBLSMath::polynom_eval(Fr(i), a);
-          });
-
-    std::vector<Fr> SKs = std::ranges::to<std::vector<Fr>>(sk_view);
-
-    blst::P2 VK = blst::P2::generator();
-    VK.mult(secret.val);
-
-    auto vk_view = SKs | std::views::transform([](const Fr& sk) {
-        blst::P2 v = blst::P2::generator();
-        v.mult(sk.val);
-        return v;
-    });
-    std::vector<blst::P2> VKs(vk_view.begin(), vk_view.end());
-
-    PublicKey pk { players, k, VK, VKs };
-
-    std::vector<PrivateKeyShare> sks;
-    sks.reserve(players);
-    for (int i = 0; i < players; ++i) {
-        sks.push_back(PrivateKeyShare { i + 1, SKs[i], VK, VKs });
-    }
-
-    return DealerResult { std::move(pk), std::move(sks) };
+    return PartialSignature {
+        .player_id = share.player_id,
+        .value = h,
+    };
 }
 
-// 签名 (Hash to G1 * SK)
-blst::P1 sign_share(const PrivateKeyShare& sk_share, const std::string& msg)
-{
-    const std::string DST = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
-    blst::P1 h;
-    // 使用 hash_to 接口
-    h.hash_to((const byte*)msg.data(), msg.size(), DST);
-    // 签名 = h * sk
-    h.sign_with(sk_share.sk.val);
-    return h;
-
-    // blst::P1 h;
-    // // data() 返回 const char*, cast 为 const byte*
-    // h.hash_to(reinterpret_cast<const byte*>(msg.data()), msg.size(),
-    //     Constants::DST_SIG.data(), Constants::DST_SIG.size());
-    // h.sign_with(sk_share.sk.val);
-    // return h;
-}
-
-[[nodiscard]]
-auto verify_share(const PublicKey& pk, int id, std::string_view msg, const blst::P1& sig)
+// 验证单个签名份额
+[[nodiscard]] auto verify_share(
+    const TblsVerificationParameters& params,
+    const SignatureShare& partial_sig,
+    BytesSpan message,
+    int player_id )
     -> std::expected<void, std::error_code>
 {
-    if (id < 1 || id > pk.l) {
+    if (player_id < 1 || player_id > params.total_players) {
         return std::unexpected(Error::InvalidShareID);
     }
-    const std::string DST = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
 
     // blst 需要 Affine 坐标进行 verify
-    blst::P1_Affine sig_affine(sig);
-    blst::P2_Affine pk_affine(pk.vks[id - 1]);
+    auto sig_affine = P1_Affine::from_P1(partial_sig);
+    auto pk_affine = P2_Affine::from_P2(params.verification_vector[player_id - 1]);
 
-    blst::BLST_ERROR err = sig_affine.core_verify(pk_affine, true, (const byte*)msg.data(), msg.size(), DST);
+    BLST_ERROR err = sig_affine.core_verify(pk_affine, true, message, as_span(Constants::DST_SIG));
 
-    if (err != blst::BLST_SUCCESS) {
+    if (err != BLST_SUCCESS) {
         return std::unexpected(Error::ShareVerificationFailed);
     }
     return {}; // Success
 }
 
 [[nodiscard]]
-auto combine_shares(const PublicKey& pk,
-    std::span<const int> ids,
-    std::span<const blst::P1> sigs)
-    -> std::expected<blst::P1, std::error_code>
+auto combine_partial_signatures(
+    const TblsVerificationParameters& public_params,
+    std::span<const PartialSignature> partial_signatures)
+    -> std::expected<Signature, std::error_code>
 {
-    // 检查数量是否达到门限 k
-    if (ids.size() != static_cast<size_t>(pk.k)) {
-        return std::unexpected(Error::NotEnoughShares);
-    }
-    if (ids.size() != sigs.size()) {
-        return std::unexpected(Error::MismatchedIdsAndSigs);
+    if (partial_signatures.size() != static_cast<size_t>(public_params.threshold)) {
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
-    blst::P1 master_sig;
-
-    for (const auto& [id, sig] : std::views::zip(ids, sigs)) {
-
-        if (id < 1 || id > pk.l)
-            return std::unexpected(Error::InvalidShareID);
-
-        Fr coeff = TBLSMath::lagrange_coeff(ids, id);
-
-        blst::P1 part = sig;
-        part.mult(coeff.val);
-        master_sig.add(part);
-    }
-
-    return master_sig;
+    return Crypto::Math::interpolate_at_zero(partial_signatures);
 }
 
 [[nodiscard]]
-auto verify_signature(const PublicKey& pk, std::string_view msg, const blst::P1& sig)
+auto verify_signature(const TblsVerificationParameters& params,
+    BytesSpan message,
+    const Signature& signature)
     -> std::expected<void, std::error_code>
 {
-    const std::string DST = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
 
-    blst::P1_Affine sig_affine(sig);
-    blst::P2_Affine pk_affine(pk.vk);
+    auto sig_affine = P1_Affine::from_P1(signature);
+    auto pk_affine = P2_Affine::from_P2(params.master_public_key);
 
-    blst::BLST_ERROR err = sig_affine.core_verify(
-        pk_affine, true, (const byte*)msg.data(), msg.size(), DST);
+    BLST_ERROR err = sig_affine.core_verify(
+        pk_affine, true, message, as_span(Constants::DST_SIG));
 
-    if (err != blst::BLST_SUCCESS) {
+    if (err != BLST_SUCCESS) {
         return std::unexpected(Error::SignatureVerificationFailed);
     }
     return {};

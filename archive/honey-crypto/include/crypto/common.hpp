@@ -1,60 +1,22 @@
-#include <algorithm>
-#include <cstring>
-#include <expected>
-#include <iostream>
-#include <random>
-#include <ranges>
-#include <set>
-#include <stdexcept>
+#pragma once
+
+#include <cstdint>
+#include <span>
 #include <string>
 #include <system_error>
-#include <vector>
 
-#include "Fr.hpp"
+namespace Honey::Crypto{
+using Byte = uint8_t;
+using BytesSpan = std::span<const Byte>;
 
-namespace TBLS {
-using blst::byte;
-
-struct PrivateKeyShare {
-    int id;
-    Fr sk;
-    blst::P2 vk; // Master Public Key
-    std::vector<blst::P2> vks; // Verification Vector
-};
-
-struct PublicKey {
-    int l, k;
-    blst::P2 vk;
-    std::vector<blst::P2> vks;
-};
-
-struct DealerResult {
-    PublicKey pk;
-    std::vector<PrivateKeyShare> sks;
-};
-
-[[nodiscard]]
-auto dealer(int players, int k) -> std::expected<DealerResult, std::error_code>;
-;
-
-blst::P1 sign_share(const PrivateKeyShare& sk_share, const std::string& msg);
-
-[[nodiscard]]
-auto verify_share(const PublicKey& pk, int id, std::string_view msg, const blst::P1& sig)
-    -> std::expected<void, std::error_code>;
-
-[[nodiscard]]
-auto combine_shares(const PublicKey& pk, std::span<const int> ids, std::span<const blst::P1> sigs) -> std::expected<blst::P1, std::error_code>;
-
-// 验证主签名
-[[nodiscard]]
-auto verify_signature(const PublicKey& pk, std::string_view msg, const blst::P1& sig)
-    -> std::expected<void, std::error_code>;
+inline BytesSpan as_span(const std::string& s)
+{
+    return BytesSpan(reinterpret_cast<const Byte*>(s.data()), s.size());
+}
+namespace Utils {
+    std::array<uint8_t, 32> sha256(BytesSpan data);
 }
 
-namespace TBLS {
-
-// 1. 定义错误枚举
 enum class Error {
     Success = 0,
     InvalidThreshold, // K 值不合法
@@ -64,7 +26,8 @@ enum class Error {
     SignatureVerificationFailed, // 主签名验证失败
     NotEnoughShares, // 聚合时份额数量不足
     MismatchedIdsAndSigs, // ID 列表和签名列表长度不一致
-    OpenSSLError // 随机数生成失败
+    OpenSSLError, // 随机数生成失败
+    DuplicatePlayerID
 };
 
 class TBLSErrorCategory : public std::error_category {
@@ -108,10 +71,9 @@ inline std::error_code make_error_code(Error e)
 {
     return { static_cast<int>(e), tbls_category() };
 }
-
-} // namespace TBLS
+}
 
 namespace std {
 template <>
-struct is_error_code_enum<TBLS::Error> : true_type { };
+struct is_error_code_enum<Honey::Crypto::Error> : true_type { };
 }

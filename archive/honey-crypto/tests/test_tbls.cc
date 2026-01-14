@@ -3,82 +3,82 @@
 #include <string>
 #include <vector>
 
-#include "crypto/tbls.hpp"
+#include "crypto/threshold/tbls.hpp"
 
-using namespace blst;
+using namespace Honey::Crypto;
+using namespace Honey::Crypto::Tbls;
 
 TEST(TBLS_Test, EndToEndFlow)
 {
     constexpr int N = 10;
     constexpr int K = 5;
 
-    auto result = TBLS::dealer(N, K);
-    ASSERT_TRUE(result.has_value()) << "Dealer setup failed: " << result.error();
+    auto result = Honey::Crypto::Tbls::generate_keys(N, K);
+    ASSERT_TRUE(result.has_value()) << "Key generation failed";
 
-    const auto [pk, sks] = std::move(result.value());
+    const auto& kg = result.value();
+    const auto& params = kg.public_params;
+    const auto& shares = kg.private_shares;
 
-    EXPECT_EQ(pk.l, N);
-    EXPECT_EQ(pk.k, K);
-    EXPECT_EQ(sks.size(), N);
+    EXPECT_EQ(params.total_players, N);
+    EXPECT_EQ(params.threshold, K);
+    EXPECT_EQ(shares.size(), N);
 
     std::string msg = "HoneyBadger-GTest";
-    std::vector<int> signers = { 1, 2, 3, 4, 5 };
-    std::vector<blst::P1> shares;
 
-    for (int id : signers) {
-        auto sig = TBLS::sign_share(sks[id - 1], msg);
+    std::vector<Honey::Crypto::Tbls::PartialSignature> partials;
 
-        // 验证签名份额
-        auto verify_result = TBLS::verify_share(pk, id, msg, sig);
-        EXPECT_TRUE(verify_result) << "Share verification failed for signer " << id
-                                   << ": " << verify_result.error().message();
-        shares.push_back(sig);
+    for (int id = 1; id <= K; ++id) {
+        auto ps = Honey::Crypto::Tbls::sign_share(shares[id - 1], as_span(msg));
+
+        auto verify = Honey::Crypto::Tbls::verify_share(
+            params, ps.value, as_span(msg), ps.player_id);
+
+        EXPECT_TRUE(verify)
+            << "Partial verification failed for player " << id;
+
+        partials.push_back(std::move(ps));
     }
 
-    // 3. 组合签名份额
-    ASSERT_EQ(shares.size(), K);
-    auto combined_result = TBLS::combine_shares(pk, signers, shares);
+    ASSERT_EQ(partials.size(), K);
 
-    ASSERT_TRUE(combined_result.has_value())
-        << "Combine shares failed: " << combined_result.error().message();
+    auto combined = Honey::Crypto::Tbls::combine_partial_signatures(
+        params, partials);
 
-    blst::P1 combined_sig = std::move(combined_result.value());
+    ASSERT_TRUE(combined.has_value())
+        << "Combine failed";
 
-    auto master_verify_result = TBLS::verify_signature(pk, msg, combined_sig);
-    EXPECT_TRUE(master_verify_result)
-        << "Master signature verification failed: "
-        << master_verify_result.error().message();
+    auto verify_master = Honey::Crypto::Tbls::verify_signature(
+        params, as_span(msg), combined.value());
 
-    byte buf[48];
-    combined_sig.compress(buf);
+    EXPECT_TRUE(verify_master)
+        << "Master signature verification failed";
 }
-
 TEST(TBLS_Test, NotEnoughShares)
 {
     constexpr int N = 10;
     constexpr int K = 5;
 
-    auto result = TBLS::dealer(N, K);
-    ASSERT_TRUE(result.has_value()) << "Dealer setup failed";
+    auto result = Honey::Crypto::Tbls::generate_keys(N, K);
+    ASSERT_TRUE(result.has_value());
 
-    const auto [pk, sks] = std::move(result.value());
+    const auto& params = result->public_params;
+    const auto& shares = result->private_shares;
 
     std::string msg = "FailTest";
-    std::vector<int> signers = { 1, 2 };
-    std::vector<blst::P1> shares;
 
-    for (int id : signers) {
-        shares.push_back(TBLS::sign_share(sks[id - 1], msg));
+    std::vector<Honey::Crypto::Tbls::PartialSignature> partials;
+
+    for (int id = 1; id <= 2; ++id) {
+        partials.push_back(
+            Honey::Crypto::Tbls::sign_share(shares[id - 1], as_span(msg)));
     }
 
-    auto combined_result = TBLS::combine_shares(pk, signers, shares);
+    auto combined = Honey::Crypto::Tbls::combine_partial_signatures(
+        params, partials);
 
-    EXPECT_FALSE(combined_result.has_value())
-        << "Combine should fail with insufficient shares";
-
-    if (!combined_result.has_value()) {
-        std::cout << "Expected error: " << combined_result.error().message() << std::endl;
-    }
+    EXPECT_FALSE(combined.has_value());
+    EXPECT_EQ(combined.error(), Honey::Crypto::Error::NotEnoughShares);
 }
 
 TEST(TBLS_Test, InvalidShareVerification)
@@ -86,18 +86,71 @@ TEST(TBLS_Test, InvalidShareVerification)
     constexpr int N = 10;
     constexpr int K = 5;
 
-    auto result = TBLS::dealer(N, K);
+    auto result = Honey::Crypto::Tbls::generate_keys(N, K);
     ASSERT_TRUE(result.has_value());
 
-    const auto [pk, sks] = std::move(result.value());
+    const auto& params = result->public_params;
+    const auto& shares = result->private_shares;
 
-    std::string msg = "TestMessage";
+    std::string msg = "CorrectMessage";
     std::string wrong_msg = "WrongMessage";
 
-    auto sig = TBLS::sign_share(sks[0], msg);
+    auto ps = Honey::Crypto::Tbls::sign_share(shares[0], as_span(msg));
 
-    auto verify_result = TBLS::verify_share(pk, 1, wrong_msg, sig);
+    auto verify = Honey::Crypto::Tbls::verify_share(params,ps.value, as_span(wrong_msg),ps.player_id);
 
-    EXPECT_FALSE(verify_result)
-        << "Should fail when verifying with wrong message";
+    EXPECT_FALSE(verify);
+    EXPECT_EQ(verify.error(), Error::ShareVerificationFailed);
+}
+
+TEST(TBLS_Test, DuplicatePlayerIds)
+{
+    constexpr int N = 5;
+    constexpr int K = 3;
+
+    auto result = Honey::Crypto::Tbls::generate_keys(N, K);
+    ASSERT_TRUE(result.has_value());
+
+    const auto& params = result->public_params;
+    const auto& shares = result->private_shares;
+
+    std::string msg = "DupTest";
+
+    auto p1 = Honey::Crypto::Tbls::sign_share(shares[0], as_span(msg));
+    auto p2 = Honey::Crypto::Tbls::sign_share(shares[0], as_span(msg));
+    auto p3 = Honey::Crypto::Tbls::sign_share(shares[1], as_span(msg));
+
+    std::vector<Honey::Crypto::Tbls::PartialSignature> partials {
+        p1, p2, p3
+    };
+
+    auto combined = Honey::Crypto::Tbls::combine_partial_signatures(
+        params, partials);
+
+    EXPECT_FALSE(combined.has_value());
+}
+
+TEST(TBLS_Test, InvalidPlayerId)
+{
+    constexpr int N = 5;
+    constexpr int K = 3;
+
+    auto result = Honey::Crypto::Tbls::generate_keys(N, K);
+    ASSERT_TRUE(result.has_value());
+
+    auto params = result->public_params;
+    auto shares = result->private_shares;
+
+    std::string msg = "BadId";
+
+    auto ps = Honey::Crypto::Tbls::sign_share(shares[0], as_span(msg));
+    ps.player_id = N + 1;
+
+    std::vector<Honey::Crypto::Tbls::PartialSignature> partials { ps };
+
+    auto combined = Honey::Crypto::Tbls::combine_partial_signatures(
+        params, partials);
+
+    EXPECT_FALSE(combined.has_value());
+    EXPECT_EQ(combined.error(), Error::InvalidShareID);
 }

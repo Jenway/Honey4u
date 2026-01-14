@@ -12,21 +12,23 @@ include(BuildBlst)
 add_blst_library(libs/blst)
 
 
-add_library(hbft_crypto STATIC
+add_library(honey_crypto STATIC
     src/ecdsa.cc
     src/tbls.cc
     src/tpke.cc
+    src/blst.cc
+    src/utils.cc
 )
 
-add_library(HBFT::Crypto ALIAS hbft_crypto)
+add_library(Honey::Crypto ALIAS honey_crypto)
 
-target_include_directories(hbft_crypto
+target_include_directories(honey_crypto
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(hbft_crypto
+target_link_libraries(honey_crypto
     PUBLIC
         OpenSSL::Crypto
         blst::blst

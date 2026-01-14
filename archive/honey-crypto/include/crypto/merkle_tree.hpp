@@ -3,7 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
-#include <span> // C++20
+#include <span>
 #include <vector>
 
 namespace Honey::Crypto {
