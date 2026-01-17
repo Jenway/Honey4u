@@ -1,0 +1,31 @@
+CompileFlags:
+  CompilationDatabase: "build"
+
+  Add: [
+    "-std=c++23",
+    "-Wall",
+    "-Wno-unknown-pragmas"
+  ]
+  Compiler: g++
+Diagnostics:
+  ClangTidy:
+    Add: [
+      "*"
+      ]
+    Remove: [
+      altera-*,
+      boost-use-*,
+      fuchsia-*,
+      google-readability-braces-around-statements,
+      modernize-use-trailing-return-type,
+      readability-identifier-naming,
+      readability-identifier-length,
+      llvmlibc-*,
+      misc-non-private-member-*
+      ]
+    CheckOptions:
+      readability-identifier-naming.VariableCase: CamelCase
+  UnusedIncludes: Strict
+
+Index:
+  Background: Build
