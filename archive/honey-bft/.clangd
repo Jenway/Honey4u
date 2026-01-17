@@ -20,6 +20,8 @@ Diagnostics:
       modernize-use-trailing-return-type,
       readability-identifier-naming,
       readability-identifier-length,
+      readability-braces-around-statements,
+      hicpp-braces-around-statements,
       llvmlibc-*,
       misc-non-private-member-*
       ]
