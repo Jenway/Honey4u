@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "crypto/threshold/tpke.hpp"
+#include "crypto/threshold/utils.hpp"
 
 using namespace Honey::Crypto;
 using namespace Honey::Crypto::Tpke;
@@ -19,20 +20,22 @@ protected:
 
     static std::vector<Byte> string_to_bytes(const std::string& str)
     {
-        return { str.begin(), str.end() };
+        auto view = str | std::views::transform([](char c) { return static_cast<Byte>(c); });
+        return { view.begin(), view.end() };
     }
 
     const int N = 5;
     const int K = 3;
 
     std::optional<TpkeKeySet> key_set_;
+    Utils::AesContext ctx;
 };
 
 TEST_F(TpkeTest, HybridEncryptionDecryptionFlow)
 {
     // 1. Encrypt
     const std::string secret_msg = "HoneyBadger BFT is robust!";
-    HybridCiphertext hc = Hybrid::encrypt(key_set_->public_params, string_to_bytes(secret_msg));
+    HybridCiphertext hc = Hybrid::encrypt(ctx,key_set_->public_params, string_to_bytes(secret_msg));
 
     // A basic sanity check on the ciphertext
     EXPECT_FALSE(hc.data_ciphertext.empty());
@@ -65,7 +68,7 @@ TEST_F(TpkeTest, HybridEncryptionDecryptionFlow)
 
     // 3. Combine & Decrypt
     // CHANGE: Call the new, streamlined Hybrid::decrypt function.
-    auto decrypted_result = Hybrid::decrypt(key_set_->public_params, hc, decryption_shares);
+    auto decrypted_result = Hybrid::decrypt(ctx,key_set_->public_params, hc, decryption_shares);
 
     // 4. Verify the result
     // CHANGE: Check the std::expected for a value.
@@ -78,7 +81,7 @@ TEST_F(TpkeTest, DecryptionFailsWithBadShare)
 {
     // 1. Encrypt
     const std::string secret_msg = "This should not be decrypted";
-    HybridCiphertext hc = Hybrid::encrypt(key_set_->public_params, string_to_bytes(secret_msg));
+    HybridCiphertext hc = Hybrid::encrypt(ctx,key_set_->public_params, string_to_bytes(secret_msg));
 
     // 2. Generate K shares, but one is intentionally bad
     std::vector<PartialDecryption> shares;
@@ -95,7 +98,7 @@ TEST_F(TpkeTest, DecryptionFailsWithBadShare)
     EXPECT_FALSE(verify_share(key_set_->public_params, bad_partial_decryption, hc.key_ciphertext));
 
     // 3. Attempt to decrypt with the corrupted set of shares
-    auto decrypted_result = Hybrid::decrypt(key_set_->public_params, hc, shares);
+    auto decrypted_result = Hybrid::decrypt(ctx,key_set_->public_params, hc, shares);
 
     // 4. Verify that decryption failed
     // CHANGE: The new API returns an empty std::expected, which is a much cleaner
@@ -106,7 +109,7 @@ TEST_F(TpkeTest, DecryptionFailsWithBadShare)
 TEST_F(TpkeTest, DecryptionFailsWithNotEnoughShares)
 {
     const std::string secret_msg = "Fewer than K shares";
-    HybridCiphertext hc = Hybrid::encrypt(key_set_->public_params, string_to_bytes(secret_msg));
+    HybridCiphertext hc = Hybrid::encrypt(ctx,key_set_->public_params, string_to_bytes(secret_msg));
 
     // Generate only K-1 shares
     std::vector<PartialDecryption> shares;
@@ -116,7 +119,7 @@ TEST_F(TpkeTest, DecryptionFailsWithNotEnoughShares)
     ASSERT_EQ(shares.size(), K - 1);
 
     // Attempt to decrypt
-    auto decrypted_result = Hybrid::decrypt(key_set_->public_params, hc, shares);
+    auto decrypted_result = Hybrid::decrypt(ctx,key_set_->public_params, hc, shares);
 
     // Expect failure
     EXPECT_FALSE(decrypted_result.has_value());
@@ -127,7 +130,7 @@ TEST_F(TpkeTest, DecryptionFailsWithNotEnoughShares)
 TEST_F(TpkeTest, DecryptionFailsWithDuplicateShare)
 {
     const std::string secret_msg = "Duplicate shares are invalid";
-    HybridCiphertext hc = Hybrid::encrypt(key_set_->public_params, string_to_bytes(secret_msg));
+    HybridCiphertext hc = Hybrid::encrypt(ctx,key_set_->public_params, string_to_bytes(secret_msg));
 
     std::vector<PartialDecryption> shares;
     // Add share from player 1
@@ -139,7 +142,7 @@ TEST_F(TpkeTest, DecryptionFailsWithDuplicateShare)
 
     ASSERT_EQ(shares.size(), K);
 
-    auto decrypted_result = Hybrid::decrypt(key_set_->public_params, hc, shares);
+    auto decrypted_result = Hybrid::decrypt(ctx,key_set_->public_params, hc, shares);
     EXPECT_FALSE(decrypted_result.has_value());
 }
 

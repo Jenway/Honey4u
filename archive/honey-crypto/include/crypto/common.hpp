@@ -1,86 +1,98 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
-#include <system_error>
 
-namespace Honey::Crypto{
-using Byte = uint8_t;
+namespace Honey::Crypto {
+
+using Byte = std::byte;
 using BytesSpan = std::span<const Byte>;
+using MutableBytesSpan = std::span<Byte>;
+using Hash256 = std::array<Byte, 32>;
 
-inline BytesSpan as_span(const std::string& s)
-{
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    return {reinterpret_cast<const Byte*>(s.data()), s.size()};
+namespace Utils {
+    Hash256 sha256(BytesSpan data);
 }
+
+// inline BytesSpan as_span(const std::string& s)
+// {
+//     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+//     return { reinterpret_cast<const Byte*>(s.data()), s.size() };
+// }
 inline BytesSpan as_span(std::string_view s) noexcept
 {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    return {reinterpret_cast<const Byte*>(s.data()), s.size()};
+    return { reinterpret_cast<const Byte*>(s.data()), s.size() };
+}
+
+// =============================================================================
+// Byte Casting Helpers (std::byte <-> uint8_t)
+// =============================================================================
+
+// 将 std::span<const std::byte> 转为 const uint8_t* (用于传给 blst 读)
+inline const uint8_t* u8ptr(std::span<const std::byte> s)
+{
+    return reinterpret_cast<const uint8_t*>(s.data());
+}
+
+// 将 std::span<const uint8_t> 转为 const uint8_t* (重载，方便直接透传)
+inline const uint8_t* u8ptr(std::span<const uint8_t> s)
+{
+    return s.data();
+}
+
+// 将 void* 转为 uint8_t* (通用转换)
+inline const uint8_t* u8ptr(const void* ptr)
+{
+    return reinterpret_cast<const uint8_t*>(ptr);
+}
+
+// 可变版本 (用于传给 blst 写)
+inline uint8_t* u8ptr(std::span<std::byte> s)
+{
+    return reinterpret_cast<uint8_t*>(s.data());
+}
+
+inline uint8_t* u8ptr(std::span<uint8_t> s)
+{
+    return s.data();
+}
+// 转换 std::byte* -> uint8_t* (C API 需要)
+inline const uint8_t* u8ptr(const std::byte* ptr)
+{
+    return reinterpret_cast<const uint8_t*>(ptr);
+}
+
+inline uint8_t* u8ptr(std::byte* ptr)
+{
+    return reinterpret_cast<uint8_t*>(ptr);
 }
 
 namespace Utils {
-    std::array<uint8_t, 32> sha256(BytesSpan data);
-}
 
-enum class Error {
-    Success = 0,
-    InvalidThreshold, // K 值不合法
-    InvalidPlayerCount, // N 值不合法
-    InvalidShareID, // ID 超出范围或不合法
-    ShareVerificationFailed, // 份额验证失败
-    SignatureVerificationFailed, // 主签名验证失败
-    NotEnoughShares, // 聚合时份额数量不足
-    MismatchedIdsAndSigs, // ID 列表和签名列表长度不一致
-    OpenSSLError, // 随机数生成失败
-    DuplicatePlayerID
-};
-
-class TBLSErrorCategory : public std::error_category {
-public:
-    const char* name() const noexcept override { return "TBLS"; }
-
-    std::string message(int ev) const override
+    template <size_t N>
+    constexpr std::array<std::byte, N> make_bytes(const uint8_t (&arr)[N])
     {
-        switch (static_cast<Error>(ev)) {
-        case Error::Success:
-            return "Success";
-        case Error::InvalidThreshold:
-            return "Threshold k must be between 1 and players";
-        case Error::InvalidPlayerCount:
-            return "Player count must be positive";
-        case Error::InvalidShareID:
-            return "Share ID is out of valid range";
-        case Error::ShareVerificationFailed:
-            return "Share verification failed";
-        case Error::SignatureVerificationFailed:
-            return "Master signature verification failed";
-        case Error::NotEnoughShares:
-            return "Not enough shares to reconstruct signature";
-        case Error::MismatchedIdsAndSigs:
-            return "IDs and Signatures count mismatch";
-        case Error::OpenSSLError:
-            return "OpenSSL RNG failure";
-        default:
-            return "Unknown TBLS error";
+        std::array<std::byte, N> res {};
+        for (size_t i = 0; i < N; ++i) {
+            res[i] = static_cast<std::byte>(arr[i]);
         }
+        return res;
     }
-};
 
-inline const std::error_category& tbls_category()
-{
-    static TBLSErrorCategory instance;
-    return instance;
-}
+    // 或者支持 initializer_list 的版本（更灵活）
+    template <size_t N>
+    constexpr std::array<std::byte, N> make_bytes(std::initializer_list<uint8_t> l)
+    {
+        std::array<std::byte, N> res {};
+        auto it = l.begin();
+        for (size_t i = 0; i < N && it != l.end(); ++i, ++it) {
+            res[i] = static_cast<std::byte>(*it);
+        }
+        return res;
+    }
+} // namespace Utils
 
-inline std::error_code make_error_code(Error e)
-{
-    return { static_cast<int>(e), tbls_category() };
-}
-}  // namespace Honey::Crypto
-
-namespace std {
-template <>
-struct is_error_code_enum<Honey::Crypto::Error> : true_type { };
-} // namespace std
+} // namespace Honey::Crypto

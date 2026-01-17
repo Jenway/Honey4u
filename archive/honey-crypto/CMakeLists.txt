@@ -13,10 +13,15 @@ add_blst_library(libs/blst)
 
 
 add_library(honey_crypto STATIC
+    src/blst/scalar.cc
+    src/blst/p1.cc
+    src/blst/p1_affine.cc
+    src/blst/p2.cc
+    src/blst/p2_affine.cc
+    src/blst/pt.cc
     src/ecdsa.cc
     src/tbls.cc
     src/tpke.cc
-    src/blst.cc
     src/utils.cc
 )
 

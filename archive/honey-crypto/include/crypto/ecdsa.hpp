@@ -2,39 +2,41 @@
 
 #include <array>
 #include <expected>
-#include <memory>
-#include <string>
-
-#include <secp256k1.h>
+#include <system_error>
 
 #include "common.hpp"
 
+struct secp256k1_context_struct;
+
 namespace Honey::Crypto::Ecdsa {
 
-using PrivateKey = std::array<Byte, 32>;
+constexpr auto PRIV_KEY_SIZE = 32;
+constexpr auto PUB_KEY_SIZE = 33; // 压缩公钥必须是 33
+constexpr auto SIG_SIZE = 64; // 紧凑签名必须是 64
 
-using PublicKey = std::array<Byte, 33>;
+using PrivateKey = std::array<Byte, PRIV_KEY_SIZE>;
+using PublicKey = std::array<Byte, PUB_KEY_SIZE>;
+using Signature = std::array<Byte, SIG_SIZE>;
 
-using Signature = std::array<Byte, 64>;
+class Context {
+public:
+    Context();
+    ~Context();
 
-struct Secp256k1Deleter {
-    void operator()(secp256k1_context* ctx) const
-    {
-        if (ctx)
-            secp256k1_context_destroy(ctx);
-    }
+    Context(Context&& other) noexcept;
+    Context& operator=(Context&& other) noexcept;
+    Context(const Context&) = delete;
+    Context& operator=(const Context&) = delete;
+    [[nodiscard]] const secp256k1_context_struct* get() const { return ptr_; }
+
+private:
+    secp256k1_context_struct* ptr_ = nullptr;
 };
 
-using Context = std::unique_ptr<secp256k1_context, Secp256k1Deleter>;
-
-inline Context create_context()
-{
-    return Context(secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY));
-}
 auto sign(const Context& ctx,
     const PrivateKey& priv_key,
     BytesSpan msg)
-    -> std::expected<Signature, std::string>;
+    -> std::expected<Signature, std::error_code>;
 
 bool verify(const Context& ctx,
     const PublicKey& pub_key,
@@ -43,6 +45,6 @@ bool verify(const Context& ctx,
 
 auto get_public_key(const Context& ctx,
     const PrivateKey& priv_key)
-    -> std::expected<PublicKey, std::string>;
+    -> std::expected<PublicKey, std::error_code>;
 
-} // namespace
+}  // namespace Honey::Crypto::Ecdsa

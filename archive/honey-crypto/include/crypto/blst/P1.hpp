@@ -1,195 +1,100 @@
 #pragma once
 
-#include <cassert>
-#include <cstddef>
-#include <cstring>
-#include <span>
+#include "crypto/blst/Scalar.hpp"
+#include "crypto/common.hpp"
+#include <array>
+#include <cstdint>
 #include <expected>
-
-extern "C" {
-#include <blst.h>
-}
-#include "Scalar.hpp"
+#include <span>
+#include <system_error>
 
 namespace Honey::Crypto::bls {
 
-class P1;
 class P2_Affine;
+class P1;
 
+// =================================================================================
+// P1_Affine (G1 Affine Point)
+// Size: 96 bytes (384 bits * 2 coordinates)
+// =================================================================================
 class P1_Affine {
-private:
-    ::blst_p1_affine point;
+public:
+    // 12 * 8 = 96 bytes
+    std::array<uint64_t, 12> storage;
 
     P1_Affine() = default;
 
-    explicit P1_Affine(const blst_p1_affine& p)
-        : point(p)
-    {
-    }
-
-public:
     /* ---------- factories ---------- */
+    static std::expected<P1_Affine, std::error_code> from_bytes(BytesSpan in);
+    static P1_Affine generator();
 
-    static std::expected<P1_Affine, BLST_ERROR>
-    from_bytes(std::span<const uint8_t> in)
-    {
-        blst_p1_affine p;
-        BLST_ERROR err = blst_p1_deserialize(&p, in.data());
-        if (err != BLST_SUCCESS)
-            return std::unexpected(err);
-        return P1_Affine(p);
-    }
+    /* ---------- observers ---------- */
+    // 检查是否相等
+    friend bool operator==(const P1_Affine& a, const P1_Affine& b);
 
-    static P1_Affine generator()
-    {
-        return P1_Affine(*blst_p1_affine_generator());
-    }
-
-    P1_Affine dup() const { return *this; }
-
-
-    BLST_ERROR core_verify(
+    // 验证签名
+    // 注意：这里只使用前向声明的 P2_Affine，不需要包含 P2.hpp
+    std::error_code core_verify(
         const P2_Affine& pk,
         bool hash_or_encode,
-        std::span<const uint8_t> msg,
-        std::span<const uint8_t> dst,
-        std::span<const uint8_t> aug = {}) const;
+        BytesSpan msg,
+        BytesSpan dst,
+        BytesSpan aug = {}) const;
+
+    // 转换
     static P1_Affine from_P1(const P1& jac);
 
-private:
-    friend class P2_Affine;
-    friend class P1;
-    friend class PT;
-
-    operator const blst_p1_affine*() const { return &point; }
+    // 序列化
+    void serialize(std::span<uint8_t, 96> out) const;
+    void compress(std::span<uint8_t, 48> out) const;
 };
 
-struct P1 {
-private:
-    blst_p1 point;
+// =================================================================================
+// P1 (G1 Jacobian Point)
+// Size: 144 bytes (384 bits * 3 coordinates)
+// =================================================================================
+class P1 {
+public:
+    // 18 * 8 = 144 bytes
+    std::array<uint64_t, 18> storage;
 
     P1() = default;
 
-    explicit P1(const blst_p1& p)
-        : point(p)
-    {
-    }
-
-public:
     /* ---------- factories ---------- */
+    static P1 generator();
+    static P1 identity(); // 无穷远点/零点
+    static std::expected<P1, std::error_code> from_bytes(BytesSpan in);
+    static P1 from_affine(const P1_Affine& a);
+    static P1 from_hash(BytesSpan msg, BytesSpan dst = {});
 
-    static P1 generator()
-    {
-        return P1(*blst_p1_generator());
-    }
+    /* ---------- operators & mutators ---------- */
 
-    static std::expected<P1, BLST_ERROR>
-    from_bytes(std::span<const uint8_t> in)
-    {
-        blst_p1_affine a;
-        BLST_ERROR err = blst_p1_deserialize(&a, in.data());
-        if (err != BLST_SUCCESS)
-            return std::unexpected(err);
+    // 加法 (in-place)
+    P1& add(const P1& a);
+    P1& add(const P1_Affine& a);
+    P1& dbl(); // Double
 
-        blst_p1 p;
-        blst_p1_from_affine(&p, &a);
-        return P1(p);
-    }
+    // 标量乘法 (Scalar mul)
+    P1& mult(const Scalar& s);
 
-    static P1 from_affine(const P1_Affine& a)
-    {
-        blst_p1 p;
-        blst_p1_from_affine(&p, a);
-        return P1(p);
-    }
+    // 取反
+    P1& neg(); // in-place
+    P1 operator-() const; // return new
 
-    /* ---------- observers ---------- */
+    // 运算符重载
+    friend bool operator==(const P1& a, const P1& b);
 
-    P1 dup() const { return *this; }
-
-
-    /* ---------- mutators ---------- */
-
-    P1& add(const P1& a)
-    {
-        blst_p1_add_or_double(&point, &point, a);
-        return *this;
-    }
-
-    P1& add(const P1_Affine& a)
-    {
-        blst_p1_add_or_double_affine(&point, &point, a);
-        return *this;
-    }
-
-    P1& dbl()
-    {
-        blst_p1_double(&point, &point);
-        return *this;
-    }
-
-    P1& mult(const Scalar& s)
-    {
-        blst_p1_mult(&point, &point, s.val.b, 255);
-        return *this;
-    }
-
-    P1& cneg(bool flag)
-    {
-        blst_p1_cneg(&point, flag);
-        return *this;
-    }
-
-    P1& neg()
-    {
-        return cneg(true);
-    }
-    // 返回新对象
-    P1 operator-() const
-    {
-        P1 r = *this;
-        r.neg();
-        return r;
-    }
-    /* ---------- hash / sign ---------- */
-
-    P1& sign_with(const Scalar& s)
-    {
-        blst_sign_pk_in_g2(&point, &point, &s.val);
-        return *this;
-    }
+    // hash / sign
+    // 注意：sign_with 通常需要 Scalar 私钥
+    P1& sign_with(const Scalar& s);
 
     P1& hash_to(
-        std::span<const uint8_t> msg,
-        std::span<const uint8_t> dst,
-        std::span<const uint8_t> aug = {})
-    {
-        blst_hash_to_g1(
-            &point,
-            msg.data(), msg.size(),
-            dst.data(), dst.size(),
-            aug.data(), aug.size());
-        return *this;
-    }
-    static P1 identity()
-    {
-        P1 p;
-        memset(&p.point, 0, sizeof(p.point));
-        return p;
-    }
-    static P1 from_hash(std::span<const uint8_t> msg, std::span<const uint8_t> dst = {})
-    {
-        P1 p;
-        blst_hash_to_g1(
-            &(p.point),
-            msg.data(), msg.size(),
-            dst.data(), dst.size(),
-            {},{});
-        return p;
-    }
+        BytesSpan msg,
+        BytesSpan dst,
+        BytesSpan aug = {});
 
-
-    friend class P1_Affine;
-    operator const blst_p1*() const { return &point; }
+    // serilize
+    [[nodiscard]] std::array<Byte, 48> compress() const;
 };
-}
+
+} // namespace Honey::Crypto::bls

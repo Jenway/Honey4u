@@ -1,13 +1,14 @@
 #include "crypto/threshold/utils.hpp"
-#include <algorithm> 
-#include <blst.h> 
-#include <openssl/evp.h> 
-#include <openssl/rand.h> 
-#include <openssl/sha.h> 
-#include <openssl/types.h> 
-#include <span> 
-#include <cstddef> 
-#include <stdexcept> 
+#include "crypto/common.hpp"
+#include <blst.h>
+#include <cstddef>
+#include <cstring>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/sha.h>
+#include <openssl/types.h>
+#include <span>
+#include <stdexcept>
 #include <string>
 
 namespace Honey::Crypto::Utils {
@@ -15,26 +16,22 @@ namespace Honey::Crypto::Utils {
 Hash256 sha256(BytesSpan data)
 {
     Hash256 hash;
-    SHA256(data.data(), data.size(), hash.data());
+    SHA256(
+        u8ptr(data.data()),
+        data.size(),
+        u8ptr(hash.data()));
     return hash;
-}
-
-G1Serialized serialize_g1(const P1& p)
-{
-    G1Serialized buf;
-    blst_p1_compress(buf.data(), p);
-    return buf;
 }
 
 Hash256 hashG(const P1& point)
 {
-    return sha256(serialize_g1(point));
+    return sha256(point.compress());
 }
 
 // HashH: (G1, V) -> G2.
 P2 hashH(const P1& u, BytesSpan v)
 {
-    G1Serialized u_bytes = serialize_g1(u);
+    auto u_bytes = u.compress();
 
     std::vector<Byte> msg;
     msg.reserve(u_bytes.size() + v.size());
@@ -62,66 +59,114 @@ std::vector<Byte> xor_bytes(BytesSpan a, BytesSpan b)
     return res;
 }
 
-// AES-256-CBC Encrypt: Takes flexible spans as input.
-std::vector<Byte> aes_encrypt(BytesSpan key, BytesSpan plaintext)
+auto aes_encrypt(AesContext& ctx, BytesSpan key, BytesSpan plaintext)
+    -> std::expected<std::vector<Byte>, std::error_code>
 {
     if (key.size() != 32) {
-        throw std::invalid_argument("AES key must be 32 bytes");
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
-    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-    // Use std::vector for IV because it needs to be part of the dynamic output
-    std::vector<Byte> iv(16);
-    RAND_bytes(iv.data(), iv.size());
+    auto* native_ctx = ctx.get();
 
-    std::vector<Byte> ciphertext(16 + plaintext.size() + 16); // IV + data + padding
+    // 生成随机 IV
+    std::vector<Byte> iv(16);
+    if (RAND_bytes(u8ptr(iv.data()), 16) != 1) {
+        return std::unexpected(std::make_error_code(std::errc::io_error));
+    }
+
+    // 预留空间: IV(16) + Plaintext + Padding(最多16)
+    std::vector<Byte> ciphertext(16 + plaintext.size() + 16);
     int len = 0;
     int ciphertext_len = 0;
 
-    EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key.data(), iv.data());
-    EVP_EncryptUpdate(ctx, ciphertext.data() + 16, &len, plaintext.data(), plaintext.size());
-    ciphertext_len += len;
-    EVP_EncryptFinal_ex(ctx, ciphertext.data() + 16 + len, &len);
+    // 初始化加密操作 (复用上下文时，Init 会重置内部状态)
+    if (1 != EVP_EncryptInit_ex(native_ctx, EVP_aes_256_cbc(), nullptr, u8ptr(key.data()), u8ptr(iv.data()))) {
+        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+    }
+
+    // 从第 16 字节开始写密文，前 16 字节留给 IV
+    uint8_t* p_out = u8ptr(ciphertext.data()) + 16;
+
+    if (1 != EVP_EncryptUpdate(native_ctx, p_out, &len, u8ptr(plaintext), static_cast<int>(plaintext.size()))) {
+        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+    }
     ciphertext_len += len;
 
-    // Prepend the IV to the ciphertext
-    std::ranges::copy(iv, ciphertext.begin());
+    if (1 != EVP_EncryptFinal_ex(native_ctx, p_out + len, &len)) {
+        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+    }
+    ciphertext_len += len;
+
+    // 将 IV 拷贝到头部
+    std::memcpy(ciphertext.data(), iv.data(), 16);
     ciphertext.resize(16 + ciphertext_len);
 
-    EVP_CIPHER_CTX_free(ctx);
     return ciphertext;
 }
 
-// AES-256-CBC Decrypt: Takes flexible spans as input.
-// Consider returning std::expected for better error handling on decrypt failure.
-std::vector<Byte> aes_decrypt(BytesSpan key, BytesSpan ciphertext)
+auto aes_decrypt(AesContext& ctx, BytesSpan key, BytesSpan ciphertext)
+    -> std::expected<std::vector<Byte>, std::error_code>
 {
-    if (key.size() != 32) {
-        throw std::invalid_argument("AES key must be 32 bytes");
-    }
-    if (ciphertext.size() < 16) {
-        throw std::runtime_error("Ciphertext too short to contain IV");
+    if (key.size() != 32 || ciphertext.size() < 16) {
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
-    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-    BytesSpan iv(ciphertext.data(), 16);
-    BytesSpan encrypted_data(ciphertext.data() + 16, ciphertext.size() - 16);
+    auto* native_ctx = ctx.get();
 
-    std::vector<Byte> plaintext(encrypted_data.size());
+    // 提取 IV 和 密文数据
+    BytesSpan iv = ciphertext.subspan(0, 16);
+    BytesSpan data = ciphertext.subspan(16);
+
+    std::vector<Byte> plaintext(data.size());
     int len = 0;
     int plaintext_len = 0;
 
-    EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key.data(), iv.data());
-    EVP_DecryptUpdate(ctx, plaintext.data(), &len, encrypted_data.data(), encrypted_data.size());
-    plaintext_len += len;
+    if (1 != EVP_DecryptInit_ex(native_ctx, EVP_aes_256_cbc(), nullptr, u8ptr(key), u8ptr(iv))) {
+        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+    }
 
-    if (1 != EVP_DecryptFinal_ex(ctx, plaintext.data() + len, &len)) {
-        EVP_CIPHER_CTX_free(ctx);
-        throw std::runtime_error("AES Decrypt Final failed (padding or key error)");
+    if (1 != EVP_DecryptUpdate(native_ctx, u8ptr(plaintext.data()), &len, u8ptr(data), static_cast<int>(data.size()))) {
+        return std::unexpected(std::make_error_code(std::errc::protocol_error));
     }
     plaintext_len += len;
-    plaintext.resize(plaintext_len);
 
-    EVP_CIPHER_CTX_free(ctx);
+    // Final 失败通常意味着 Padding 校验失败或 Key 错误
+    if (1 != EVP_DecryptFinal_ex(native_ctx, u8ptr(plaintext.data()) + len, &len)) {
+        // 解密失败（数据损坏或密钥错）在 std::errc 中最接近的是 bad_message
+        return std::unexpected(std::make_error_code(std::errc::bad_message));
+    }
+    plaintext_len += len;
+
+    plaintext.resize(plaintext_len);
     return plaintext;
 }
+// --- AesContext 实现 ---
+
+AesContext::AesContext()
+    : ptr_(EVP_CIPHER_CTX_new())
+{
 }
+
+AesContext::~AesContext()
+{
+    if (ptr_ != nullptr)
+        EVP_CIPHER_CTX_free(ptr_);
+}
+
+AesContext::AesContext(AesContext&& other) noexcept
+    : ptr_(other.ptr_)
+{
+    other.ptr_ = nullptr;
+}
+
+AesContext& AesContext::operator=(AesContext&& other) noexcept
+{
+    if (this != &other) {
+        if (ptr_ != nullptr)
+            EVP_CIPHER_CTX_free(ptr_);
+        ptr_ = other.ptr_;
+        other.ptr_ = nullptr;
+    }
+    return *this;
+}
+
+}  // namespace Honey::Crypto::Utils

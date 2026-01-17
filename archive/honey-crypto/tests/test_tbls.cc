@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
-
+#include "crypto/error.hpp"
 #include "crypto/threshold/tbls.hpp"
 
 using namespace Honey::Crypto;

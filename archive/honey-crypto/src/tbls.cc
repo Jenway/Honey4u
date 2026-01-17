@@ -8,6 +8,7 @@
 #include <span>
 #include <system_error>
 #include <vector>
+#include "crypto/error.hpp"
 
 namespace Honey::Crypto::Tbls {
 using Scalar = Honey::Crypto::bls::Scalar;
@@ -48,9 +49,9 @@ PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message)
     auto sig_affine = P1_Affine::from_P1(partial_sig);
     auto pk_affine = P2_Affine::from_P2(params.verification_vector[player_id - 1]);
 
-    BLST_ERROR err = sig_affine.core_verify(pk_affine, true, message, as_span(Constants::DST_SIG));
+    auto err = sig_affine.core_verify(pk_affine, true, message, as_span(Constants::DST_SIG));
 
-    if (err != BLST_SUCCESS) {
+    if (err) {
         return std::unexpected(Error::ShareVerificationFailed);
     }
     return {}; // Success
@@ -79,10 +80,10 @@ auto verify_signature(const TblsVerificationParameters& params,
     auto sig_affine = P1_Affine::from_P1(signature);
     auto pk_affine = P2_Affine::from_P2(params.master_public_key);
 
-    BLST_ERROR err = sig_affine.core_verify(
+    auto err = sig_affine.core_verify(
         pk_affine, true, message, as_span(Constants::DST_SIG));
 
-    if (err != BLST_SUCCESS) {
+    if (err) {
         return std::unexpected(Error::SignatureVerificationFailed);
     }
     return {};

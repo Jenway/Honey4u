@@ -1,82 +1,67 @@
 #pragma once
 
-#include <cassert>
-#include <cstddef>
-#include <cstring>
+#include "crypto/blst/P1.hpp"
+#include "crypto/blst/P2.hpp"
+
+#include <array>
+#include <compare>
+#include <cstdint>
 #include <span>
 
-extern "C" {
-#include <blst.h>
-}
-#include "Scalar.hpp"
+namespace Honey::Crypto::bls {
 
-#include "P1.hpp"
-#include "P2.hpp"
-
-namespace Honey::Crypto::bls
-{
-
+// =================================================================================
+// PT (Fp12 Point / Target Group)
+// Size: 576 bytes (48 bytes * 12 coefficients)
+// =================================================================================
 class PT {
-private:
-    blst_fp12 value;
-
-    PT(const blst_fp12* v) { value = *v; }
-
 public:
-    PT(const P1_Affine& p) { blst_aggregated_in_g1(&value, p); }
-    PT(const P2_Affine& q) { blst_aggregated_in_g2(&value, q); }
-    PT(const P2_Affine& q, const P1_Affine& p)
-    {
-        blst_miller_loop(&value, q, p);
-    }
-    PT(const P1_Affine& p, const P2_Affine& q)
-        : PT(q, p)
-    {
-    }
-    PT(const P2& q, const P1& p)
-    {
-        blst_miller_loop(&value, P2_Affine::from_P2(q), P1_Affine::from_P1(p));
-    }
-    PT(const P1& p, const P2& q)
-        : PT(q, p)
-    {
-    }
+    // 72 * 8 = 576 bytes
+    std::array<uint64_t, 72> storage;
+
+    PT() = default;
+
+    // --- Constructors (Mapping / Pairing) ---
+
+    // 从 G1/G2 Affine 映射到 GT (通常用于聚合签名的验签部分)
+    explicit PT(const P1_Affine& p);
+    explicit PT(const P2_Affine& q);
+
+    // Miller Loop (配对运算的核心)
+    PT(const P2_Affine& q, const P1_Affine& p);
+    PT(const P1_Affine& p, const P2_Affine& q); // 为了方便，允许参数反转
+
+    // 接受 Jacobian 点，内部会自动转 Affine
+    PT(const P2& q, const P1& p);
+    PT(const P1& p, const P2& q);
+
+    // --- Factories ---
+    static PT one();
+
+    // --- Operations ---
 
     PT dup() const { return *this; }
-    bool is_one() const { return blst_fp12_is_one(&value); }
-    bool is_equal(const PT& p) const
-    {
-        return blst_fp12_is_equal(&value, p);
-    }
-    PT* sqr()
-    {
-        blst_fp12_sqr(&value, &value);
-        return this;
-    }
-    PT* mul(const PT& p)
-    {
-        blst_fp12_mul(&value, &value, p);
-        return this;
-    }
-    PT* final_exp()
-    {
-        blst_final_exp(&value, &value);
-        return this;
-    }
-    bool in_group() const { return blst_fp12_in_group(&value); }
-    void to_bendian(byte out[48 * 12]) const
-    {
-        blst_bendian_from_fp12(out, &value);
-    }
 
-    static bool finalverify(const PT& gt1, const PT& gt2)
-    {
-        return blst_fp12_finalverify(gt1, gt2);
-    }
-    static PT one() { return PT(blst_fp12_one()); }
+    // 算术运算
+    PT& sqr();
+    PT& mul(const PT& p);
+    PT& final_exp();
 
-private:
-    friend class Pairing;
-    operator const blst_fp12*() const { return &value; }
+    // --- Observers ---
+
+    bool is_one() const;
+    // 检查是否在群中
+    bool in_group() const;
+
+    friend bool operator==(const PT& a, const PT& b);
+
+    // 序列化 (大端序输出 576 字节)
+    void to_bendian(std::span<uint8_t, 576> out) const;
+
+    // --- Static Verification ---
+
+    // 验证 GT 上的等式 e(P1, Q1) * e(P2, Q2)... == 1 ?
+    static bool finalverify(const PT& gt1, const PT& gt2);
 };
-}
+
+} // namespace Honey::Crypto::bls

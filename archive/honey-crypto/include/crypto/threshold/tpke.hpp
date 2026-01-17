@@ -7,6 +7,7 @@
 #include <expected>
 #include <span>
 #include <system_error>
+#include "utils.hpp"
 #include <vector>
 
 namespace Honey::Crypto::Tpke {
@@ -24,6 +25,8 @@ using TpkeVerificationParameters = Threshold::VerificationParameters<MasterPubli
 using TpkePrivateKeyShare = Threshold::PrivateKeyShare;
 using TpkeKeySet = Threshold::DistributedKeySet<MasterPublicKey, VerificationKey>;
 
+using Utils::AesContext;
+
 struct Ciphertext {
     P1 u_component; // U
     std::vector<Byte> v_component; // V
@@ -34,6 +37,23 @@ struct PartialDecryption {
     int player_id;
     DecryptionShare value;
 };
+
+struct HybridCiphertext {
+    Ciphertext key_ciphertext;
+    std::vector<Byte> data_ciphertext;
+};
+
+namespace Hybrid {
+    [[nodiscard]]
+    HybridCiphertext encrypt(AesContext& ctx, const TpkeVerificationParameters& public_params,
+        BytesSpan plaintext);
+
+    [[nodiscard]]
+    auto decrypt(AesContext& ctx, const TpkeVerificationParameters& public_params,
+        const HybridCiphertext& ciphertext,
+        std::span<const PartialDecryption> shares)
+        -> std::expected<std::vector<Byte>, std::error_code>;
+} // namespace Hybrid
 
 inline auto generate_keys(int players, int k)
     -> std::expected<TpkeKeySet, std::error_code>
@@ -60,23 +80,5 @@ DecryptionShare decrypt_share(const TpkePrivateKeyShare& private_share,
 bool verify_share(const TpkeVerificationParameters& public_params,
     const PartialDecryption& decryption,
     const Ciphertext& ciphertext);
-
-
-struct HybridCiphertext {
-    Ciphertext key_ciphertext;
-    std::vector<Byte> data_ciphertext;
-};
-
-namespace Hybrid {
-    [[nodiscard]]
-    HybridCiphertext encrypt(const TpkeVerificationParameters& public_params,
-        BytesSpan plaintext);
-
-    [[nodiscard]]
-    auto decrypt(const TpkeVerificationParameters& public_params,
-        const HybridCiphertext& ciphertext,
-        std::span<const PartialDecryption> shares)
-        -> std::expected<std::vector<Byte>, std::error_code>;
-} // namespace Hybrid
 
 } // namespace Honey::Crypto::Tpke

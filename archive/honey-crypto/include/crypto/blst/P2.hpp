@@ -1,220 +1,105 @@
 #pragma once
 
-#include <cassert>
+#include "crypto/blst/Scalar.hpp"
+#include <array>
+#include <compare>
+#include <cstdint>
 #include <expected>
 #include <span>
-
-extern "C" {
-#include <blst.h>
-}
-#include "Scalar.hpp"
+#include <system_error>
 
 namespace Honey::Crypto::bls {
 
-class P1;
-class P2;
+// 前向声明
 class P1_Affine;
+class P2;
 
+// =================================================================================
+// P2_Affine (G2 Affine Point)
+// Size: 192 bytes (96 bytes * 2 coordinates)
+// =================================================================================
 class P2_Affine {
-private:
-    ::blst_p2_affine point;
+public:
+    // 24 * 8 = 192 bytes
+    std::array<uint64_t, 24> storage;
 
     P2_Affine() = default;
 
-    explicit P2_Affine(const blst_p2_affine& p)
-        : point(p)
-    {
-    }
-
-public:
     /* ---------- factories ---------- */
-
-    static std::expected<P2_Affine, BLST_ERROR>
-    from_bytes(std::span<const uint8_t> in)
-    {
-        blst_p2_affine p;
-        BLST_ERROR err = blst_p2_deserialize(&p, in.data());
-        if (err != BLST_SUCCESS)
-            return std::unexpected(err);
-        return P2_Affine(p);
-    }
-
-    static P2_Affine generator()
-    {
-        return P2_Affine(*blst_p2_affine_generator());
-    }
+    static std::expected<P2_Affine, std::error_code> from_bytes(BytesSpan in);
+    static P2_Affine generator();
 
     /* ---------- observers ---------- */
+    friend bool operator==(const P2_Affine& a, const P2_Affine& b);
 
-    P2_Affine dup() const { return *this; }
+    // 状态检查
+    bool on_curve() const;
+    bool in_group() const;
+    bool is_inf() const;
 
-    void serialize(uint8_t out[192]) const
-    {
-        blst_p2_affine_serialize(out, &point);
-    }
-
-    void compress(uint8_t out[96]) const
-    {
-        blst_p2_affine_compress(out, &point);
-    }
-
-    bool on_curve() const { return blst_p2_affine_on_curve(&point); }
-    bool in_group() const { return blst_p2_affine_in_g2(&point); }
-    bool is_inf() const { return blst_p2_affine_is_inf(&point); }
-
-    bool is_equal(const P2_Affine& p) const
-    {
-        return blst_p2_affine_is_equal(&point, &p.point);
-    }
-
-    BLST_ERROR core_verify(
+    // 验证签名
+    // 注意：这里 pk 是 P1_Affine，意味着我们在验证 "PK in G1, Sig in G2" 的组合
+    std::error_code core_verify(
         const P1_Affine& pk,
         bool hash_or_encode,
-        std::span<const uint8_t> msg,
-        std::span<const uint8_t> dst,
-        std::span<const uint8_t> aug = {}) const;
+        BytesSpan msg,
+        BytesSpan dst,
+        BytesSpan aug = {}) const;
+
     static P2_Affine from_P2(const P2& jac);
 
-private:
-    friend class P2;
-    friend class PT;
-
-public:
-    operator const blst_p2_affine*() const { return &point; }
+    // 序列化
+    void serialize(std::span<uint8_t, 192> out) const;
+    void compress(std::span<uint8_t, 96> out) const;
 };
 
+// =================================================================================
+// P2 (G2 Jacobian Point)
+// Size: 288 bytes (96 bytes * 3 coordinates)
+// =================================================================================
 class P2 {
-private:
-    blst_p2 point;
+public:
+    // 36 * 8 = 288 bytes
+    std::array<uint64_t, 36> storage;
 
     P2() = default;
 
-    explicit P2(const blst_p2& p)
-        : point(p)
-    {
-    }
-
-public:
     /* ---------- factories ---------- */
-
-    static P2 generator()
-    {
-        return P2(*blst_p2_generator());
-    }
-
-    static std::expected<P2, BLST_ERROR>
-    from_bytes(std::span<const uint8_t> in)
-    {
-        blst_p2_affine a;
-        BLST_ERROR err = blst_p2_deserialize(&a, in.data());
-        if (err != BLST_SUCCESS)
-            return std::unexpected(err);
-
-        blst_p2 p;
-        blst_p2_from_affine(&p, &a);
-        return P2(p);
-    }
-
-    static P2 from_affine(const P2_Affine& a)
-    {
-        blst_p2 p;
-        blst_p2_from_affine(&p, a);
-        return P2(p);
-    }
-
-    /* ---------- observers ---------- */
-
-    P2 dup() const { return *this; }
-
-    bool on_curve() const { return blst_p2_on_curve(&point); }
-    bool in_group() const { return blst_p2_in_g2(&point); }
-    bool is_inf() const { return blst_p2_is_inf(&point); }
-
-    bool is_equal(const P2& p) const
-    {
-        return blst_p2_is_equal(&point, &p.point);
-    }
-
-    void serialize(uint8_t out[192]) const
-    {
-        blst_p2_serialize(out, &point);
-    }
-
-    void compress(uint8_t out[96]) const
-    {
-        blst_p2_compress(out, &point);
-    }
+    static P2 generator();
+    static P2 identity(); // 无穷远点/零点
+    static std::expected<P2, std::error_code> from_bytes(BytesSpan in);
+    static P2 from_affine(const P2_Affine& a);
+    static P2 from_hash(BytesSpan msg, BytesSpan dst = {});
 
     /* ---------- mutators ---------- */
 
-    P2& add(const P2& a)
-    {
-        blst_p2_add_or_double(&point, &point, a);
-        return *this;
-    }
+    P2& add(const P2& a);
+    P2& add(const P2_Affine& a);
+    P2& dbl(); // Double
 
-    P2& add(const P2_Affine& a)
-    {
-        blst_p2_add_or_double_affine(&point, &point, a);
-        return *this;
-    }
+    P2& mult(const Scalar& s);
 
-    P2& dbl()
-    {
-        blst_p2_double(&point, &point);
-        return *this;
-    }
+    P2& neg();
+    P2 operator-() const;
 
-    P2& mult(const Scalar& s)
-    {
-        blst_p2_mult(&point, &point, s.val.b, 255);
-        return *this;
-    }
+    /* ---------- observers ---------- */
+    bool on_curve() const;
+    bool in_group() const;
+    bool is_inf() const;
 
-    P2& cneg(bool flag)
-    {
-        blst_p2_cneg(&point, flag);
-        return *this;
-    }
+    friend bool operator==(const P2& a, const P2& b);
 
-    P2& neg()
-    {
-        return cneg(true);
-    }
+    void serialize(std::span<uint8_t, 192> out) const;
+    void compress(std::span<uint8_t, 96> out) const;
 
     /* ---------- hash / sign ---------- */
 
-    P2& sign_with(const Scalar& s)
-    {
-        blst_sign_pk_in_g1(&point, &point, &s.val);
-        return *this;
-    }
+    P2& sign_with(const Scalar& s);
 
     P2& hash_to(
-        std::span<const uint8_t> msg,
-        std::span<const uint8_t> dst,
-        std::span<const uint8_t> aug = {})
-    {
-        blst_hash_to_g2(
-            &point,
-            msg.data(), msg.size(),
-            dst.data(), dst.size(),
-            aug.data(), aug.size());
-        return *this;
-    }
-    static P2 from_hash(std::span<const uint8_t> msg, std::span<const uint8_t> dst = {})
-    {
-        P2 p;
-        blst_hash_to_g2(
-            &(p.point),
-            msg.data(), msg.size(),
-            dst.data(), dst.size(),
-            {}, {});
-        return p;
-    }
-
-private:
-    friend class P2_Affine;
-    operator const blst_p2*() const { return &point; }
+        BytesSpan msg,
+        BytesSpan dst,
+        BytesSpan aug = {});
 };
-}
+
+} // namespace Honey::Crypto::bls

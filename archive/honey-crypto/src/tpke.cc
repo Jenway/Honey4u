@@ -36,7 +36,7 @@ Ciphertext encrypt_key(const TpkeVerificationParameters& public_params,
     P2 w = h;
     w.mult(random_scalar);
 
-    return { u, v, w };
+    return { .u_component = u, .v_component = v, .w_component = w };
 }
 
 using P1_Affine = Crypto::bls::P1_Affine;
@@ -59,7 +59,7 @@ bool verify_ciphertext(const Ciphertext& C)
     PT rhs(H_aff, U_aff);
     rhs.final_exp();
 
-    return lhs.is_equal(rhs);
+    return lhs == rhs;
 }
 
 DecryptionShare decrypt_share(const TpkePrivateKeyShare& private_share,
@@ -91,26 +91,27 @@ bool verify_share(const TpkeVerificationParameters& public_params,
     PT rhs(yi_aff, u_aff);
     rhs.final_exp();
 
-    return lhs.is_equal(rhs);
+    return lhs == rhs;
 }
 
 namespace Hybrid {
 
-    HybridCiphertext encrypt(const TpkeVerificationParameters& public_params,
+    HybridCiphertext encrypt(AesContext& ctx, const TpkeVerificationParameters& public_params,
         BytesSpan plaintext)
     {
         std::array<Byte, 32> session_key;
-        RAND_bytes(session_key.data(), session_key.size());
+        RAND_bytes(
+            u8ptr(session_key.data()), session_key.size());
 
         Ciphertext key_ciphertext = encrypt_key(public_params, session_key);
 
         std::vector<Byte> pt_bytes(plaintext.begin(), plaintext.end());
-        std::vector<Byte> data_ciphertext = Utils::aes_encrypt({ session_key.begin(), session_key.end() }, pt_bytes);
+        std::vector<Byte> data_ciphertext = *Utils::aes_encrypt(ctx,{ session_key.begin(), session_key.end() }, pt_bytes);
 
         return { .key_ciphertext = key_ciphertext, .data_ciphertext = data_ciphertext };
     }
     [[nodiscard]]
-    auto decrypt(const TpkeVerificationParameters& public_params,
+    auto decrypt(AesContext& ctx, const TpkeVerificationParameters& public_params,
         const HybridCiphertext& ciphertext,
         std::span<const PartialDecryption> shares)
         -> std::expected<std::vector<Byte>, std::error_code>
@@ -129,7 +130,7 @@ namespace Hybrid {
         const P1& recovered_point = *interpolation_result;
 
         // 3. 从恢复的点计算出对称密钥的掩码 (mask)
-        Utils::Hash256 mask = Utils::hashG(recovered_point);
+        Hash256 mask = Utils::hashG(recovered_point);
 
         // 4. 使用掩码恢复出会话密钥
         std::vector<Byte> session_key = Utils::xor_bytes(
@@ -138,7 +139,7 @@ namespace Hybrid {
 
         // 5. 使用恢复的会话密钥解密最终的数据
         try {
-            return Utils::aes_decrypt(session_key, ciphertext.data_ciphertext);
+            return Utils::aes_decrypt(ctx,session_key, ciphertext.data_ciphertext);
         } catch (const std::runtime_error& e) {
             // If AES decrypt fails (e.g., bad padding), return an error.
             return std::unexpected(std::make_error_code(std::errc::illegal_byte_sequence));
