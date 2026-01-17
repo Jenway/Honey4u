@@ -31,4 +31,4 @@ inline const BlstT* to_native(const WrapperT* w)
 }
 
 
-} // namespace Honey::Crypto::bls::impl
+}  // namespace Honey::Crypto::impl

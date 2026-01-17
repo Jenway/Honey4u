@@ -7,7 +7,7 @@
 #include <expected>
 #include <span>
 #include <system_error>
-#include "utils.hpp"
+#include "crypto/aes.hpp"
 #include <vector>
 
 namespace Honey::Crypto::Tpke {
@@ -24,8 +24,6 @@ using DecryptionShare = P1; // 解密份额 (G1 点)
 using TpkeVerificationParameters = Threshold::VerificationParameters<MasterPublicKey, VerificationKey>;
 using TpkePrivateKeyShare = Threshold::PrivateKeyShare;
 using TpkeKeySet = Threshold::DistributedKeySet<MasterPublicKey, VerificationKey>;
-
-using Utils::AesContext;
 
 struct Ciphertext {
     P1 u_component; // U
@@ -45,11 +43,11 @@ struct HybridCiphertext {
 
 namespace Hybrid {
     [[nodiscard]]
-    HybridCiphertext encrypt(AesContext& ctx, const TpkeVerificationParameters& public_params,
+    HybridCiphertext encrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
         BytesSpan plaintext);
 
     [[nodiscard]]
-    auto decrypt(AesContext& ctx, const TpkeVerificationParameters& public_params,
+    auto decrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
         const HybridCiphertext& ciphertext,
         std::span<const PartialDecryption> shares)
         -> std::expected<std::vector<Byte>, std::error_code>;

@@ -45,18 +45,11 @@ using PT = Crypto::bls::PT;
 
 bool verify_ciphertext(const Ciphertext& C)
 {
-    // e(g1, W) == e(U, H)
-    auto g1_aff = P1_Affine::from_P1(P1::generator());
-    auto W_aff = P2_Affine::from_P2(C.w_component);
-
-    auto U_aff = P1_Affine::from_P1(C.u_component);
-    auto H_aff = P2_Affine::from_P2(Utils::hashH(C.u_component, C.v_component));
-
     // PT(P2, P1) -> MillerLoop(P2, P1)
-    PT lhs(W_aff, g1_aff);
+    PT lhs(C.w_component, P1::generator());
     lhs.final_exp();
 
-    PT rhs(H_aff, U_aff);
+    PT rhs(Utils::hashH(C.u_component, C.v_component), C.u_component);
     rhs.final_exp();
 
     return lhs == rhs;
@@ -96,7 +89,7 @@ bool verify_share(const TpkeVerificationParameters& public_params,
 
 namespace Hybrid {
 
-    HybridCiphertext encrypt(AesContext& ctx, const TpkeVerificationParameters& public_params,
+    HybridCiphertext encrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
         BytesSpan plaintext)
     {
         std::array<Byte, 32> session_key;
@@ -106,12 +99,12 @@ namespace Hybrid {
         Ciphertext key_ciphertext = encrypt_key(public_params, session_key);
 
         std::vector<Byte> pt_bytes(plaintext.begin(), plaintext.end());
-        std::vector<Byte> data_ciphertext = *Utils::aes_encrypt(ctx,{ session_key.begin(), session_key.end() }, pt_bytes);
+        std::vector<Byte> data_ciphertext = *Aes::encrypt(ctx,{ session_key.begin(), session_key.end() }, pt_bytes);
 
         return { .key_ciphertext = key_ciphertext, .data_ciphertext = data_ciphertext };
     }
     [[nodiscard]]
-    auto decrypt(AesContext& ctx, const TpkeVerificationParameters& public_params,
+    auto decrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
         const HybridCiphertext& ciphertext,
         std::span<const PartialDecryption> shares)
         -> std::expected<std::vector<Byte>, std::error_code>
@@ -139,11 +132,11 @@ namespace Hybrid {
 
         // 5. 使用恢复的会话密钥解密最终的数据
         try {
-            return Utils::aes_decrypt(ctx,session_key, ciphertext.data_ciphertext);
+            return Aes::decrypt(ctx,session_key, ciphertext.data_ciphertext);
         } catch (const std::runtime_error& e) {
             // If AES decrypt fails (e.g., bad padding), return an error.
             return std::unexpected(std::make_error_code(std::errc::illegal_byte_sequence));
         }
     }
-}
-}
+}  // namespace Hybrid
+}  // namespace Honey::Crypto::Tpke

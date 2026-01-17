@@ -1,39 +1,67 @@
 #pragma once
 
 #include <array>
-#include <cstdint>
+#include <cstddef>
+#include <expected>
 #include <optional>
 #include <span>
+#include <system_error>
 #include <vector>
 
-namespace Honey::Crypto {
+#include "crypto/common.hpp"
 
-using Hash = std::array<uint8_t, 32>;
+namespace Honey::Crypto::MerkleTree
+{
 
-namespace MerkleTree {
+    // 明确 Hash 大小
+    using Hash = std::array<Byte, 32>;
 
-    struct Tree {
-        size_t leaf_count;
-        size_t padded_leaf_count;
-        std::vector<Hash> nodes;
-    };
 
     struct Proof {
-        size_t index;
-        std::vector<Hash> siblings;
+        size_t leaf_index; // 验证时需要知道是第几个叶子
+        size_t total_leaves; // (可选) 验证时有时需要总数来检查边界
+        std::vector<Hash> siblings; // 默克尔路径
     };
 
-    Tree build(std::span<const std::vector<uint8_t>> leaves);
+    class Tree {
+    public:
+        Tree() = default;
 
-    std::optional<Hash> root(const Tree& tree);
+        [[nodiscard]] std::optional<Hash> root() const;
 
-    Proof prove(const Tree& tree, size_t index);
+        // 生成证明
+        [[nodiscard]] std::expected<Proof, std::error_code> prove(size_t leaf_index) const;
 
-    bool verify(std::span<const uint8_t> leaf, const Hash& root_hash, const Proof& proof);
+        // 获取底层存储（如果用于调试或序列化）
+        [[nodiscard]] const std::vector<Hash>& nodes() const { return nodes_; }
+        [[nodiscard]] size_t leaf_count() const { return leaf_count_; }
 
-    // 内部 helper
-    Hash hash_leaf(std::span<const uint8_t> data);
-    Hash hash_internal(const Hash& left, const Hash& right);
+    private:
+        friend Tree build(std::span<const std::vector<Byte>> leaves);
 
-} // namespace MerkleTree
-} // namespace Honey::Crypto
+        size_t leaf_count_ = 0;
+        // 对应 Python 中的 2 * bottomrow，依然是 array-based tree
+        std::vector<Hash> nodes_;
+    };
+
+    // 构建函数
+    // 注意：这里参数如果不打算改模板，建议加上 const
+    [[nodiscard]]
+    Tree build(std::span<const std::vector<Byte>> leaves);
+
+    // 验证函数
+    // 不需要传入 Tree 对象，只需要 Root Hash
+    // leaf: 待验证的原始数据
+    [[nodiscard]]
+    bool verify(BytesSpan leaf, const Hash& root_hash, const Proof& proof);
+
+    // --- 内部 Helper (通常放入 detail 命名空间或私有) ---
+    namespace detail {
+        // 实现域分离: Hash(0x00 || data)
+        Hash hash_leaf(BytesSpan data);
+
+        // 实现域分离: Hash(0x01 || left || right)
+        Hash hash_internal(const Hash& left, const Hash& right);
+    }
+
+} // namespace Honey::Crypto::MerkleTree

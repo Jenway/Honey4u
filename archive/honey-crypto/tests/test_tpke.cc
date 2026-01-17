@@ -3,11 +3,9 @@
 #include <vector>
 
 #include "crypto/threshold/tpke.hpp"
-#include "crypto/threshold/utils.hpp"
 
 using namespace Honey::Crypto;
 using namespace Honey::Crypto::Tpke;
-
 
 class TpkeTest : public ::testing::Test {
 protected:
@@ -28,7 +26,7 @@ protected:
     const int K = 3;
 
     std::optional<TpkeKeySet> key_set_;
-    Utils::AesContext ctx;
+    Aes::Context ctx;
 };
 
 TEST_F(TpkeTest, HybridEncryptionDecryptionFlow)

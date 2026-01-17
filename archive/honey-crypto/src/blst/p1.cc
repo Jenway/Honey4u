@@ -1,13 +1,13 @@
-#include "crypto/blst/P1.hpp"
-#include "crypto/blst/P2.hpp"
-#include "impl_common.hpp"
-#include <array>
-#include <cstddef>
-#include <cstring>
-
 extern "C" {
 #include <blst.h>
 }
+
+#include "crypto/blst/P1.hpp"
+#include "crypto/blst/Scalar.hpp"
+#include "crypto/common.hpp"
+#include "impl_common.hpp"
+#include <array>
+#include <cstring>
 
 namespace Honey::Crypto::bls {
 using impl::to_native;
@@ -29,21 +29,6 @@ P1 P1::identity()
     // 更正规的做法是设为无穷远
     // blst_p1 内部通常 Z=0 代表无穷远
     std::memset(to_native<blst_p1>(&ret), 0, sizeof(blst_p1));
-    return ret;
-}
-
-std::expected<P1, std::error_code> P1::from_bytes(BytesSpan in)
-{
-    // 先反序列化成 affine，再转 Jacobian
-    blst_p1_affine a;
-    BLST_ERROR err = blst_p1_deserialize(
-        &a,
-        u8ptr(in.data()));
-    if (err != BLST_SUCCESS)
-        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-
-    P1 ret {};
-    blst_p1_from_affine(to_native<blst_p1>(&ret), &a);
     return ret;
 }
 
@@ -71,12 +56,6 @@ P1& P1::add(const P1_Affine& a)
         to_native<blst_p1>(this),
         to_native<blst_p1>(this),
         to_native<blst_p1_affine>(&a));
-    return *this;
-}
-
-P1& P1::dbl()
-{
-    blst_p1_double(to_native<blst_p1>(this), to_native<blst_p1>(this));
     return *this;
 }
 
@@ -118,8 +97,6 @@ bool operator==(const P1& a, const P1& b)
 
 P1& P1::sign_with(const Scalar& s)
 {
-    // blst_sign_pk_in_g2 实际上生成的是 G1 上的签名
-    // (Pairing Friendly Curves 中，私钥在 Scalar，公钥在 G2，签名在 G1)
     blst_sign_pk_in_g2(
         to_native<blst_p1>(this),
         to_native<blst_p1>(this),
@@ -149,9 +126,9 @@ P1 P1::from_hash(BytesSpan msg, BytesSpan dst)
     return ret;
 }
 
-[[nodiscard]] std::array<Byte, 48> P1::compress() const
+[[nodiscard]] std::array<Byte, P1::COMPRESSED_SIZE> P1::compress() const
 {
-    std::array<Byte, 48> buf{};
+    std::array<Byte, P1::COMPRESSED_SIZE> buf {};
     blst_p1_compress(
         u8ptr(buf.data()),
         to_native<blst_p1>(this));

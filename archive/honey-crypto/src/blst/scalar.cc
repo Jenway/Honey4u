@@ -1,22 +1,23 @@
-#include <array>
-#include <bit>
-#include <cstring>
-#include <openssl/rand.h>
-
 extern "C" {
 #include <blst.h>
 }
+
 #include "crypto/blst/Scalar.hpp"
 #include "crypto/common.hpp"
 #include "impl_common.hpp"
+#include <array>
+#include <bit>
+#include <cassert>
+#include <cstdint>
+#include <cstring>
+#include <expected>
+#include <openssl/rand.h>
+#include <system_error>
 
 namespace Honey::Crypto::bls {
 static_assert(sizeof(Scalar) == sizeof(blst_scalar), "Scalar size mismatch with blst_scalar");
 
 using impl::to_native;
-using Crypto::u8ptr;
-
-// --- 运算符实现 ---
 
 Scalar& Scalar::operator+=(const Scalar& other)
 {
@@ -42,7 +43,7 @@ Scalar& Scalar::operator*=(const Scalar& other)
 
 Scalar Scalar::operator-() const
 {
-    Scalar ret{};
+    Scalar ret {};
     blst_scalar zero = { 0 };
     blst_sk_sub_n_check(
         to_native<blst_scalar>(&ret),
@@ -64,40 +65,17 @@ Scalar Scalar::from_uint64(uint64_t v)
         return Scalar { { v, 0, 0, 0 } };
     } else {
         Scalar s {};
-
         std::array<uint64_t, 4> tmp { v, 0, 0, 0 };
-
         blst_scalar_from_uint64(to_native<blst_scalar>(&s), tmp.data());
-
         return s;
     }
 }
 
-Scalar Scalar::from_le_bytes(BytesSpan bytes)
-{
-    Scalar s;
-    blst_scalar_from_le_bytes(
-        to_native<blst_scalar>(&s),
-        u8ptr(bytes.data()),
-        bytes.size());
-    return s;
-}
-
-Scalar Scalar::from_be_bytes(BytesSpan bytes)
-{
-    Scalar s;
-    blst_scalar_from_be_bytes(
-        to_native<blst_scalar>(&s),
-        u8ptr(bytes.data()),
-        bytes.size());
-    return s;
-}
-
 std::expected<Scalar, std::error_code> Scalar::random(const char* DST)
 {
-    uint8_t ikm[32];
-    // 这里可能会失败，所以需要 expected
-    if (RAND_bytes(ikm, sizeof(ikm)) != 1) {
+    std::array<uint8_t, 32> ikm {};
+
+    if (RAND_bytes(ikm.data(), sizeof(ikm)) != 1) {
         return std::unexpected(std::make_error_code(std::errc::io_error));
     }
 
@@ -105,28 +83,12 @@ std::expected<Scalar, std::error_code> Scalar::random(const char* DST)
     // 这样做是为了消除模偏差 (modular bias)
     uint8_t out[48];
     blst_expand_message_xmd(out, sizeof(out),
-        ikm, sizeof(ikm),
+        ikm.data(), ikm.size(),
         u8ptr(DST), std::strlen(DST));
 
     Scalar s;
     blst_scalar_from_be_bytes(to_native<blst_scalar>(&s), out, sizeof(out));
     return s;
-}
-
-// --- 序列化成员函数 ---
-
-void Scalar::to_le_bytes(std::span<std::byte, 32> out) const
-{
-    blst_lendian_from_scalar(
-        reinterpret_cast<uint8_t*>(out.data()),
-        to_native<blst_scalar>(this));
-}
-
-void Scalar::to_be_bytes(std::span<std::byte, 32> out) const
-{
-    blst_bendian_from_scalar(
-        reinterpret_cast<uint8_t*>(out.data()),
-        to_native<blst_scalar>(this));
 }
 
 } // namespace Honey::Crypto::bls

@@ -1,14 +1,16 @@
 #include "crypto/threshold/tbls.hpp"
+#include "crypto/blst/P1.hpp"
+#include "crypto/blst/P2.hpp"
 #include "crypto/blst/Scalar.hpp"
 #include "crypto/common.hpp"
+#include "crypto/error.hpp"
 #include "crypto/threshold/math.hpp"
-#include <blst.h>
 #include <cstring>
 #include <expected>
 #include <span>
+#include <string_view>
 #include <system_error>
 #include <vector>
-#include "crypto/error.hpp"
 
 namespace Honey::Crypto::Tbls {
 using Scalar = Honey::Crypto::bls::Scalar;
@@ -45,7 +47,6 @@ PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message)
         return std::unexpected(Error::InvalidShareID);
     }
 
-    // blst 需要 Affine 坐标进行 verify
     auto sig_affine = P1_Affine::from_P1(partial_sig);
     auto pk_affine = P2_Affine::from_P2(params.verification_vector[player_id - 1]);
 
@@ -89,4 +90,4 @@ auto verify_signature(const TblsVerificationParameters& params,
     return {};
 }
 
-}  // namespace Honey::Crypto::Tbls
+} // namespace Honey::Crypto::Tbls

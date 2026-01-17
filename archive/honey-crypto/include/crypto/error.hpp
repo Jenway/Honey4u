@@ -1,6 +1,8 @@
+#include <cstdint>
 #include <system_error>
+
 namespace Honey::Crypto {
-enum class Error {
+enum class Error : std::uint8_t {
     Success = 0,
     InvalidThreshold, // K 值不合法
     InvalidPlayerCount, // N 值不合法
@@ -15,7 +17,7 @@ enum class Error {
 
 class TBLSErrorCategory : public std::error_category {
 public:
-    const char* name() const noexcept override { return "TBLS"; }
+    [[nodiscard]] const char* name() const noexcept override { return "HoneyCrypto"; }
 
     std::string message(int ev) const override
     {
