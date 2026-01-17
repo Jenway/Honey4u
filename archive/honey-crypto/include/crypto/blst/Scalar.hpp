@@ -1,6 +1,5 @@
 #pragma once
 
-#include "crypto/common.hpp"
 #include <cassert>
 #include <cstddef>
 #include <cstring>

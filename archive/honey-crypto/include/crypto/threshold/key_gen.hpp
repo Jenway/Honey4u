@@ -1,12 +1,10 @@
 #pragma once
 
+#include "crypto/blst/Scalar.hpp"
 #include <algorithm>
 #include <ranges>
 #include <span>
-#include <unordered_set>
 #include <vector>
-
-#include "crypto/blst/blst_wrapper.hpp"
 
 namespace Honey::Crypto::Threshold {
 
@@ -122,4 +120,4 @@ auto generate_keys(int players, int k)
     };
 }
 
-}
+}  // namespace Honey::Crypto::Threshold

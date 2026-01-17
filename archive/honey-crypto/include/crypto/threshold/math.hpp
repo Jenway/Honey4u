@@ -1,12 +1,10 @@
 #pragma once
 
-#include <algorithm>
-#include <ranges>
+#include "crypto/blst/Scalar.hpp"
 #include <span>
-#include <vector>
 #include <unordered_set>
+#include <vector>
 
-#include "crypto/blst/blst_wrapper.hpp"
 
 namespace Honey::Crypto::Math {
 
@@ -82,4 +80,4 @@ auto interpolate_at_zero(std::span<const ShareT> shares)
 
     return result;
 }
-}
+}  // namespace Honey::Crypto::Math

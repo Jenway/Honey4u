@@ -6,7 +6,7 @@
 #include <openssl/sha.h> 
 #include <openssl/types.h> 
 #include <span> 
-#include <stddef.h> 
+#include <cstddef> 
 #include <stdexcept> 
 #include <string>
 
@@ -84,7 +84,7 @@ std::vector<Byte> aes_encrypt(BytesSpan key, BytesSpan plaintext)
     ciphertext_len += len;
 
     // Prepend the IV to the ciphertext
-    std::copy(iv.begin(), iv.end(), ciphertext.begin());
+    std::ranges::copy(iv, ciphertext.begin());
     ciphertext.resize(16 + ciphertext_len);
 
     EVP_CIPHER_CTX_free(ctx);

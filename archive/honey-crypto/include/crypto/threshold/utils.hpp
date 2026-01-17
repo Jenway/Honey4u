@@ -1,12 +1,12 @@
 #pragma once
 
 #include <array>
-#include <span>
 #include <vector>
 
-#include "crypto/blst/blst_wrapper.hpp"
+#include "crypto/blst/P1.hpp"
 #include "crypto/common.hpp"
 
+#include "crypto/blst/P2.hpp"
 
 namespace Honey::Crypto::Utils {
 
@@ -16,8 +16,6 @@ using P2 = bls::P2;
 using Hash256 = std::array<Byte, 32>;
 using G1Serialized = std::array<Byte, 48>;
 using AesKey = std::array<Byte, 32>; // AES-256 key
-
-Hash256 sha256(BytesSpan data);
 
 G1Serialized serialize_g1(const P1& p);
 

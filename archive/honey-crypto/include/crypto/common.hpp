@@ -11,8 +11,15 @@ using BytesSpan = std::span<const Byte>;
 
 inline BytesSpan as_span(const std::string& s)
 {
-    return BytesSpan(reinterpret_cast<const Byte*>(s.data()), s.size());
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    return {reinterpret_cast<const Byte*>(s.data()), s.size()};
 }
+inline BytesSpan as_span(std::string_view s) noexcept
+{
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    return {reinterpret_cast<const Byte*>(s.data()), s.size()};
+}
+
 namespace Utils {
     std::array<uint8_t, 32> sha256(BytesSpan data);
 }
@@ -71,9 +78,9 @@ inline std::error_code make_error_code(Error e)
 {
     return { static_cast<int>(e), tbls_category() };
 }
-}
+}  // namespace Honey::Crypto
 
 namespace std {
 template <>
 struct is_error_code_enum<Honey::Crypto::Error> : true_type { };
-}
+} // namespace std

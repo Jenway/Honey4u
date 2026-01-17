@@ -12,7 +12,7 @@ auto sign(const Context& ctx,
 
     secp256k1_ecdsa_signature sig_struct;
 
-    if (!secp256k1_ecdsa_sign(ctx.get(), &sig_struct, msg_hash.data(), priv_key.data(), NULL, NULL)) {
+    if (secp256k1_ecdsa_sign(ctx.get(), &sig_struct, msg_hash.data(), priv_key.data(), nullptr, nullptr) == 0) {
         return std::unexpected("Failed to sign message");
     }
 
@@ -31,12 +31,12 @@ bool verify(
     auto msg_hash = Utils::sha256(msg);
 
     secp256k1_pubkey pubkey_struct;
-    if (!secp256k1_ec_pubkey_parse(ctx.get(), &pubkey_struct, pub_key.data(), pub_key.size())) {
+    if (secp256k1_ec_pubkey_parse(ctx.get(), &pubkey_struct, pub_key.data(), pub_key.size()) == 0) {
         return false;
     }
 
     secp256k1_ecdsa_signature sig_struct;
-    if (!secp256k1_ecdsa_signature_parse_compact(ctx.get(), &sig_struct, sig.data())) {
+    if (secp256k1_ecdsa_signature_parse_compact(ctx.get(), &sig_struct, sig.data()) == 0) {
         return false;
     }
 
@@ -47,7 +47,7 @@ auto get_public_key(const Context& ctx,
     const PrivateKey& priv_key) -> std::expected<PublicKey, std::string>
 {
     secp256k1_pubkey pubkey_struct;
-    if (!secp256k1_ec_pubkey_create(ctx.get(), &pubkey_struct, priv_key.data())) {
+    if (secp256k1_ec_pubkey_create(ctx.get(), &pubkey_struct, priv_key.data()) == 0) {
         return std::unexpected("Failed to create public key from private key");
     }
 
@@ -59,4 +59,4 @@ auto get_public_key(const Context& ctx,
     return output;
 }
 
-} // namespace Honey::Crypto
+}  // namespace Honey::Crypto::Ecdsa

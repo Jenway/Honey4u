@@ -1,8 +1,10 @@
+#include "crypto/blst/P1.hpp"
+#include "crypto/blst/P2.hpp"
 #include "crypto/common.hpp"
 #include "crypto/threshold/key_gen.hpp"
-#include <expected> 
-#include <span> 
-#include <system_error> 
+#include <expected>
+#include <span>
+#include <system_error>
 
 namespace Honey::Crypto::Tbls {
 
@@ -35,8 +37,8 @@ inline auto generate_keys(int players, int k)
 PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message);
 
 [[nodiscard]]
-auto verify_share(const TblsVerificationParameters& public_params,
-    const SignatureShare& share,
+auto verify_share(const TblsVerificationParameters& params,
+    const SignatureShare& partial_sig,
     BytesSpan message,
     int player_id)
     -> std::expected<void, std::error_code>;
@@ -52,4 +54,4 @@ auto verify_signature(const TblsVerificationParameters& public_params,
     const Signature& signature)
     -> std::expected<void, std::error_code>;
 
-}
+}  // namespace Honey::Crypto::Tbls

@@ -1,6 +1,4 @@
 #include "crypto/threshold/tbls.hpp"
-#include "crypto/blst/P1.hpp"
-#include "crypto/blst/P2.hpp"
 #include "crypto/blst/Scalar.hpp"
 #include "crypto/common.hpp"
 #include "crypto/threshold/math.hpp"
@@ -8,7 +6,6 @@
 #include <cstring>
 #include <expected>
 #include <span>
-#include <string>
 #include <system_error>
 #include <vector>
 
@@ -17,32 +14,9 @@ using Scalar = Honey::Crypto::bls::Scalar;
 using P1_Affine = Honey::Crypto::bls::P1_Affine;
 using P2_Affine = Honey::Crypto::bls::P2_Affine;
 
-namespace {
-    // 优化：使用 Horner's Rule (霍纳法则) 减少乘法次数
-    // poly = a0 + a1*x + ... + an*x^n
-    //      = a0 + x(a1 + x(a2 + ...))
-    [[nodiscard]]
-    inline Scalar polynom_eval(const Scalar& x, std::span<const Scalar> coeffs)
-    {
-        if (coeffs.empty())
-            return Scalar::from_uint64(0);
-
-        // 从高次项开始计算
-        // result = coeffs[n]
-        // result = result * x + coeffs[n-1]
-        // ...
-        Scalar res = coeffs.back();
-        for (auto it = coeffs.rbegin() + 1; it != coeffs.rend(); ++it) {
-            res = res * x + (*it);
-        }
-        return res;
-    }
-
-}
-
 namespace Constants {
-    inline const std::string DST_SIG = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
-}
+    inline constexpr std::string_view DST_SIG = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
+} // namespace Constants
 
 // 生成签名份额
 [[nodiscard]]
@@ -63,7 +37,7 @@ PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message)
     const TblsVerificationParameters& params,
     const SignatureShare& partial_sig,
     BytesSpan message,
-    int player_id )
+    int player_id)
     -> std::expected<void, std::error_code>
 {
     if (player_id < 1 || player_id > params.total_players) {
@@ -114,4 +88,4 @@ auto verify_signature(const TblsVerificationParameters& params,
     return {};
 }
 
-}
+}  // namespace Honey::Crypto::Tbls

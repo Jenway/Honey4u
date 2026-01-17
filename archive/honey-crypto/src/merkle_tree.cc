@@ -1,10 +1,10 @@
 #include "crypto/merkle_tree.hpp"
-#include <algorithm> // std::copy
-#include <bit> // C++20 std::bit_ceil
-#include <openssl/sha.h> // 直接调用 OpenSSL 以获得最高性能
+#include <algorithm>
+#include <bit>
+#include <openssl/sha.h> 
 #include <stdexcept>
-namespace Honey::Crypto {
-namespace MerkleTree {
+
+namespace Honey::Crypto::MerkleTree {
 
     constexpr uint8_t LEAF_PREFIX = 0x00;
     constexpr uint8_t INTERNAL_PREFIX = 0x01;
@@ -119,5 +119,4 @@ namespace MerkleTree {
         return acc == root_hash;
     }
 
-} // namespace MerkleTree
-} // namespace Honey::Crypto
+} // namespace Honey::Crypto::MerkleTree

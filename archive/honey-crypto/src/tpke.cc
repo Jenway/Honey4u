@@ -107,7 +107,7 @@ namespace Hybrid {
         std::vector<Byte> pt_bytes(plaintext.begin(), plaintext.end());
         std::vector<Byte> data_ciphertext = Utils::aes_encrypt({ session_key.begin(), session_key.end() }, pt_bytes);
 
-        return { key_ciphertext, data_ciphertext };
+        return { .key_ciphertext = key_ciphertext, .data_ciphertext = data_ciphertext };
     }
     [[nodiscard]]
     auto decrypt(const TpkeVerificationParameters& public_params,
@@ -115,14 +115,11 @@ namespace Hybrid {
         std::span<const PartialDecryption> shares)
         -> std::expected<std::vector<Byte>, std::error_code>
     {
-        // 1. 检查份额数量是否达到门限
         if (shares.size() < static_cast<size_t>(public_params.threshold)) {
             // Use a more specific error code if you have one
             return std::unexpected(std::make_error_code(std::errc::message_size));
         }
 
-        // 2. **调用通用数学工具进行拉格朗日插值**
-        //    这是一个零拷贝调用，直接在解密份额上操作。
         auto interpolation_result = Crypto::Math::interpolate_at_zero(shares);
         if (!interpolation_result) {
             // Propagate the error from the math function (e.g., duplicate IDs)
