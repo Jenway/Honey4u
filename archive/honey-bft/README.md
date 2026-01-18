@@ -26,7 +26,7 @@ Merkle Tree and Erasue coding
 
 Threshold Encryption and Threshold Signature
 
-ecdsa encryption (for dumbo) 
+ecdsa encryption (for dumbo)
 
 Therefor:
 
@@ -45,7 +45,7 @@ HB BFT consist of two part: broadcast and aggrement
 
 Dumbo , similiary, but using PRBC + MVBA
 
-It basically only depends on Honey::Crypto 
+It basically only depends on Honey::Crypto
 
 And also `std::coroutine`
 
