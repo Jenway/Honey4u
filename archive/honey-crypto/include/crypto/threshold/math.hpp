@@ -5,7 +5,6 @@
 #include <unordered_set>
 #include <vector>
 
-
 namespace Honey::Crypto::Math {
 
 using Scalar = Honey::Crypto::bls::Scalar;
@@ -22,7 +21,6 @@ concept ShareLike = requires(const T& a) {
     { a.player_id } -> std::convertible_to<int>;
     requires Interpolatable<decltype(a.value)>;
 };
-
 
 /**
  * @brief Performs Lagrange interpolation to find the polynomial's value at x=0.
@@ -58,8 +56,7 @@ auto interpolate_at_zero(std::span<const ShareT> shares)
     // --- 聚合 ∑ λ_i(0) · y_i ---
     auto result = ValueT::identity();
 
-    for (size_t i = 0; i < k; ++i)
-    {
+    for (size_t i = 0; i < k; ++i) {
         // 计算拉格朗日基多项式 λ_i(0) = Π_{j≠i} (0 - x_j) / Π_{j≠i} (x_i - x_j)
         auto numerator = Scalar::from_uint64(1);
         auto denominator = Scalar::from_uint64(1);
@@ -80,4 +77,4 @@ auto interpolate_at_zero(std::span<const ShareT> shares)
 
     return result;
 }
-}  // namespace Honey::Crypto::Math
+} // namespace Honey::Crypto::Math

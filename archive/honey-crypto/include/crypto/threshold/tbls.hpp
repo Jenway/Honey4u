@@ -56,4 +56,4 @@ auto verify_signature(const TblsVerificationParameters& public_params,
     const Signature& signature)
     -> std::expected<void, std::error_code>;
 
-}  // namespace Honey::Crypto::Tbls
+} // namespace Honey::Crypto::Tbls

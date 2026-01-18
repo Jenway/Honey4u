@@ -30,5 +30,4 @@ inline const BlstT* to_native(const WrapperT* w)
     return reinterpret_cast<const BlstT*>(w);
 }
 
-
-}  // namespace Honey::Crypto::impl
+} // namespace Honey::Crypto::impl

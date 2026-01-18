@@ -1,4 +1,5 @@
 #pragma once
+#include "crypto/aes.hpp"
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
 #include "crypto/blst/Scalar.hpp"
@@ -7,7 +8,6 @@
 #include <expected>
 #include <span>
 #include <system_error>
-#include "crypto/aes.hpp"
 #include <vector>
 
 namespace Honey::Crypto::Tpke {

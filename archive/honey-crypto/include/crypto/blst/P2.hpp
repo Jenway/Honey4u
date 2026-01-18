@@ -12,7 +12,7 @@ class P1_Affine;
 class P2;
 
 // P2_Affine (G2 Affine Point)
-// 
+//
 // Size: 192 bytes (96 bytes * 2 coordinates)
 class P2_Affine {
 public:

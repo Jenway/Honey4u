@@ -9,7 +9,7 @@
 namespace Honey::Crypto::bls {
 
 // PT (Fp12 Point / Target Group)
-// 
+//
 // Size: 576 bytes (48 bytes * 12 coefficients)
 class PT {
 public:

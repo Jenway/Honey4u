@@ -73,7 +73,7 @@ namespace Utils {
     constexpr std::array<std::byte, N> make_bytes(std::initializer_list<uint8_t> l)
     {
         std::array<std::byte, N> res {};
-        const auto *it = l.begin();
+        const auto* it = l.begin();
         for (size_t i = 0; i < N && it != l.end(); ++i, ++it) {
             res[i] = static_cast<std::byte>(*it);
         }

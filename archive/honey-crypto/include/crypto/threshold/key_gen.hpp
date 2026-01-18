@@ -120,4 +120,4 @@ auto generate_keys(int players, int k)
     };
 }
 
-}  // namespace Honey::Crypto::Threshold
+} // namespace Honey::Crypto::Threshold

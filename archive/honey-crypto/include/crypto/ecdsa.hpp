@@ -47,4 +47,4 @@ auto get_public_key(const Context& ctx,
     const PrivateKey& priv_key)
     -> std::expected<PublicKey, std::error_code>;
 
-}  // namespace Honey::Crypto::Ecdsa
+} // namespace Honey::Crypto::Ecdsa

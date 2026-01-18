@@ -20,7 +20,7 @@ struct EvpMdCtxDeleter {
 // 自动管理的摘要上下文指针
 using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX, EvpMdCtxDeleter>;
 
-}  // namespace Honey::Crypto::impl
+} // namespace Honey::Crypto::impl
 namespace Honey::Crypto::Utils {
 
 using P1 = bls::P1;

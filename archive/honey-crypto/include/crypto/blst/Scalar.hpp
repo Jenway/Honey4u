@@ -1,10 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <expected>
 #include <system_error>
-#include <array>
 
 namespace Honey::Crypto::bls {
 
@@ -27,7 +27,6 @@ struct Scalar {
 
     static Scalar from_uint64(uint64_t v);
     static std::expected<Scalar, std::error_code> random(const char* DST = "HBFT_DEFAULT_SALT");
-
 };
 
 inline Scalar operator+(Scalar lhs, const Scalar& rhs)
