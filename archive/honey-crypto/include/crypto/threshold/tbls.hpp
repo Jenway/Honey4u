@@ -1,3 +1,5 @@
+#pragma once
+
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
 #include "crypto/common.hpp"

@@ -125,6 +125,15 @@ P1 P1::from_hash(BytesSpan msg, BytesSpan dst)
     );
     return ret;
 }
+[[nodiscard]]  std::array<Byte, P1::SERIALIZED_SIZE> P1::serialize() const
+{
+    std::array<Byte, P1::SERIALIZED_SIZE> buf {};
+
+    blst_p1_serialize(
+        u8ptr(buf.data()),
+        to_native<blst_p1>(this));
+    return buf;
+}
 
 [[nodiscard]] std::array<Byte, P1::COMPRESSED_SIZE> P1::compress() const
 {

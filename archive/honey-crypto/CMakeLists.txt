@@ -1,7 +1,6 @@
 # ========================================================
 # Crypto Library CMakeLists.txt
 # ========================================================
-set(CMAKE_EXPORT_COMPILE_COMMANDS On)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 

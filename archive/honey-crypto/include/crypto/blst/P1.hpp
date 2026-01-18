@@ -45,7 +45,7 @@ public:
     using limb_t = uint64_t;
     static constexpr size_t BYTE_LENGTH = 144;
     static constexpr size_t LIMB_COUNT = BYTE_LENGTH / sizeof(limb_t);
-
+    static constexpr size_t SERIALIZED_SIZE = 96;
     static constexpr size_t COMPRESSED_SIZE = 48;
 
     static P1 generator();
@@ -70,6 +70,7 @@ public:
         BytesSpan dst,
         BytesSpan aug = {});
 
+    [[nodiscard]] std::array<Byte, SERIALIZED_SIZE> serialize() const;
     [[nodiscard]] std::array<Byte, COMPRESSED_SIZE> compress() const;
 
 private:
