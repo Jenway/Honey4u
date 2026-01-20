@@ -1,9 +1,12 @@
 #pragma once
 
 #include "crypto/blst/Scalar.hpp"
+#include "crypto/threshold/types.hpp"
 #include <algorithm>
+#include <expected>
 #include <ranges>
 #include <span>
+#include <system_error>
 #include <vector>
 
 namespace Honey::Crypto::Threshold {
@@ -14,46 +17,6 @@ template <typename T>
 concept IsGroupElement = requires(T a, Scalar s) {
     { T::generator() } -> std::same_as<T>;
     { a.mult(s) } -> std::same_as<T&>;
-};
-
-// 秘密份额（标量）
-using SecretShare = Scalar;
-
-/**
- * @struct VerificationParameters
- * @brief Holds all public information required to verify the threshold scheme.
- */
-template <IsGroupElement MasterKeyT, IsGroupElement ShareKeyT>
-struct VerificationParameters {
-    using MasterPublicKey = MasterKeyT;
-    using SharePublicKey = ShareKeyT;
-
-    int total_players;
-    int threshold;
-
-    MasterPublicKey master_public_key;
-    std::vector<SharePublicKey> verification_vector;
-};
-
-/**
- * @struct PrivateKeyShare
- * @brief A container for a single player's private key share and their ID.
- *        This is highly sensitive and constitutes the player's private key.
- */
-struct PrivateKeyShare {
-    int player_id;
-    SecretShare secret; // The secret scalar, which is the private key material.
-};
-
-/**
- * @struct DistributedKeySet
- * @brief The complete output of the key generation dealer, containing both the
- *        public verification parameters and the set of all private key shares.
- */
-template <IsGroupElement MasterKeyT, IsGroupElement ShareKeyT>
-struct DistributedKeySet {
-    VerificationParameters<MasterKeyT, ShareKeyT> public_params;
-    std::vector<PrivateKeyShare> private_shares;
 };
 
 inline std::vector<Scalar> random_poly(int degree)

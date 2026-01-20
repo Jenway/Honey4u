@@ -4,7 +4,7 @@
 #include "crypto/blst/Scalar.hpp"
 #include "crypto/common.hpp"
 #include "crypto/error.hpp"
-#include "crypto/threshold/math.hpp"
+#include "threshold/math.hpp"
 #include <cstring>
 #include <expected>
 #include <span>

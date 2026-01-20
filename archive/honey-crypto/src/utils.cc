@@ -1,4 +1,4 @@
-#include "crypto/threshold/utils.hpp"
+#include "threshold/utils.hpp"
 #include "crypto/common.hpp"
 #include <cstddef>
 #include <cstring>
@@ -66,6 +66,5 @@ std::vector<Byte> xor_bytes(BytesSpan a, BytesSpan b)
     }
     return res;
 }
-
 
 } // namespace Honey::Crypto::Utils

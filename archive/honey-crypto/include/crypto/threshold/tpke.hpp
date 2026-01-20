@@ -41,42 +41,43 @@ struct HybridCiphertext {
     std::vector<Byte> data_ciphertext;
 };
 
-namespace Hybrid {
-    [[nodiscard]]
-    HybridCiphertext encrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
-        BytesSpan plaintext);
-
-    [[nodiscard]]
-    auto decrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
-        const HybridCiphertext& ciphertext,
-        std::span<const PartialDecryption> shares)
-        -> std::expected<std::vector<Byte>, std::error_code>;
-} // namespace Hybrid
-
 inline auto generate_keys(int players, int k)
     -> std::expected<TpkeKeySet, std::error_code>
 {
     return Threshold::generate_keys<MasterPublicKey, VerificationKey>(players, k);
 }
 
-// 加密一个 32 字节的对称密钥
 [[nodiscard]]
-Ciphertext encrypt_key(const TpkeVerificationParameters& public_params,
-    std::span<const Byte, 32> symmetric_key);
+HybridCiphertext encrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
+    BytesSpan plaintext);
 
-// 验证密文的完整性 (e.g., ZK-proof)
 [[nodiscard]]
-bool verify_ciphertext(const Ciphertext& ciphertext);
+auto decrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
+    const HybridCiphertext& ciphertext,
+    std::span<const PartialDecryption> shares)
+    -> std::expected<std::vector<Byte>, std::error_code>;
 
-// 生成解密份额
-[[nodiscard]]
-DecryptionShare decrypt_share(const TpkePrivateKeyShare& private_share,
-    const Ciphertext& ciphertext);
+namespace detail {
 
-// 验证解密份额
-[[nodiscard]]
-bool verify_share(const TpkeVerificationParameters& public_params,
-    const PartialDecryption& decryption,
-    const Ciphertext& ciphertext);
+    // 加密一个 32 字节的对称密钥
+    [[nodiscard]]
+    Ciphertext encrypt_key(const TpkeVerificationParameters& public_params,
+        std::span<const Byte, 32> symmetric_key);
 
+    // 验证密文的完整性 (e.g., ZK-proof)
+    [[nodiscard]]
+    bool verify_ciphertext(const Ciphertext& ciphertext);
+
+    // 生成解密份额
+    [[nodiscard]]
+    DecryptionShare decrypt_share(const TpkePrivateKeyShare& private_share,
+        const Ciphertext& ciphertext);
+
+    // 验证解密份额
+    [[nodiscard]]
+    bool verify_share(const TpkeVerificationParameters& public_params,
+        const PartialDecryption& decryption,
+        const Ciphertext& ciphertext);
+
+} // namespace detail
 } // namespace Honey::Crypto::Tpke

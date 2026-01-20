@@ -9,30 +9,49 @@
 
 namespace Honey::Crypto::ErasureCode {
 
-/**
- * @brief 纠删码编码 (Reed-Solomon)
- *
- * 采用 "Length-Prefix" 方案处理变长数据:
- * 1. 在数据头部写入 4 字节的原始数据长度 (Little-Endian)。
- * 2. 补零直到总长度是 K 的倍数。
- * 3. 进行 RS 编码。
- *
- * @param K 数据块数量 (阈值)
- * @param N 总块数 (N >= K)
- * @param data 任意长度的二进制数据
- */
+class Context {
+public:
+    [[nodiscard]]
+    static std::expected<Context, std::error_code> create(int K, int N);
+
+    Context(const Context&) = delete;
+    Context& operator=(const Context&) = delete;
+
+    Context(Context&&) noexcept = default;
+    Context& operator=(Context&&) noexcept = default;
+
+    ~Context() = default;
+
+    [[nodiscard]] int K() const noexcept { return K_; }
+    [[nodiscard]] int N() const noexcept { return N_; }
+
+private:
+    int K_;
+    int N_;
+    std::vector<unsigned char> encode_matrix_;
+    std::vector<unsigned char> parity_g_tbls_;
+    std::vector<unsigned char> decode_g_tbls_;
+
+    Context(int K, int N, std::vector<unsigned char>&& encode_matrix,
+        std::vector<unsigned char>&& parity_g_tbls,
+        std::vector<unsigned char>&& decode_g_tbls)
+        : K_(K)
+        , N_(N)
+        , encode_matrix_(std::move(encode_matrix))
+        , parity_g_tbls_(std::move(parity_g_tbls))
+        , decode_g_tbls_(std::move(decode_g_tbls))
+    {
+    }
+
+    friend class ErasureCodeImpl;
+};
+
 [[nodiscard]]
-auto encode(int K, int N, BytesSpan data)
+auto encode(const Context& ctx, BytesSpan data)
     -> std::expected<std::vector<std::vector<Byte>>, std::error_code>;
 
-/**
- * @brief 纠删码解码
- *
- * @param received_shards 接收到的分片 (Index -> Data)。至少需要 K 个。
- * @return 原始数据 (自动去除 Padding 和 Length Prefix)
- */
 [[nodiscard]]
-auto decode(int K, int N, const std::map<int, std::vector<Byte>>& received_shards)
+auto decode(const Context& ctx, const std::map<int, std::vector<Byte>>& received_shards)
     -> std::expected<std::vector<Byte>, std::error_code>;
 
 } // namespace Honey::Crypto::ErasureCode

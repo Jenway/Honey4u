@@ -1,5 +1,5 @@
 #include "crypto/merkle_tree.hpp"
-#include "crypto/threshold/utils.hpp"
+#include "threshold/utils.hpp"
 #include <bit>
 #include <cstring>
 #include <openssl/evp.h>
