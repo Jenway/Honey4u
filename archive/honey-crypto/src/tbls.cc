@@ -44,7 +44,7 @@ PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message)
     -> std::expected<void, std::error_code>
 {
     if (player_id < 1 || player_id > params.total_players) {
-        return std::unexpected(Error::InvalidShareID);
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
     auto sig_affine = P1_Affine::from_P1(partial_sig);
@@ -53,7 +53,7 @@ PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message)
     auto err = sig_affine.core_verify(pk_affine, true, message, as_span(Constants::DST_SIG));
 
     if (err) {
-        return std::unexpected(Error::ShareVerificationFailed);
+        return std::unexpected(err);
     }
     return {}; // Success
 }
@@ -85,7 +85,7 @@ auto verify_signature(const TblsVerificationParameters& params,
         pk_affine, true, message, as_span(Constants::DST_SIG));
 
     if (err) {
-        return std::unexpected(Error::SignatureVerificationFailed);
+        return std::unexpected(err);
     }
     return {};
 }

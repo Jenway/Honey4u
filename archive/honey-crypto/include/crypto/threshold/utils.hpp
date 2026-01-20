@@ -9,16 +9,10 @@
 
 namespace Honey::Crypto::impl {
 
-struct EvpMdCtxDeleter {
-    void operator()(EVP_MD_CTX* ctx) const
-    {
-        if (ctx != nullptr)
-            EVP_MD_CTX_free(ctx);
-    }
-};
-
-// 自动管理的摘要上下文指针
-using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX, EvpMdCtxDeleter>;
+using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX,
+    decltype([](EVP_MD_CTX* ctx) {
+        EVP_MD_CTX_free(ctx);
+    })>;
 
 } // namespace Honey::Crypto::impl
 namespace Honey::Crypto::Utils {

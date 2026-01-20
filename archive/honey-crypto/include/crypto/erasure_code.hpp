@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <expected>
 #include <map>
 #include <system_error>
@@ -11,7 +10,7 @@
 namespace Honey::Crypto::ErasureCode {
 
 /**
- * @brief 纠删码编码 (Reed-Solomon via ZFEC)
+ * @brief 纠删码编码 (Reed-Solomon)
  *
  * 采用 "Length-Prefix" 方案处理变长数据:
  * 1. 在数据头部写入 4 字节的原始数据长度 (Little-Endian)。

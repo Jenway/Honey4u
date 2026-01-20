@@ -4,51 +4,32 @@
 namespace Honey::Crypto {
 enum class Error : std::uint8_t {
     Success = 0,
-    InvalidThreshold, // K 值不合法
-    InvalidPlayerCount, // N 值不合法
-    InvalidShareID, // ID 超出范围或不合法
-    ShareVerificationFailed, // 份额验证失败
-    SignatureVerificationFailed, // 主签名验证失败
-    NotEnoughShares, // 聚合时份额数量不足
-    MismatchedIdsAndSigs, // ID 列表和签名列表长度不一致
-    OpenSSLError, // 随机数生成失败
-    DuplicatePlayerID
+    BlstError,
+    OpenSSLError,
 };
 
-class TBLSErrorCategory : public std::error_category {
+class HoneyCryptoErrorCategory : public std::error_category {
 public:
     [[nodiscard]] const char* name() const noexcept override { return "HoneyCrypto"; }
 
-    std::string message(int ev) const override
+    [[nodiscard]] std::string message(int ev) const override
     {
         switch (static_cast<Error>(ev)) {
         case Error::Success:
             return "Success";
-        case Error::InvalidThreshold:
-            return "Threshold k must be between 1 and players";
-        case Error::InvalidPlayerCount:
-            return "Player count must be positive";
-        case Error::InvalidShareID:
-            return "Share ID is out of valid range";
-        case Error::ShareVerificationFailed:
-            return "Share verification failed";
-        case Error::SignatureVerificationFailed:
-            return "Master signature verification failed";
-        case Error::NotEnoughShares:
-            return "Not enough shares to reconstruct signature";
-        case Error::MismatchedIdsAndSigs:
-            return "IDs and Signatures count mismatch";
+        case Error::BlstError:
+            return "Blst failure";
         case Error::OpenSSLError:
-            return "OpenSSL RNG failure";
+            return "OpenSSL failure";
         default:
-            return "Unknown TBLS error";
+            return "Unknown Hoeny::Crypto error";
         }
     }
 };
 
 inline const std::error_category& tbls_category()
 {
-    static TBLSErrorCategory instance;
+    static HoneyCryptoErrorCategory instance;
     return instance;
 }
 

@@ -1,65 +1,58 @@
 #pragma once
 
+#include "crypto/common.hpp"
 #include <array>
 #include <cstddef>
 #include <expected>
-#include <optional>
-#include <span>
+#include <ranges>
 #include <system_error>
 #include <vector>
 
-#include "crypto/common.hpp"
-
 namespace Honey::Crypto::MerkleTree {
 
-// 明确 Hash 大小
 using Hash = std::array<Byte, 32>;
 
 struct Proof {
-    size_t leaf_index; // 验证时需要知道是第几个叶子
-    size_t total_leaves; // (可选) 验证时有时需要总数来检查边界
-    std::vector<Hash> siblings; // 默克尔路径
+    size_t leaf_index;
+    std::vector<Hash> siblings;
 };
 
 class Tree {
 public:
+    using value_type = std::vector<Byte>;
+    using reference = const std::vector<Byte>&;
+    using const_reference = const std::vector<Byte>&;
+    using iterator = std::vector<std::vector<Byte>>::const_iterator;
+    using const_iterator = std::vector<std::vector<Byte>>::const_iterator;
+    using size_type = std::vector<std::vector<Byte>>::size_type;
+
     Tree() = default;
 
-    [[nodiscard]] std::optional<Hash> root() const;
+    [[nodiscard]]
+    static Tree build(std::vector<std::vector<Byte>>&& leaves);
 
-    // 生成证明
-    [[nodiscard]] std::expected<Proof, std::error_code> prove(size_t leaf_index) const;
+    [[nodiscard]] const Hash& root() const noexcept { return root_hash_; }
+    [[nodiscard]] std::expected<Proof, std::error_code> prove(size_type leaf_index) const;
+    [[nodiscard]] const_reference leaf(size_type leaf_index) const;
 
-    // 获取底层存储（如果用于调试或序列化）
-    [[nodiscard]] const std::vector<Hash>& nodes() const { return nodes_; }
-    [[nodiscard]] size_t leaf_count() const { return leaf_count_; }
+    [[nodiscard]] const_iterator begin() const noexcept { return leaves_.begin(); }
+    [[nodiscard]] const_iterator cbegin() const noexcept { return leaves_.cbegin(); }
+    [[nodiscard]] const_iterator end() const noexcept { return leaves_.end(); }
+    [[nodiscard]] const_iterator cend() const noexcept { return leaves_.end(); }
+
+    [[nodiscard]] size_type size() const noexcept { return leaves_.size(); }
+    [[nodiscard]] bool empty() const noexcept { return leaves_.empty(); }
 
 private:
-    friend Tree build(std::span<const std::vector<Byte>> leaves);
-
-    size_t leaf_count_ = 0;
-    // 对应 Python 中的 2 * bottomrow，依然是 array-based tree
+    Hash root_hash_ {};
     std::vector<Hash> nodes_;
+    std::vector<std::vector<Byte>> leaves_;
 };
 
-// 构建函数
-// 注意：这里参数如果不打算改模板，建议加上 const
 [[nodiscard]]
-Tree build(std::span<const std::vector<Byte>> leaves);
+bool verify(BytesSpan leaf, const Proof& proof, const Hash& root) noexcept;
 
-// 验证函数
-// 不需要传入 Tree 对象，只需要 Root Hash
-// leaf: 待验证的原始数据
-[[nodiscard]]
-bool verify(BytesSpan leaf, const Hash& root_hash, const Proof& proof);
-
-// --- 内部 Helper (通常放入 detail 命名空间或私有) ---
-namespace detail {
-    // 实现域分离: Hash(0x00 || data)
-    Hash hash_leaf(BytesSpan data);
-
-    // 实现域分离: Hash(0x01 || left || right)
-    Hash hash_internal(const Hash& left, const Hash& right);
-}
+static_assert(std::ranges::random_access_range<Tree>);
+static_assert(std::ranges::sized_range<Tree>);
 
 } // namespace Honey::Crypto::MerkleTree

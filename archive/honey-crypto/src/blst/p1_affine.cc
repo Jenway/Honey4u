@@ -4,6 +4,7 @@ extern "C" {
 
 #include "crypto/blst/P1.hpp"
 #include "crypto/common.hpp"
+#include "crypto/error.hpp"
 #include "impl_common.hpp"
 #include <system_error>
 
@@ -49,7 +50,7 @@ std::error_code P1_Affine::core_verify(
         u8ptr(aug.data()), aug.size());
 
     if (err != BLST_SUCCESS)
-        return std::make_error_code(std::errc::protocol_error);
+        return Error::BlstError;
     return {};
 }
 

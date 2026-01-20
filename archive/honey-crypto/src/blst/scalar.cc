@@ -4,6 +4,7 @@ extern "C" {
 
 #include "crypto/blst/Scalar.hpp"
 #include "crypto/common.hpp"
+#include "crypto/error.hpp"
 #include "impl_common.hpp"
 #include <array>
 #include <bit>
@@ -76,7 +77,7 @@ std::expected<Scalar, std::error_code> Scalar::random(const char* DST)
     std::array<uint8_t, 32> ikm {};
 
     if (RAND_bytes(ikm.data(), sizeof(ikm)) != 1) {
-        return std::unexpected(std::make_error_code(std::errc::io_error));
+        return std::unexpected(Error::BlstError);
     }
 
     // 生成 48 字节 (384 bits) 的均匀随机数，然后模 r
