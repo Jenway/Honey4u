@@ -7,10 +7,9 @@ macro(add_hbft_core_test TEST_NAME SOURCE)
 endmacro()
 
 add_hbft_core_test(rbc_test test_rbc.cc)
+add_hbft_core_test(coin_test test_coin.cc)
 # add_hbft_core_test(ba_core_test test_ba_core.cc)
 # add_hbft_core_test(ba_driver_test test_ba_driver.cc)
-# add_hbft_core_test(coin_core_test test_coin_core.cc)
-# add_hbft_core_test(coin_driver_test test_coin_driver.cc)
 # add_hbft_core_test(acs_test test_acs.cc)
 # add_hbft_core_test(honeybadger_test test_honeybadger.cc)
 
