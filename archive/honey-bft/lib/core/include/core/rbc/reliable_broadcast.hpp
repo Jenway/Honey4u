@@ -5,14 +5,22 @@
 #include "core/rbc/concept.hpp"
 #include "core/rbc/messages.hpp"
 #include "core/rbc/rbc_core.hpp"
-#include <stdexcept>
 #include <variant>
 
 namespace Honey::BFT::RBC {
-using Honey::Crypto::MerkleTree::Tree;
 
 template <Transceiver T, CryptoService C>
 class ReliableBroadcast {
+private:
+    const SystemContext& system_ctx_;
+    int sid_;
+    NodeId my_pid_, leader_;
+    T& transport_;
+    C& crypto_;
+    RBCCore core_;
+
+    using Tree = typename C::MerkleTreeType;
+
 public:
     ReliableBroadcast(
         const SystemContext& system_ctx,
@@ -20,124 +28,112 @@ public:
         NodeId my_pid,
         NodeId leader,
         T& transport,
-        C& crypto_svc)
+        C& crypto)
         : system_ctx_(system_ctx)
         , sid_(sid)
         , my_pid_(my_pid)
         , leader_(leader)
         , transport_(transport)
-        , crypto_svc_(crypto_svc)
+        , crypto_(crypto)
         , core_({ .session_id = sid, .node_id = my_pid, .total_nodes = system_ctx.N, .fault_tolerance = system_ctx.f, .leader_id = leader })
     {
     }
 
     template <template <typename> typename TaskT, AsyncStreamOf<RBCMessage> Stream>
-    auto run(
-        std::optional<std::vector<Byte>> input_data,
-        Stream message_stream) -> TaskT<RBCOutput>
+    auto run(std::optional<std::vector<Byte>> input, Stream stream) -> TaskT<RBCOutput>
     {
-        if (input_data && my_pid_ == leader_) {
-            if (auto output = co_await leader_propose<TaskT>(std::move(*input_data))) {
-                co_return *output;
+        if (core_.is_leader(my_pid_) && input) {
+            Tree tree = co_await crypto_.async_build_merkle_tree(
+                system_ctx_.N - system_ctx_.f,
+                system_ctx_.N,
+                BytesSpan { *input });
+            co_await broadcast_val<TaskT>(tree);
+        }
+
+        while (auto msg_opt = co_await stream.next()) {
+            RBCMessage msg = *msg_opt;
+
+            // --- Step A: 验证与更新 Core (Logic) ---
+            if (auto* p = std::get_if<ValPayload>(&msg.payload)) {
+                if (!co_await crypto_.async_verify_merkle(p->stripe, p->proof_index, p->merkle_path, p->root_hash))
+                    continue;
+
+                if (!core_.is_valid_val(msg.sender, *p))
+                    continue;
+
+                core_.observe_val(msg.sender, *p);
+            } else if (auto* p = std::get_if<EchoPayload>(&msg.payload)) {
+                if (!co_await crypto_.async_verify_merkle(p->stripe, p->proof_index, p->merkle_path, p->root_hash))
+                    continue;
+                core_.observe_echo(msg.sender, *p);
+            } else if (auto* p = std::get_if<ReadyPayload>(&msg.payload)) {
+                core_.observe_ready(msg.sender, *p);
+            }
+
+            // --- Step B: 基于 Core 的状态决定副作用 (Flow Control) ---
+
+            // 规则 1: 收到 VAL 后，如果没有发送过 ECHO，则广播 ECHO
+            if (core_.has_received_val() && !core_.has_sent_echo()) {
+                auto echo_msg = construct_echo(core_.get_current_root());
+                co_await transport_.broadcast(echo_msg);
+                core_.mark_echo_sent(); // 通知 Core 更新状态
+            }
+
+            // 规则 2: 满足阈值后，广播 READY
+            if (!core_.has_sent_ready() && core_.should_send_ready()) {
+                auto ready_msg = construct_ready(core_.get_current_root());
+                co_await transport_.broadcast(ready_msg);
+                core_.mark_ready_sent(); // 通知 Core 更新状态
+            }
+
+            if (core_.can_output()) {
+                auto shards = core_.get_shards();
+                auto result = co_await crypto_.async_decode(
+                    system_ctx_.N - system_ctx_.f,
+                    system_ctx_.N,
+                    shards);
+                co_return *result;
             }
         }
 
-        while (auto msg_opt = co_await message_stream.next()) {
-            RBCMessage msg = std::move(*msg_opt);
-
-            if (!co_await is_message_valid<TaskT>(msg)) {
-                continue;
-            }
-
-            auto effects = core_.handle_message(std::move(msg));
-
-            for (const auto& eff : effects) {
-                if (auto output = co_await apply_effect<TaskT>(eff)) {
-                    co_return *output;
-                }
-            }
-        }
-
-        throw std::runtime_error("Message stream ended before RBC could complete.");
+        // co_return std::vector<Byte> {};
+        // Or should we throw an exception here?
+        throw std::runtime_error("RBC terminated without delivering output");
     }
 
 private:
-    template <template <typename> typename TaskT>
-    auto leader_propose(std::vector<Byte> data) -> TaskT<std::optional<RBCOutput>>
+    RBCMessage construct_echo(const Hash& root)
     {
-        const int K = system_ctx_.N - (2 * system_ctx_.f);
-        Tree tree = co_await crypto_svc_.async_build_merkle_tree(K, system_ctx_.N, data);
-
-        auto root = tree.root();
+        auto stripes = core_.get_shards();
+        return RBCMessage {
+            .sender = my_pid_,
+            .session_id = sid_,
+            .payload = EchoPayload {
+                .root_hash = root,
+                .stripe = stripes.at(my_pid_) }
+        };
+    }
+    RBCMessage construct_ready(const Hash& root)
+    {
+        return RBCMessage {
+            .sender = my_pid_,
+            .session_id = sid_,
+            .payload = ReadyPayload {
+                .root_hash = root }
+        };
+    }
+    template <template <typename> typename TaskT>
+    auto broadcast_val(Tree tree) -> TaskT<void>
+    {
         for (int i = 0; i < system_ctx_.N; ++i) {
-            auto proof = tree.prove(i);
-            if (!proof) {
-                throw std::runtime_error("Failed to generate Merkle proof");
-            }
-
             RBCMessage msg {
                 .sender = my_pid_,
                 .session_id = sid_,
-                .payload = ValPayload {
-                    .root_hash = root,
-                    .proof = std::move(*proof),
-                    .stripe = tree.leaf(i) }
+                .payload = std::move(crypto_.extract_val_payload(tree, i))
             };
-            if (i == my_pid_) {
-                for (auto eff : core_.handle_message(msg)) {
-                    if (auto output = co_await apply_effect<TaskT>(eff)) {
-                        co_return *output;
-                    }
-                }
-            }
-
             co_await transport_.unicast(i, msg);
         }
-        co_return std::nullopt;
     }
-
-    template <template <typename> typename TaskT>
-    auto is_message_valid(RBCMessage msg) -> TaskT<bool>
-    {
-        if (const auto* p = std::get_if<ValPayload>(&msg.payload)) {
-            co_return co_await crypto_svc_.async_verify_merkle(p->stripe, p->proof, p->root_hash);
-        }
-        if (const auto* p = std::get_if<EchoPayload>(&msg.payload)) {
-            co_return co_await crypto_svc_.async_verify_merkle(p->stripe, p->proof, p->root_hash);
-        }
-        co_return true;
-    }
-
-    template <template <typename> typename TaskT>
-    auto apply_effect(Effect eff) -> TaskT<std::optional<RBCOutput>>
-    {
-        switch (eff.type) {
-        case Effect::Type::Broadcast:
-            co_await transport_.broadcast(*eff.msg);
-            break;
-        case Effect::Type::SendTo:
-            co_await transport_.unicast(eff.target_pid, *eff.msg);
-            break;
-        case Effect::Type::Deliver: {
-            const auto& root = *eff.root_hash;
-            const auto& shards = core_.get_shards_for_root(root);
-            const int K = system_ctx_.N - (2 * system_ctx_.f);
-            auto decoded = co_await crypto_svc_.async_decode(K, system_ctx_.N, shards);
-            if (!decoded) {
-                throw std::runtime_error(decoded.error().message());
-            }
-            co_return RBCOutput { .root_hash = root, .shards = shards };
-        }
-        }
-        co_return std::nullopt;
-    }
-
-    const SystemContext& system_ctx_;
-    int sid_;
-    NodeId my_pid_, leader_;
-    T& transport_;
-    C& crypto_svc_;
-    RBCCore core_;
 };
 
 } // namespace Honey::BFT::RBC

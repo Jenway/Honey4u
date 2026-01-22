@@ -1,29 +1,14 @@
 #pragma once
 
+#include "core/rbc/concept.hpp"
 #include "core/rbc/messages.hpp"
-#include <generator>
 #include <map>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 namespace Honey::BFT::RBC {
-
-struct Effect {
-    enum class Type : uint8_t {
-        Broadcast,
-        SendTo,
-        Deliver
-    } type {};
-
-    int target_pid = -1; // 仅 SendTo 有效
-
-    // 用于 Broadcast 和 SendTo
-    std::optional<RBCMessage> msg;
-
-    // 用于 PrepareAndSendVal 和 Deliver
-    std::optional<Hash> root_hash;
-};
 
 struct RBCConfig {
     int session_id;
@@ -35,29 +20,146 @@ struct RBCConfig {
 
 class RBCCore {
 public:
-    explicit RBCCore(const RBCConfig& config);
+    explicit RBCCore(const RBCConfig& config)
+        : sid_(config.session_id)
+        , pid_(config.node_id)
+        , N_(config.total_nodes)
+        , f_(config.fault_tolerance)
+        , leader_(config.leader_id)
+    {
+    }
 
-    std::generator<Effect> handle_message(RBCMessage msg);
+    [[nodiscard]] bool is_leader(NodeId pid) const { return pid == leader_; }
 
-    [[nodiscard]] const std::map<NodeId, std::vector<Byte>>& get_shards_for_root(const Hash& root) const;
+    [[nodiscard]] bool is_valid_val(int sender, const ValPayload& p) const
+    {
+        // Only the leader may send VAL, and any subsequent VAL must match the chosen root.
+        if (sender != leader_)
+            return false;
+        if (current_root_ && *current_root_ != p.root_hash)
+            return false;
+        return true;
+    }
+    [[nodiscard]] bool is_valid_echo(int sender, const EchoPayload& p) const
+    {
+        // 验证 Echo 消息的合法性 (如有需要)
+        return true; // 占位实现
+    }
+
+    void observe_val(int sender, const ValPayload& p)
+    {
+        // 处理 Val 消息，更新状态
+        if (!current_root_) {
+            current_root_ = p.root_hash;
+        }
+        // The VAL stripe is targeted for this node, so store it under our own id.
+        stripes_[p.root_hash][pid_] = p.stripe;
+    }
+    void observe_echo(int sender, const EchoPayload& p)
+    {
+        // 处理 Echo 消息，更新状态
+        echo_senders_[p.root_hash].insert(sender);
+        stripes_[p.root_hash][sender] = p.stripe;
+    }
+    void observe_ready(int sender, const ReadyPayload& p)
+    {
+        // 处理 Ready 消息，更新状态
+        ready_senders_[p.root_hash].insert(sender);
+    }
+
+    bool has_received_val() const { return current_root_.has_value(); }
+    bool has_sent_echo() const { return echo_sent_; }
+    bool has_sent_ready() const { return ready_sent_; }
+
+    auto count_echo(const Hash& root) const -> int
+    {
+        auto it = echo_senders_.find(root);
+        if (it != echo_senders_.end()) {
+            return static_cast<int>(it->second.size());
+        }
+        return 0;
+    }
+    auto count_ready(const Hash& root) const -> int
+    {
+        auto it = ready_senders_.find(root);
+        if (it != ready_senders_.end()) {
+            return static_cast<int>(it->second.size());
+        }
+        return 0;
+    }
+    auto count_shards(const Hash& root) const -> int
+    {
+        auto it = stripes_.find(root);
+        if (it != stripes_.end()) {
+            return static_cast<int>(it->second.size());
+        }
+        return 0;
+    }
+    // 核心算法阈值判断
+    bool should_send_ready() const
+    {
+        // Algorithm: N-f ECHO or f+1 READY
+        if (!current_root_)
+            return false;
+        auto root = *current_root_;
+        return (count_echo(root) >= N_ - f_) || (count_ready(root) >= f_ + 1);
+    }
+
+    bool can_output() const
+    {
+        // Algorithm: 2f+1 READY and N-2f Shards
+        if (!current_root_)
+            return false;
+        auto root = *current_root_;
+        return (count_ready(root) >= (2 * f_) + 1) && (count_shards(root) >= N_ - 2 * f_);
+    }
+
+    // 辅助获取数据
+    const std::map<NodeId, std::vector<Byte>>& get_shards() const
+    {
+        if (!current_root_) {
+            throw std::runtime_error("No current root set");
+        }
+        auto root = *current_root_;
+        return stripes_.at(root);
+    }
+    Hash get_current_root() const
+    {
+        if (!current_root_) {
+            throw std::runtime_error("No current root set");
+        }
+        return *current_root_;
+    }
+
+    void mark_echo_sent()
+    {
+        echo_sent_ = true;
+        if (current_root_) {
+            echo_senders_[*current_root_].insert(pid_);
+        }
+    }
+    void mark_ready_sent()
+    {
+        ready_sent_ = true;
+        if (current_root_) {
+            ready_senders_[*current_root_].insert(pid_);
+        }
+    }
 
 private:
-    std::generator<Effect> handle_val(int sender, ValPayload p);
-    std::generator<Effect> handle_echo(int sender, EchoPayload p);
-    std::generator<Effect> handle_ready(int sender, ReadyPayload p);
-    std::generator<Effect> check_delivery(Hash root);
-
     // 配置参数
     int sid_, pid_, N_, f_, leader_;
-    int K_, EchoThreshold_, ReadyThreshold_, OutputThreshold_;
 
     // 状态
-    std::optional<Hash> from_leader_hash_;
+    // current_root_ 一旦设置就不会更改
+    bool echo_sent_ = false;
+    bool ready_sent_ = false;
+
+    std::optional<Hash> current_root_;
+
     std::map<Hash, std::map<int, std::vector<Byte>>> stripes_;
     std::map<Hash, std::set<int>> echo_senders_;
     std::map<Hash, std::set<int>> ready_senders_;
-    std::map<Hash, bool> ready_sent_;
-    std::map<Hash, bool> delivered_;
 };
 
 } // namespace Honey::BFT::RBC

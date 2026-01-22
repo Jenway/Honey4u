@@ -10,17 +10,12 @@ target_sources(honey_core
     PRIVATE
         src/rbc/rbc_core.cc
         src/coin/coin_core.cc
-        src/ba/binary_agreement_core.cc
+        src/ba/ba_core.cc
 
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
         FILES ${HONEY_CORE_HEADERS}
-)
-
-target_link_libraries(honey_core
-    PUBLIC
-        Honey::Crypto
 )
 
 install(TARGETS honey_core
