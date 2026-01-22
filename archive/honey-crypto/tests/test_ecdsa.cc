@@ -4,8 +4,7 @@
 #include "crypto/common.hpp"
 #include "crypto/ecdsa.hpp"
 
-using namespace Honey::Crypto;
-using namespace Honey::Crypto::Ecdsa;
+namespace Honey::Crypto::Ecdsa {
 
 class EcdsaTest : public ::testing::Test {
 protected:
@@ -82,3 +81,5 @@ TEST_F(EcdsaTest, SignFailsWithInvalidPrivateKey)
     auto signature_res = sign(ctx, zero_priv_key, sample_msg_);
     ASSERT_FALSE(signature_res.has_value());
 }
+
+} // namespace Honey::Crypto::Ecdsa

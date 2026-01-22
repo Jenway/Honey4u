@@ -10,7 +10,9 @@
 
 namespace Honey::Crypto::MerkleTree {
 
-using Hash = std::array<Byte, 32>;
+constexpr std::int8_t SHA256_BYTES = 32;
+using SHA256Hash = std::array<std::byte, SHA256_BYTES>;
+using Hash = SHA256Hash;
 
 struct Proof {
     size_t leaf_index;
