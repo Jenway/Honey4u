@@ -1,0 +1,15 @@
+include(GoogleTest)
+
+macro(add_hbft_service_test TEST_NAME SOURCE)
+    add_executable(${TEST_NAME} ${SOURCE})
+    target_link_libraries(${TEST_NAME} PRIVATE Honey::Service Honey::Crypto Honey::Core STDEXEC::stdexec GTest::gtest_main)
+    gtest_discover_tests(${TEST_NAME})
+    set_target_properties(${TEST_NAME} PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+endmacro()
+
+add_hbft_service_test(crypto_service_test test_crypto_service.cc)
+add_hbft_service_test(common_coin_test test_common_coin.cc)
+add_hbft_service_test(acs_service_test test_acs.cc)
+add_hbft_service_test(rbc_service_test test_rbc.cc)
+add_hbft_service_test(ba_service_test test_ba.cc)
+add_hbft_service_test(honeybadger_service_test test_honeybadger_service.cc)
