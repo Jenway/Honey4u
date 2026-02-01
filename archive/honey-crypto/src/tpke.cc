@@ -1,9 +1,15 @@
 #include "crypto/threshold/tpke.hpp"
+#include "aes.hpp"
+#include "blst/P1_Affine.hpp"
+#include "blst/P2_Affine.hpp"
+#include "blst/PT.hpp"
+#include "blst/ops.hpp"
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
-#include "crypto/blst/PT.hpp"
 #include "crypto/blst/Scalar.hpp"
-#include "crypto/common.hpp"
+#include "crypto/error.hpp"
+#include "impl_utils.hpp"
+#include "threshold/key_gen.hpp"
 #include "threshold/math.hpp"
 #include "threshold/utils.hpp"
 #include <array>
@@ -16,6 +22,19 @@
 #include <vector>
 
 namespace Honey::Crypto::Tpke {
+
+struct Context::Impl {
+    Aes::Context aes_ctx;
+};
+
+Context::Context()
+    : pimpl_(std::make_unique<Impl>())
+{
+}
+Context::~Context() = default;
+Context::Context(Context&&) noexcept = default;
+Context& Context::operator=(Context&&) noexcept = default;
+
 namespace detail {
     Ciphertext encrypt_key(const TpkeVerificationParameters& public_params,
         std::span<const Byte, 32> symmetric_key)
@@ -23,10 +42,10 @@ namespace detail {
         auto random_scalar = *Scalar::random();
 
         P1 u = P1::generator();
-        u.mult(random_scalar);
+        bls::ops::mult(u, random_scalar);
 
         P1 mask_point = public_params.master_public_key;
-        mask_point.mult(random_scalar);
+        bls::ops::mult(mask_point, random_scalar);
         auto mask = Utils::hashG(mask_point);
 
         std::vector<Byte> v = Utils::xor_bytes(
@@ -34,7 +53,7 @@ namespace detail {
 
         P2 h = Utils::hashH(u, v);
         P2 w = h;
-        w.mult(random_scalar);
+        bls::ops::mult(w, random_scalar);
 
         return { .u_component = u, .v_component = v, .w_component = w };
     }
@@ -59,7 +78,7 @@ namespace detail {
         const Ciphertext& ciphertext)
     {
         DecryptionShare share_ui = ciphertext.u_component;
-        share_ui.mult(private_share.secret);
+        bls::ops::mult(share_ui, private_share.secret);
         return share_ui;
     }
 
@@ -85,28 +104,33 @@ namespace detail {
     }
 }
 
-HybridCiphertext encrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
+auto generate_keys(int players, int k) -> std::expected<TpkeKeySet, std::error_code>
+{
+    return Threshold::generate_keys<MasterPublicKey, VerificationKey>(players, k);
+}
+
+HybridCiphertext encrypt(Context& ctx, const TpkeVerificationParameters& public_params,
     BytesSpan plaintext)
 {
     std::array<Byte, 32> session_key {};
     RAND_bytes(
-        u8ptr(session_key.data()), session_key.size());
+        Honey::Crypto::impl::u8ptr(session_key.data()), session_key.size());
 
     Ciphertext key_ciphertext = detail::encrypt_key(public_params, session_key);
 
     std::vector<Byte> pt_bytes(plaintext.begin(), plaintext.end());
-    std::vector<Byte> data_ciphertext = *Aes::encrypt(ctx, { session_key.begin(), session_key.end() }, pt_bytes);
+    std::vector<Byte> data_ciphertext = *Aes::encrypt(ctx.impl()->aes_ctx, { session_key.begin(), session_key.end() }, pt_bytes);
 
     return { .key_ciphertext = key_ciphertext, .data_ciphertext = data_ciphertext };
 }
 [[nodiscard]]
-auto decrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
+auto decrypt(Context& ctx, const TpkeVerificationParameters& public_params,
     const HybridCiphertext& ciphertext,
     std::span<const PartialDecryption> shares)
     -> std::expected<std::vector<Byte>, std::error_code>
 {
     if (shares.size() < static_cast<size_t>(public_params.threshold)) {
-        return std::unexpected(std::make_error_code(std::errc::message_size));
+        return std::unexpected(make_error_code(Crypto::Error::NotEnoughShares));
     }
 
     auto interpolation_result = Crypto::Math::interpolate_at_zero(shares);
@@ -122,9 +146,9 @@ auto decrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
         mask);
 
     try {
-        return Aes::decrypt(ctx, session_key, ciphertext.data_ciphertext);
+        return Aes::decrypt(ctx.impl()->aes_ctx, session_key, ciphertext.data_ciphertext);
     } catch (const std::runtime_error& e) {
-        return std::unexpected(std::make_error_code(std::errc::illegal_byte_sequence));
+        return std::unexpected(make_error_code(Crypto::Error::OpenSSLError));
     }
 }
 } // namespace Honey::Crypto::Tpke

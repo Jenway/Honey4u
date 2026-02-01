@@ -1,3 +1,4 @@
+#pragma once
 #include <cstdint>
 #include <system_error>
 
@@ -6,6 +7,13 @@ enum class Error : std::uint8_t {
     Success = 0,
     BlstError,
     OpenSSLError,
+    InvalidShare,
+    VerificationFailed,
+    NotEnoughShares,
+    SerializationError,
+    InvalidCiphertext,
+    InvalidKey,
+    Unknown
 };
 
 class HoneyCryptoErrorCategory : public std::error_category {
@@ -21,8 +29,20 @@ public:
             return "Blst failure";
         case Error::OpenSSLError:
             return "OpenSSL failure";
+        case Error::InvalidShare:
+            return "Invalid share";
+        case Error::VerificationFailed:
+            return "Verification failed";
+        case Error::NotEnoughShares:
+            return "Not enough shares";
+        case Error::SerializationError:
+            return "Serialization error";
+        case Error::InvalidCiphertext:
+            return "Invalid ciphertext";
+        case Error::InvalidKey:
+            return "Invalid key";
         default:
-            return "Unknown Hoeny::Crypto error";
+            return "Unknown Honey::Crypto error";
         }
     }
 };

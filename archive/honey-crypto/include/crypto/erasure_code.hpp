@@ -5,7 +5,7 @@
 #include <system_error>
 #include <vector>
 
-#include "crypto/common.hpp"
+#include "crypto/types.hpp"
 
 namespace Honey::Crypto::ErasureCode {
 

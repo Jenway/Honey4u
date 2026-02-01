@@ -2,10 +2,13 @@ extern "C" {
 #include <blst.h>
 }
 
+#include "P1_Affine.hpp"
+#include "P2_Affine.hpp"
+#include "PT.hpp"
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
-#include "crypto/blst/PT.hpp"
 #include "impl_common.hpp"
+#include "impl_utils.hpp"
 
 namespace Honey::Crypto::bls {
 static_assert(sizeof(PT) == sizeof(blst_fp12), "PT size mismatch");
@@ -30,8 +33,8 @@ PT::PT(const P2_Affine& q)
 PT::PT(const P2_Affine& q, const P1_Affine& p)
 {
     blst_miller_loop(
-        to_native<blst_fp12>(this), 
-        to_native<blst_p2_affine>(&q), 
+        to_native<blst_fp12>(this),
+        to_native<blst_p2_affine>(&q),
         to_native<blst_p1_affine>(&p));
 }
 
@@ -41,8 +44,8 @@ PT::PT(const P2& q, const P1& p)
     P1_Affine p_aff = P1_Affine::from_P1(p);
 
     blst_miller_loop(
-        to_native<blst_fp12>(this), 
-        to_native<blst_p2_affine>(&q_aff), 
+        to_native<blst_fp12>(this),
+        to_native<blst_p2_affine>(&q_aff),
         to_native<blst_p1_affine>(&p_aff));
 }
 

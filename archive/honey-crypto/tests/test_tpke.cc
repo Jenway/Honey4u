@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <ranges>
 #include <string>
 #include <vector>
 
@@ -26,7 +27,7 @@ public:
     const int K = 3;
 
     std::optional<TpkeKeySet> key_set_;
-    Aes::Context ctx;
+    Context ctx;
 };
 
 TEST_F(TpkeTest, HybridEncryptionDecryptionFlow)

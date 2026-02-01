@@ -1,11 +1,10 @@
 #pragma once
-#include "crypto/aes.hpp"
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
 #include "crypto/blst/Scalar.hpp"
-#include "crypto/common.hpp"
-#include "crypto/threshold/key_gen.hpp"
+#include "crypto/threshold/types.hpp"
 #include <expected>
+#include <memory>
 #include <span>
 #include <system_error>
 #include <vector>
@@ -29,6 +28,11 @@ struct Ciphertext {
     P1 u_component; // U
     std::vector<Byte> v_component; // V
     P2 w_component; // W
+
+    // Serialization
+    [[nodiscard]] std::vector<Byte> serialize() const;
+    [[nodiscard]] static std::expected<Ciphertext, std::error_code>
+    deserialize(std::span<const Byte> data);
 };
 
 struct PartialDecryption {
@@ -39,20 +43,37 @@ struct PartialDecryption {
 struct HybridCiphertext {
     Ciphertext key_ciphertext;
     std::vector<Byte> data_ciphertext;
+
+    // Serialization
+    [[nodiscard]] std::vector<Byte> serialize() const;
+    [[nodiscard]] static std::expected<HybridCiphertext, std::error_code>
+    deserialize(std::span<const Byte> data);
 };
 
-inline auto generate_keys(int players, int k)
-    -> std::expected<TpkeKeySet, std::error_code>
-{
-    return Threshold::generate_keys<MasterPublicKey, VerificationKey>(players, k);
-}
+// Opaque context for encryption/decryption state (e.g., AES context)
+class Context {
+public:
+    Context();
+    ~Context();
+    Context(Context&&) noexcept;
+    Context& operator=(Context&&) noexcept;
+
+    // Implementation details hidden via Pimpl
+    struct Impl;
+    Impl* impl() { return pimpl_.get(); }
+
+private:
+    std::unique_ptr<Impl> pimpl_;
+};
+
+auto generate_keys(int players, int k) -> std::expected<TpkeKeySet, std::error_code>;
 
 [[nodiscard]]
-HybridCiphertext encrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
+HybridCiphertext encrypt(Context& ctx, const TpkeVerificationParameters& public_params,
     BytesSpan plaintext);
 
 [[nodiscard]]
-auto decrypt(Aes::Context& ctx, const TpkeVerificationParameters& public_params,
+auto decrypt(Context& ctx, const TpkeVerificationParameters& public_params,
     const HybridCiphertext& ciphertext,
     std::span<const PartialDecryption> shares)
     -> std::expected<std::vector<Byte>, std::error_code>;

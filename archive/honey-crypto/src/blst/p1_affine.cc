@@ -2,10 +2,12 @@ extern "C" {
 #include <blst.h>
 }
 
+#include "P1_Affine.hpp"
+#include "P2_Affine.hpp"
 #include "crypto/blst/P1.hpp"
-#include "crypto/common.hpp"
 #include "crypto/error.hpp"
 #include "impl_common.hpp"
+#include "impl_utils.hpp"
 #include <system_error>
 
 namespace Honey::Crypto::bls {

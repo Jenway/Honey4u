@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../blst/ops.hpp"
 #include "crypto/blst/Scalar.hpp"
 #include "crypto/threshold/types.hpp"
 #include <algorithm>
@@ -12,11 +13,12 @@
 namespace Honey::Crypto::Threshold {
 
 using Scalar = Honey::Crypto::bls::Scalar;
+using namespace Honey::Crypto::bls::ops;
 
 template <typename T>
 concept IsGroupElement = requires(T a, Scalar s) {
     { T::generator() } -> std::same_as<T>;
-    { a.mult(s) } -> std::same_as<T&>;
+    mult(a, s);
 };
 
 inline std::vector<Scalar> random_poly(int degree)
@@ -31,8 +33,11 @@ inline Scalar polynom_eval(Scalar x, std::span<const Scalar> coeffs)
     if (coeffs.empty())
         return Scalar::from_uint64(0);
     Scalar res = coeffs.back();
-    for (auto it = coeffs.rbegin() + 1; it != coeffs.rend(); ++it)
-        res = res * x + (*it);
+    for (auto it = coeffs.rbegin() + 1; it != coeffs.rend(); ++it) {
+        // res = res * x + (*it);
+        mult(res, x);
+        add(res, *it);
+    }
     return res;
 }
 
@@ -50,7 +55,8 @@ auto generate_keys(int players, int k)
     const auto& master_secret = secret_polynomial[0];
 
     // Calculate the master public key: G * master_secret
-    auto master_public_key = MasterKeyT::generator().mult(master_secret);
+    auto master_public_key = MasterKeyT::generator();
+    mult(master_public_key, master_secret);
 
     std::vector<PrivateKeyShare> private_shares;
     std::vector<ShareKeyT> verification_vector;
@@ -68,7 +74,7 @@ auto generate_keys(int players, int k)
 
         // Calculate the corresponding public verification key for this share: H * share
         auto share_public_key = ShareKeyT::generator();
-        share_public_key.mult(player_secret_share);
+        mult(share_public_key, player_secret_share);
         verification_vector.push_back(share_public_key);
     }
 

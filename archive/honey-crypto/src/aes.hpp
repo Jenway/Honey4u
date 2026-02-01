@@ -1,6 +1,6 @@
 #pragma once
 
-#include "crypto/common.hpp"
+#include "crypto/types.hpp"
 #include <array>
 #include <expected>
 #include <system_error>

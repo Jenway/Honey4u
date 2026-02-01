@@ -1,9 +1,11 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace Honey::Crypto {
 
@@ -12,53 +14,18 @@ using BytesSpan = std::span<const Byte>;
 using MutableBytesSpan = std::span<Byte>;
 using Hash256 = std::array<Byte, 32>;
 
-namespace Utils {
-    Hash256 sha256(BytesSpan data);
-} // namespace Utils
-
 inline BytesSpan as_span(std::string_view s) noexcept
 {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
     return { reinterpret_cast<const Byte*>(s.data()), s.size() };
 }
 
-inline const uint8_t* u8ptr(std::span<const std::byte> s)
+inline BytesSpan as_span(std::span<const uint8_t> s) noexcept
 {
-    return reinterpret_cast<const uint8_t*>(s.data());
-}
-
-inline const uint8_t* u8ptr(std::span<const uint8_t> s)
-{
-    return s.data();
-}
-
-inline const uint8_t* u8ptr(const void* ptr)
-{
-    return reinterpret_cast<const uint8_t*>(ptr);
-}
-
-inline uint8_t* u8ptr(std::span<std::byte> s)
-{
-    return reinterpret_cast<uint8_t*>(s.data());
-}
-
-inline uint8_t* u8ptr(std::span<uint8_t> s)
-{
-    return s.data();
-}
-
-inline const uint8_t* u8ptr(const std::byte* ptr)
-{
-    return reinterpret_cast<const uint8_t*>(ptr);
-}
-
-inline uint8_t* u8ptr(std::byte* ptr)
-{
-    return reinterpret_cast<uint8_t*>(ptr);
+    return { reinterpret_cast<const Byte*>(s.data()), s.size() };
 }
 
 namespace Utils {
-
     template <size_t N>
     constexpr std::array<std::byte, N> make_bytes(const uint8_t (&arr)[N])
     {

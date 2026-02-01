@@ -1,4 +1,5 @@
 #include "crypto/erasure_code.hpp"
+#include "impl_utils.hpp"
 #include <cstdint>
 #include <cstring>
 #include <isa-l/erasure_code.h>

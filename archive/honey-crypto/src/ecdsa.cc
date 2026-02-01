@@ -1,12 +1,12 @@
 #include "crypto/ecdsa.hpp"
-#include "crypto/common.hpp"
+#include "crypto/hash.hpp"
+#include "impl_utils.hpp"
 #include <cstddef>
 #include <secp256k1.h>
 #include <system_error>
 #include <utility>
 
 namespace Honey::Crypto::Ecdsa {
-using Crypto::u8ptr;
 constexpr auto SECP256K1_INIT_FLAG = SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY;
 
 Context::Context()

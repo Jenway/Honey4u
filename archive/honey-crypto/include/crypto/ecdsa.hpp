@@ -1,10 +1,9 @@
 #pragma once
 
+#include "crypto/types.hpp"
 #include <array>
 #include <expected>
 #include <system_error>
-
-#include "common.hpp"
 
 struct secp256k1_context_struct;
 

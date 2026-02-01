@@ -1,10 +1,12 @@
 #include "crypto/merkle_tree.hpp"
-#include "threshold/utils.hpp"
+#include "impl_utils.hpp"
 #include <bit>
 #include <cstring>
 #include <openssl/evp.h>
 
 namespace Honey::Crypto::MerkleTree {
+
+using namespace Honey::Crypto::impl;
 
 namespace {
     constexpr Byte LEAF_PREFIX { 0x00 };

@@ -1,81 +1,40 @@
 #pragma once
 
-#include "crypto/blst/Scalar.hpp"
-#include "crypto/common.hpp"
+#include "blst_abi_config.hpp"
 #include <array>
+#include <crypto/types.hpp>
 #include <cstddef>
-#include <cstdint>
+#include <expected>
 #include <system_error>
 
 namespace Honey::Crypto::bls {
 
-class P2_Affine;
-class P1;
+class P1_Affine;
 
-// P1_Affine (G1 Affine Point)
-//
-// Size: 96 bytes (384 bits * 2 coordinates)
-class P1_Affine {
-public:
-    using limb_t = uint64_t;
-    static constexpr size_t BYTE_LENGTH = 96;
-    static constexpr size_t LIMB_COUNT = BYTE_LENGTH / sizeof(limb_t);
-
-    static P1_Affine generator();
-    static P1_Affine from_P1(const P1& jac);
-
-    friend bool operator==(const P1_Affine& a, const P1_Affine& b) = default;
-
-    [[nodiscard]] std::error_code core_verify(
-        const P2_Affine& pk,
-        bool hash_or_encode,
-        BytesSpan msg,
-        BytesSpan dst,
-        BytesSpan aug = {}) const;
-
-private:
-    std::array<limb_t, LIMB_COUNT> storage;
-};
-
-// P1 (G1 Jacobian Point)
-//
-// Size: 144 bytes (384 bits * 3 coordinates)
+/// P1 (G1 Jacobian Point)
 class P1 {
 public:
-    using limb_t = uint64_t;
-    static constexpr size_t BYTE_LENGTH = 144;
-    static constexpr size_t LIMB_COUNT = BYTE_LENGTH / sizeof(limb_t);
-    static constexpr size_t SERIALIZED_SIZE = 96;
-    static constexpr size_t COMPRESSED_SIZE = 48;
+    static constexpr size_t ALIGN = abi::blst_p1_align;
+    static constexpr size_t BYTE_LENGTH = abi::blst_p1_size;
+    static constexpr size_t SERIALIZED_SIZE = abi::blst_p1_serialized_size;
+    static constexpr size_t COMPRESSED_SIZE = abi::blst_p1_compressed_size;
 
     static P1 generator();
     static P1 identity(); // 无穷远点/零点
-    static P1 from_affine(const P1_Affine& a);
     static P1 from_hash(BytesSpan msg, BytesSpan dst = {});
 
-    P1& add(const P1& a);
-    P1& add(const P1_Affine& a);
-
-    P1& mult(const Scalar& s);
-
-    P1& neg();
-    P1 operator-() const;
-
-    friend bool operator==(const P1& a, const P1& b);
-
-    P1& sign_with(const Scalar& s);
-
-    P1& hash_to(
-        BytesSpan msg,
-        BytesSpan dst,
-        BytesSpan aug = {});
+    friend bool operator==(const P1& a, const P1& b) = default;
 
     [[nodiscard]] std::array<Byte, SERIALIZED_SIZE> serialize() const;
     [[nodiscard]] std::array<Byte, COMPRESSED_SIZE> compress() const;
 
+    [[nodiscard]] static std::expected<P1, std::error_code>
+    deserialize(std::span<const Byte, SERIALIZED_SIZE> data);
+    [[nodiscard]] static std::expected<P1, std::error_code>
+    uncompress(std::span<const Byte, COMPRESSED_SIZE> data);
+
 private:
-    // 18 * 8 = 144 bytes
-    std::array<limb_t, LIMB_COUNT> storage;
+    alignas(ALIGN) std::array<std::byte, BYTE_LENGTH> storage;
 };
 
 } // namespace Honey::Crypto::bls

@@ -2,19 +2,9 @@
 
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
-#include "crypto/common.hpp"
-#include <memory>
-#include <openssl/evp.h>
+#include "crypto/types.hpp"
 #include <vector>
 
-namespace Honey::Crypto::impl {
-
-using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX,
-    decltype([](EVP_MD_CTX* ctx) {
-        EVP_MD_CTX_free(ctx);
-    })>;
-
-} // namespace Honey::Crypto::impl
 namespace Honey::Crypto::Utils {
 
 using P1 = bls::P1;

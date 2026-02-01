@@ -1,5 +1,6 @@
-#include "crypto/aes.hpp"
-#include "crypto/common.hpp"
+#include "aes.hpp"
+#include "crypto/error.hpp"
+#include "impl_utils.hpp"
 #include <cstdint>
 #include <cstring>
 #include <openssl/evp.h>
@@ -56,19 +57,19 @@ auto encrypt(Context& ctx, BytesSpan key, BytesSpan plaintext)
 
     // 初始化加密操作 (复用上下文时，Init 会重置内部状态)
     if (1 != EVP_EncryptInit_ex(native_ctx, EVP_aes_256_cbc(), nullptr, u8ptr(key.data()), u8ptr(iv.data()))) {
-        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+        return std::unexpected(make_error_code(Error::OpenSSLError));
     }
 
     // 从第 16 字节开始写密文，前 16 字节留给 IV
     uint8_t* p_out = u8ptr(ciphertext.data()) + 16;
 
     if (1 != EVP_EncryptUpdate(native_ctx, p_out, &len, u8ptr(plaintext), static_cast<int>(plaintext.size()))) {
-        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+        return std::unexpected(make_error_code(Error::OpenSSLError));
     }
     ciphertext_len += len;
 
     if (1 != EVP_EncryptFinal_ex(native_ctx, p_out + len, &len)) {
-        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+        return std::unexpected(make_error_code(Error::OpenSSLError));
     }
     ciphertext_len += len;
 
@@ -97,22 +98,22 @@ auto decrypt(Context& ctx, BytesSpan key, BytesSpan ciphertext)
     int plaintext_len = 0;
 
     if (1 != EVP_DecryptInit_ex(native_ctx, EVP_aes_256_cbc(), nullptr, u8ptr(key), u8ptr(iv))) {
-        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+        return std::unexpected(make_error_code(Error::OpenSSLError));
     }
 
     if (1 != EVP_DecryptUpdate(native_ctx, u8ptr(plaintext.data()), &len, u8ptr(data), static_cast<int>(data.size()))) {
-        return std::unexpected(std::make_error_code(std::errc::protocol_error));
+        return std::unexpected(make_error_code(Error::OpenSSLError));
     }
     plaintext_len += len;
 
     // Final 失败通常意味着 Padding 校验失败或 Key 错误
     if (1 != EVP_DecryptFinal_ex(native_ctx, u8ptr(plaintext.data()) + len, &len)) {
-        // 解密失败（数据损坏或密钥错）在 std::errc 中最接近的是 bad_message
-        return std::unexpected(std::make_error_code(std::errc::bad_message));
+        // 解密失败（数据损坏或密钥错）
+        return std::unexpected(make_error_code(Error::OpenSSLError));
     }
     plaintext_len += len;
 
     plaintext.resize(plaintext_len);
     return plaintext;
 }
-}  // namespace Honey::Crypto::Aes
+} // namespace Honey::Crypto::Aes

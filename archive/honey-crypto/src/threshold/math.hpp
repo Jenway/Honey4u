@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../blst/ops.hpp"
 #include "crypto/blst/Scalar.hpp"
 #include <span>
 #include <unordered_set>
@@ -8,12 +9,15 @@
 namespace Honey::Crypto::Math {
 
 using Scalar = Honey::Crypto::bls::Scalar;
+using namespace Honey::Crypto::bls::ops;
 
 template <typename T>
 concept Interpolatable = requires(T a, T b, Scalar s) {
     { a.identity() } -> std::same_as<T>;
-    { a.add(b) } -> std::same_as<T&>;
-    { a.mult(s) } -> std::same_as<T&>;
+    // Check for ops::add, ops::mult availability via ADL or explicit ns
+    // Since we used namespace ops, we can just check add(a, b)
+    add(a, b);
+    mult(a, s);
 };
 
 template <typename T>
@@ -63,16 +67,25 @@ auto interpolate_at_zero(std::span<const ShareT> shares)
         for (size_t j = 0; j < k; ++j) {
             if (i == j)
                 continue;
-            numerator *= -xs[j];
-            denominator *= (xs[i] - xs[j]);
+
+            // numerator *= -xs[j]
+            Scalar neg_xj = neg(xs[j]);
+            mult(numerator, neg_xj);
+
+            // denominator *= (xs[i] - xs[j])
+            Scalar diff = xs[i];
+            sub(diff, xs[j]);
+            mult(denominator, diff);
         }
-        Scalar lambda = numerator * denominator.inverse();
+        Scalar inv_denom = inverse(denominator);
+        Scalar lambda = numerator;
+        mult(lambda, inv_denom);
 
         // 计算 λ_i(0) * y_i
         ValueT term = shares[i].value; // This is a copy
-        term.mult(lambda);
+        mult(term, lambda);
 
-        result.add(term);
+        add(result, term);
     }
 
     return result;

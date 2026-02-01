@@ -1,4 +1,3 @@
-#include "crypto/error.hpp"
 #include "crypto/threshold/tbls.hpp"
 #include <gtest/gtest.h>
 #include <string>

@@ -2,8 +2,8 @@
 
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
-#include "crypto/common.hpp"
-#include "crypto/threshold/key_gen.hpp"
+#include "crypto/threshold/types.hpp"
+#include "crypto/types.hpp"
 #include <expected>
 #include <span>
 #include <system_error>
@@ -29,11 +29,7 @@ struct PartialSignature {
     SignatureShare value;
 };
 
-inline auto generate_keys(int players, int k)
-    -> std::expected<TblsKeySet, std::error_code>
-{
-    return Threshold::generate_keys<MasterPublicKey, VerificationKey>(players, k);
-}
+auto generate_keys(int players, int k) -> std::expected<TblsKeySet, std::error_code>;
 
 [[nodiscard]]
 PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message);

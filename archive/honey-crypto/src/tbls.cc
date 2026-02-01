@@ -1,9 +1,11 @@
 #include "crypto/threshold/tbls.hpp"
+#include "blst/P1_Affine.hpp"
+#include "blst/P2_Affine.hpp"
+#include "blst/ops.hpp"
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
 #include "crypto/blst/Scalar.hpp"
-#include "crypto/common.hpp"
-#include "crypto/error.hpp"
+#include "threshold/key_gen.hpp"
 #include "threshold/math.hpp"
 #include <cstring>
 #include <expected>
@@ -21,13 +23,18 @@ namespace Constants {
     inline constexpr std::string_view DST_SIG = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
 } // namespace Constants
 
+auto generate_keys(int players, int k) -> std::expected<TblsKeySet, std::error_code>
+{
+    return Threshold::generate_keys<MasterPublicKey, VerificationKey>(players, k);
+}
+
 // 生成签名份额
 [[nodiscard]]
 PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message)
 {
     auto h = P1::from_hash(message, as_span(Constants::DST_SIG));
 
-    h.sign_with(share.secret);
+    bls::ops::sign_with(h, share.secret);
 
     return PartialSignature {
         .player_id = share.player_id,
