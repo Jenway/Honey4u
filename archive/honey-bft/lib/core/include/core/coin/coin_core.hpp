@@ -2,76 +2,76 @@
 
 #include "core/coin/messages.hpp"
 #include <cstddef>
+#include <generator>
 #include <map>
 #include <set>
+#include <span>
 #include <vector>
 
 namespace Honey::BFT::Coin {
 
+struct CoinConfig {
+    int session_id;
+    int node_id;
+    int total_nodes;
+    int fault_tolerance;
+    int leader_id;
+};
+
+struct Action {
+    enum class Type : uint8_t {
+        BroadcastShare,
+        CombineSignatures,
+        Output
+    } type;
+
+    int round {};
+    SignatureShare my_share {};
+    std::span<const PartialSignature> shares_to_combine {};
+    uint8_t output_bit {};
+};
+
 class Core {
 public:
-    Core(int sid, int pid, int N, int f);
+    explicit Core(const CoinConfig& config);
 
-    /**
-     * @brief Check if we've already requested this round
-     */
-    bool has_requested(int round) const;
+    std::generator<Action> request_coin(int round, const SignatureShare& my_share);
+    std::generator<Action> on_share(int round, int sender, const SignatureShare& share);
+    void mark_finished(int round, uint8_t bit);
 
-    /**
-     * @brief Mark a round as requested
-     */
-    void mark_requested(int round);
+    [[nodiscard]] bool is_finished(int round) const
+    {
+        return finished_.contains(round);
+    }
 
-    /**
-     * @brief Add a verified share (driver must verify first)
-     * @return true if threshold is now met for this round
-     */
-    bool add_share(int round, int sender, const SignatureShare& share);
+    [[nodiscard]] uint8_t get_output(int round) const
+    {
+        return outputs_.at(round);
+    }
 
-    /**
-     * @brief Check if threshold is met for a round
-     */
-    bool is_threshold_met(int round) const;
+    [[nodiscard]] std::vector<std::byte> make_payload_bytes(int round) const;
 
-    /**
-     * @brief Get collected shares for combining
-     */
-    std::vector<PartialSignature> get_shares(int round) const;
-
-    /**
-     * @brief Check if round has finished (output generated)
-     */
-    bool is_finished(int round) const;
-
-    /**
-     * @brief Mark round as finished
-     */
-    void mark_finished(int round);
-
-    /**
-     * @brief Build message payload bytes for a round
-     */
-    std::vector<std::byte> make_payload_bytes(int round) const;
-
-    // Getters
-    int session_id() const { return sid_; }
-    int node_id() const { return pid_; }
-    int threshold() const { return f_ + 1; }
+    [[nodiscard]] int session_id() const { return sid_; }
+    [[nodiscard]] int node_id() const { return pid_; }
+    [[nodiscard]] int threshold() const { return f_ + 1; }
 
 private:
-    int sid_;
-    int pid_;
-    int N_;
-    int f_;
+    std::generator<Action> try_combine(int round);
+
+    int sid_, pid_, N_, f_;
 
     // State: [Round -> [Sender -> SignatureShare]]
     std::map<int, std::map<int, SignatureShare>> received_;
 
-    // Finished rounds
+    // Finished rounds and their outputs
     std::set<int> finished_;
+    std::map<int, uint8_t> outputs_;
 
     // Requested rounds
     std::set<int> requested_;
+
+    // Track if combination has been triggered
+    std::map<int, bool> combination_triggered_;
 };
 
 } // namespace Honey::BFT::Coin

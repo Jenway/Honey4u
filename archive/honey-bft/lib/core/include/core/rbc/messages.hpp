@@ -1,5 +1,4 @@
 #pragma once
-
 #include "core/common.hpp"
 #include <array>
 #include <cstddef>
@@ -34,6 +33,12 @@ struct ReadyPayload {
 using RBCPayload = std::variant<ValPayload, EchoPayload, ReadyPayload>;
 
 struct RBCMessage {
+    enum class Type : uint8_t {
+        Leader,
+        Val,
+        Echo,
+        Ready
+    } type;
     NodeId sender {};
     int session_id {};
     RBCPayload payload;
