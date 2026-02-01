@@ -1,22 +1,9 @@
 add_library(honey_crypto STATIC)
 add_library(Honey::Crypto ALIAS honey_crypto)
 
-# Public headers to expose to users
-set(HONEY_CRYPTO_PUBLIC_HEADERS
-    # Foundation layer
-    include/crypto/common.hpp
-    include/crypto/error.hpp
-    include/crypto/merkle_tree.hpp
-    include/crypto/erasure_code.hpp
-    include/crypto/ecdsa.hpp
-    # BLS12-381 curve primitives
-    include/crypto/blst/Scalar.hpp
-    include/crypto/blst/P1.hpp
-    include/crypto/blst/P2.hpp
-    # Threshold cryptography
-    include/crypto/threshold/types.hpp
-    include/crypto/threshold/tbls.hpp
-    include/crypto/threshold/tpke.hpp
+file(GLOB_RECURSE HONEY_CRYPTO_HEADERS
+    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    include/*.h include/*.hpp include/**/*.h include/**/*.hpp
 )
 
 target_sources(honey_crypto
@@ -39,7 +26,7 @@ target_sources(honey_crypto
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
-        FILES ${HONEY_CRYPTO_PUBLIC_HEADERS}
+        FILES ${HONEY_CRYPTO_HEADERS}
 )
 
 target_compile_features(honey_crypto PUBLIC cxx_std_23)
