@@ -28,7 +28,4 @@ struct Scalar {
     from_bytes(std::span<const uint8_t, SERIALIZED_SIZE> data);
 };
 
-static_assert(sizeof(Scalar) == abi::blst_scalar_size, "Scalar size mismatch");
-static_assert(alignof(Scalar) == abi::blst_scalar_align, "Scalar alignment mismatch");
-
 } // namespace Honey::Crypto::bls

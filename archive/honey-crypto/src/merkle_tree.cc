@@ -2,11 +2,12 @@
 #include "impl_utils.hpp"
 #include <bit>
 #include <cstring>
+#include <expected>
 #include <openssl/evp.h>
 
 namespace Honey::Crypto::MerkleTree {
 
-using namespace Honey::Crypto::impl;
+// using namespace Honey::Crypto::impl;
 
 namespace {
     constexpr Byte LEAF_PREFIX { 0x00 };
@@ -34,29 +35,27 @@ namespace {
 
 } // namespace
 
-Tree Tree::build(std::vector<std::vector<Byte>>&& leaves)
+TreeData build_and_prove(std::span<const std::vector<Byte>> leaves)
 {
-    Tree tree;
-    tree.leaves_ = std::move(leaves);
-
-    if (tree.leaves_.empty()) {
-        return tree;
+    if (leaves.empty()) {
+        return TreeData {};
     }
 
     impl::EvpMdCtxPtr ctx(EVP_MD_CTX_new());
     if (!ctx)
         return {};
 
-    const size_t N = tree.leaves_.size();
+    const size_t N = leaves.size();
     const size_t P = std::bit_ceil(N);
-    tree.nodes_.resize(2 * P);
+
+    std::vector<Hash> nodes(2 * P);
 
     // 1. Hash actual leaves
     for (size_t i = 0; i < N; ++i) {
-        auto res = hash_leaf(ctx.get(), tree.leaves_[i]);
-        if (!res)
+        if (auto res = hash_leaf(ctx.get(), leaves[i]); res)
+            nodes[P + i] = *res;
+        else
             return {};
-        tree.nodes_[P + i] = *res;
     }
 
     // 2. Hash padding leaves
@@ -65,23 +64,37 @@ Tree Tree::build(std::vector<std::vector<Byte>>&& leaves)
         if (!res)
             return {};
         for (size_t i = N; i < P; ++i) {
-            tree.nodes_[P + i] = *res;
+            nodes[P + i] = *res;
         }
     }
 
     // 3. Hash internal nodes
     for (size_t i = P - 1; i > 0; --i) {
-        auto res = hash_internal(ctx.get(), tree.nodes_[2 * i], tree.nodes_[(2 * i) + 1]);
+        auto res = hash_internal(ctx.get(), nodes[2 * i], nodes[(2 * i) + 1]);
         if (!res)
             return {};
-        tree.nodes_[i] = *res;
+        nodes[i] = *res;
     }
 
-    if (!tree.nodes_.empty()) {
-        tree.root_hash_ = tree.nodes_[1];
+    TreeData result;
+    result.root = nodes[1];
+    result.proofs.reserve(N);
+
+    const size_t padded_leaf_count = P;
+    for (size_t i = 0; i < N; ++i) {
+        std::vector<Hash> siblings;
+        siblings.reserve(std::bit_width(padded_leaf_count));
+
+        for (size_t t = i + padded_leaf_count; t > 1; t >>= 1U) {
+            siblings.push_back(nodes[t ^ 1U]);
+        }
+
+        result.proofs.push_back(Proof {
+            .leaf_index = i,
+            .siblings = std::move(siblings) });
     }
 
-    return tree;
+    return result;
 }
 
 bool verify(BytesSpan leaf, const Proof& proof, const Hash& root) noexcept
@@ -107,31 +120,9 @@ bool verify(BytesSpan leaf, const Proof& proof, const Hash& root) noexcept
         if (!next_acc_res)
             return false;
         acc = *next_acc_res;
-        idx >>= 1;
+        idx >>= 1U;
     }
     return acc == root;
-}
-
-std::expected<Proof, std::error_code> Tree::prove(size_type leaf_index) const
-{
-    if (leaf_index >= leaves_.size()) {
-        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-    }
-
-    const size_t padded_leaf_count = nodes_.size() / 2;
-    std::vector<Hash> siblings;
-    siblings.reserve(std::bit_width(padded_leaf_count));
-
-    for (size_t t = leaf_index + padded_leaf_count; t > 1; t >>= 1) {
-        siblings.push_back(nodes_[t ^ 1]);
-    }
-
-    return Proof { .leaf_index = leaf_index, .siblings = std::move(siblings) };
-}
-
-Tree::const_reference Tree::leaf(size_type leaf_index) const
-{
-    return leaves_.at(leaf_index); // .at() provides bounds checking
 }
 
 } // namespace Honey::Crypto::MerkleTree
