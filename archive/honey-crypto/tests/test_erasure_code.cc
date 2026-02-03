@@ -1,6 +1,5 @@
 #include "crypto/erasure_code.hpp"
 #include <gtest/gtest.h>
-#include <map>
 #include <random>
 #include <vector>
 
@@ -40,6 +39,8 @@ protected:
     }
 };
 
+using ErasureT = std::vector<std::pair<int, std::vector<Byte>>>;
+
 // 测试 1: 基础编码与完整解码
 TEST_F(ErasureCodeTest, BasicRoundTrip)
 {
@@ -52,9 +53,10 @@ TEST_F(ErasureCodeTest, BasicRoundTrip)
     ASSERT_EQ(shards.size(), N);
 
     // Decode with ALL shards
-    std::map<int, std::vector<Byte>> received;
+    ErasureT received;
+    received.reserve(N);
     for (int i = 0; i < N; ++i)
-        received[i] = shards[i];
+        received.emplace_back(i, shards[i]);
 
     auto decoded_res = decode(*ctx, received);
     ASSERT_TRUE(decoded_res.has_value());
@@ -69,11 +71,7 @@ TEST_F(ErasureCodeTest, RecoverFromMinimum)
     auto shards = *encode(*ctx, data);
 
     // 挑选 K 个不连续的分片，例如索引 1, 3, 5, 9
-    std::map<int, std::vector<Byte>> received;
-    received[1] = shards[1];
-    received[3] = shards[3];
-    received[5] = shards[5];
-    received[9] = shards[9];
+    ErasureT received { { 1, shards[1] }, { 3, shards[3] }, { 5, shards[5] }, { 9, shards[9] } };
 
     ASSERT_EQ(received.size(), K);
 
@@ -90,9 +88,9 @@ TEST_F(ErasureCodeTest, IdentityFastPath)
 
     auto shards = *encode(*ctx, data);
 
-    std::map<int, std::vector<Byte>> received;
+    ErasureT received;
     for (int i = 0; i < K; ++i)
-        received[i] = shards[i];
+        received.emplace_back(i, shards[i]);
 
     auto decoded_res = decode(*ctx, received);
     ASSERT_TRUE(decoded_res.has_value());
@@ -107,9 +105,9 @@ TEST_F(ErasureCodeTest, SmallDataAndPadding)
     // 或者你的实现如果 check size > 0 可能报错。假设允许空。
     auto empty_res = encode(*ctx, {});
     if (empty_res) {
-        std::map<int, std::vector<Byte>> recv;
+        ErasureT recv;
         for (int i = 0; i < K; ++i)
-            recv[i] = (*empty_res)[i];
+            recv.emplace_back(i, (*empty_res)[i]);
         auto dec = decode(*ctx, recv);
         ASSERT_TRUE(dec.has_value());
         EXPECT_TRUE(dec->empty());
@@ -120,9 +118,9 @@ TEST_F(ErasureCodeTest, SmallDataAndPadding)
     auto shards = *encode(*ctx, one_byte);
 
     // 丢掉前 K-1 个，只用最后一个和 parity
-    std::map<int, std::vector<Byte>> recv_mixed;
+    ErasureT recv_mixed;
     for (int i = 0; i < K; ++i)
-        recv_mixed[N - 1 - i] = shards[N - 1 - i];
+        recv_mixed.emplace_back(N - 1 - i, shards[N - 1 - i]);
 
     auto dec_one = decode(*ctx, recv_mixed);
     ASSERT_TRUE(dec_one.has_value());
@@ -136,16 +134,13 @@ TEST_F(ErasureCodeTest, Errors)
     auto shards = *encode(*ctx, data);
 
     // 1. 分片不足
-    std::map<int, std::vector<Byte>> not_enough;
-    not_enough[0] = shards[0];
-    not_enough[1] = shards[1]; // 只给 2 个，需要 K 个
+    ErasureT not_enough { { 0, shards[0] }, { 1, shards[1] } }; // 只给 2 个，需要 K 个
     EXPECT_FALSE(decode(*ctx, not_enough).has_value());
 
     // 2. 分片大小不一致
-    std::map<int, std::vector<Byte>> bad_size;
-    for (int i = 0; i < K; ++i)
-        bad_size[i] = shards[i];
-    bad_size[0].pop_back(); // 破坏大小
+    ErasureT bad_size;
+    for (int i = 1; i < K; ++i)
+        bad_size.emplace_back(i, shards[i]);
     EXPECT_FALSE(decode(*ctx, bad_size).has_value());
 
     // 3. 无效参数 (K > N)

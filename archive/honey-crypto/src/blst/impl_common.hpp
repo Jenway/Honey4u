@@ -1,9 +1,5 @@
 #pragma once
 
-extern "C" {
-#include <blst.h>
-}
-
 #if defined(__cpp_lib_start_lifetime_as)
 #include <memory>
 #endif
@@ -17,6 +13,7 @@ namespace Honey::Crypto::impl {
 template <typename BlstT, typename WrapperT>
 inline BlstT* to_native(WrapperT* w)
 {
+
 #if defined(__cpp_lib_start_lifetime_as)
     return std::start_lifetime_as<BlstT>(reinterpret_cast<void*>(w));
 #else

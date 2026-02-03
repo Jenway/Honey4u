@@ -23,7 +23,7 @@ public:
     static P1 identity(); // 无穷远点/零点
     static P1 from_hash(BytesSpan msg, BytesSpan dst = {});
 
-    friend bool operator==(const P1& a, const P1& b) = default;
+    [[nodiscard]] bool equals(const P1&) const;
 
     [[nodiscard]] std::array<Byte, SERIALIZED_SIZE> serialize() const;
     [[nodiscard]] std::array<Byte, COMPRESSED_SIZE> compress() const;

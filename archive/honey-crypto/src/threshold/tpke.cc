@@ -1,17 +1,11 @@
 #include "crypto/threshold/tpke.hpp"
 #include "aes.hpp"
-#include "blst/P1_Affine.hpp"
-#include "blst/P2_Affine.hpp"
-#include "blst/PT.hpp"
 #include "blst/ops.hpp"
-#include "crypto/blst/P1.hpp"
-#include "crypto/blst/P2.hpp"
 #include "crypto/blst/Scalar.hpp"
 #include "crypto/error.hpp"
-#include "impl_utils.hpp"
+#include "threshold/interpolate.hpp"
 #include "threshold/key_gen.hpp"
-#include "threshold/math.hpp"
-#include "threshold/utils.hpp"
+#include "utils.hpp"
 #include <array>
 #include <cstring>
 #include <expected>
@@ -58,20 +52,18 @@ namespace detail {
         return { .u_component = u, .v_component = v, .w_component = w };
     }
 
-    using P1_Affine = Crypto::bls::P1_Affine;
-    using P2_Affine = Crypto::bls::P2_Affine;
-    using PT = Crypto::bls::PT;
-
+    /// 验证密文一致性
+    ///
+    /// e(w, G1) == e(H(u,v), u)
     bool verify_ciphertext(const Ciphertext& C)
     {
-        // PT(P2, P1) -> MillerLoop(P2, P1)
-        PT lhs(C.w_component, P1::generator());
-        lhs.final_exp();
-
-        PT rhs(Utils::hashH(C.u_component, C.v_component), C.u_component);
-        rhs.final_exp();
-
-        return lhs == rhs;
+        // 映射参数: (q1, p1, q2, p2) -> (G2, G1, G2, G1)
+        return bls::ops::verify_pairing_equality(
+            C.w_component, // q1: w
+            P1::generator(), // p1: G1_gen
+            Utils::hashH(C.u_component, C.v_component), // q2: H(u,v)
+            C.u_component // p2: u
+        );
     }
 
     DecryptionShare decrypt_share(const TpkePrivateKeyShare& private_share,
@@ -82,6 +74,8 @@ namespace detail {
         return share_ui;
     }
 
+    /// 验证解密份额
+    ///  e(G2, ui) == e(yi, u)
     bool verify_share(const TpkeVerificationParameters& public_params,
         const PartialDecryption& decryption,
         const Ciphertext& ciphertext)
@@ -90,17 +84,12 @@ namespace detail {
         if (id < 1 || id > public_params.total_players)
             return false;
 
-        auto ui_aff = P1_Affine::from_P1(decryption.value);
-        auto g2_aff = P2_Affine::from_P2(P2::generator());
-        auto u_aff = P1_Affine::from_P1(ciphertext.u_component);
-        auto yi_aff = P2_Affine::from_P2(public_params.verification_vector[id - 1]);
-
-        PT lhs(g2_aff, ui_aff);
-        lhs.final_exp();
-        PT rhs(yi_aff, u_aff);
-        rhs.final_exp();
-
-        return lhs == rhs;
+        return bls::ops::verify_pairing_equality(
+            P2::generator(), // q1: G2_gen
+            decryption.value, // p1: ui (份额)
+            public_params.verification_vector[id - 1], // q2: yi (公钥份额)
+            ciphertext.u_component // p2: u (密文U)
+        );
     }
 }
 

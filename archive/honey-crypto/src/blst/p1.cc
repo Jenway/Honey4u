@@ -2,22 +2,25 @@ extern "C" {
 #include <blst.h>
 }
 
-#include "P1_Affine.hpp"
 #include "crypto/blst/P1.hpp"
 #include "impl_common.hpp"
-#include "impl_utils.hpp"
+#include "utils.hpp"
 #include <array>
 #include <cstring>
 
 namespace Honey::Crypto::bls {
-using impl::to_native;
 
 static_assert(sizeof(P1) == sizeof(blst_p1), "P1 size mismatch");
 static_assert(alignof(P1) >= alignof(blst_p1), "P1 alignment mismatch");
+static_assert(std::is_trivially_copyable_v<P1>);
+static_assert(std::is_trivially_destructible_v<P1>);
+
+using impl::to_native;
 
 P1 P1::generator()
 {
     P1 ret {};
+    // blst_p1_generaor 返回一个 C 常量指针，这里是一个复制
     *to_native<blst_p1>(&ret) = *blst_p1_generator();
     return ret;
 }
@@ -66,9 +69,9 @@ P1 P1::from_hash(BytesSpan msg, BytesSpan dst)
 
 std::expected<P1, std::error_code> P1::deserialize(std::span<const Byte, SERIALIZED_SIZE> data)
 {
-    P1_Affine affine;
+    blst_p1_affine affine;
     BLST_ERROR err = blst_p1_deserialize(
-        to_native<blst_p1_affine>(&affine),
+        &affine,
         reinterpret_cast<const uint8_t*>(data.data()));
 
     if (err != BLST_SUCCESS) {
@@ -78,15 +81,17 @@ std::expected<P1, std::error_code> P1::deserialize(std::span<const Byte, SERIALI
     P1 ret {};
     blst_p1_from_affine(
         to_native<blst_p1>(&ret),
-        to_native<blst_p1_affine>(&affine));
+        &affine);
     return ret;
 }
 
 std::expected<P1, std::error_code> P1::uncompress(std::span<const Byte, COMPRESSED_SIZE> data)
 {
-    P1_Affine affine;
+    // P1_Affine affine;
+    blst_p1_affine affine;
+
     BLST_ERROR err = blst_p1_uncompress(
-        to_native<blst_p1_affine>(&affine),
+        &affine,
         reinterpret_cast<const uint8_t*>(data.data()));
 
     if (err != BLST_SUCCESS) {
@@ -96,8 +101,17 @@ std::expected<P1, std::error_code> P1::uncompress(std::span<const Byte, COMPRESS
     P1 ret {};
     blst_p1_from_affine(
         to_native<blst_p1>(&ret),
-        to_native<blst_p1_affine>(&affine));
+        &affine);
     return ret;
+}
+
+using impl::to_native;
+
+bool P1::equals(const P1& others) const
+{
+    return blst_p1_is_equal(
+        to_native<blst_p1>(this),
+        to_native<blst_p1>(&others));
 }
 
 } // namespace Honey::Crypto::bls

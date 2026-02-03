@@ -11,14 +11,11 @@ target_sources(honey_crypto
         src/blst/ops.cc
         src/blst/scalar.cc
         src/blst/p1.cc
-        src/blst/p1_affine.cc
         src/blst/p2.cc
-        src/blst/p2_affine.cc
-        src/blst/pt.cc
         src/aes.cc
         src/ecdsa.cc
-        src/tbls.cc
-        src/tpke.cc
+        src/threshold/tbls.cc
+        src/threshold/tpke.cc
         src/threshold/tpke_serialization.cc
         src/erasure_code.cc
         src/merkle_tree.cc

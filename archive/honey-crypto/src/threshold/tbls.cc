@@ -1,12 +1,10 @@
 #include "crypto/threshold/tbls.hpp"
-#include "blst/P1_Affine.hpp"
-#include "blst/P2_Affine.hpp"
 #include "blst/ops.hpp"
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
 #include "crypto/blst/Scalar.hpp"
+#include "threshold/interpolate.hpp"
 #include "threshold/key_gen.hpp"
-#include "threshold/math.hpp"
 #include <cstring>
 #include <expected>
 #include <span>
@@ -54,11 +52,16 @@ PartialSignature sign_share(const TblsPrivateKeyShare& share, BytesSpan message)
         return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
-    auto sig_affine = P1_Affine::from_P1(partial_sig);
-    auto pk_affine = P2_Affine::from_P2(params.verification_vector[player_id - 1]);
-
-    auto err = sig_affine.core_verify(pk_affine, true, message, as_span(Constants::DST_SIG));
-
+    // auto sig_affine = P1_Affine::from_P1(partial_sig);
+    // auto pk_affine = P2_Affine::from_P2(params.verification_vector[player_id - 1]);
+    // auto err = sig_affine.core_verify(pk_affine, true, message, as_span(Constants::DST_SIG));
+    auto err = bls::ops::core_verify_pk_in_g2(
+        partial_sig,
+        params.verification_vector[player_id - 1],
+        true,
+        message,
+        as_span(Constants::DST_SIG),
+        {});
     if (err) {
         return std::unexpected(err);
     }
@@ -85,11 +88,18 @@ auto verify_signature(const TblsVerificationParameters& params,
     -> std::expected<void, std::error_code>
 {
 
-    auto sig_affine = P1_Affine::from_P1(signature);
-    auto pk_affine = P2_Affine::from_P2(params.master_public_key);
+    // auto sig_affine = P1_Affine::from_P1(signature);
+    // auto pk_affine = P2_Affine::from_P2(params.master_public_key);
 
-    auto err = sig_affine.core_verify(
-        pk_affine, true, message, as_span(Constants::DST_SIG));
+    // auto err = sig_affine.core_verify(pk_affine, true, message, as_span(Constants::DST_SIG));
+
+    auto err = bls::ops::core_verify_pk_in_g2(
+        signature,
+        params.master_public_key,
+        true,
+        message,
+        as_span(Constants::DST_SIG),
+        {});
 
     if (err) {
         return std::unexpected(err);

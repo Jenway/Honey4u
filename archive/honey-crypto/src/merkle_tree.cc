@@ -1,5 +1,5 @@
 #include "crypto/merkle_tree.hpp"
-#include "impl_utils.hpp"
+#include "utils.hpp"
 #include <bit>
 #include <cstring>
 #include <expected>

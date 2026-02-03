@@ -5,7 +5,7 @@ extern "C" {
 #include "crypto/blst/Scalar.hpp"
 #include "crypto/error.hpp"
 #include "impl_common.hpp"
-#include "impl_utils.hpp"
+#include "utils.hpp"
 #include <array>
 #include <cassert>
 #include <cstdint>

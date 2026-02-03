@@ -1,5 +1,5 @@
 #include "crypto/erasure_code.hpp"
-#include "impl_utils.hpp"
+#include "utils.hpp"
 #include <cstdint>
 #include <cstring>
 #include <isa-l/erasure_code.h>
@@ -109,7 +109,7 @@ namespace {
      * @return (是否为恒等式, 块索引)
      */
     std::pair<bool, std::vector<int>> collect_decode_shards(
-        const std::map<int, std::vector<Byte>>& received_shards,
+        std::span<const ShardItem> shards,
         int K,
         size_t block_size,
         std::vector<unsigned char*>& decode_ptrs)
@@ -118,7 +118,7 @@ namespace {
         std::vector<int> decode_indexes;
 
         int count = 0;
-        for (const auto& [idx, data] : received_shards) {
+        for (const auto& [idx, data] : shards) {
             if (count >= K)
                 break;
 
@@ -135,6 +135,9 @@ namespace {
 
             count++;
         }
+
+        if (count < K)
+            is_identity = false;
 
         return { is_identity, decode_indexes };
     }
@@ -248,25 +251,25 @@ auto encode(const Context& ctx, BytesSpan data)
     return result;
 }
 
-auto decode(const Context& ctx, const std::map<int, std::vector<Byte>>& received_shards)
+auto decode(const Context& ctx, std::span<const ShardItem> shards)
     -> std::expected<std::vector<Byte>, std::error_code>
 {
     int K = ctx.K();
     int N = ctx.N();
 
     // 参数验证
-    if (received_shards.size() < static_cast<size_t>(K)) {
+    if (shards.size() < static_cast<size_t>(K)) {
         return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
     // 获取块大小
-    size_t block_size = received_shards.begin()->second.size();
+    size_t block_size = shards[0].second.size();
     if (block_size == 0)
         return std::vector<Byte> {};
 
     // 验证所有块大小一致
-    for (const auto& [_, shard] : received_shards) {
-        if (shard.size() != block_size) {
+    for (size_t i = 0; i < shards.size(); ++i) {
+        if (shards[i].second.size() != block_size) {
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
         }
     }
@@ -274,7 +277,12 @@ auto decode(const Context& ctx, const std::map<int, std::vector<Byte>>& received
     // 收集块指针并检查是否为恒等式
     std::vector<unsigned char*> decode_ptrs(K);
     auto [is_identity, decode_indexes] = collect_decode_shards(
-        received_shards, K, block_size, decode_ptrs);
+        shards, K, block_size, decode_ptrs);
+
+    // 再次确认收集到了足够的块 (collect_decode_shards 可能会跳过错误的块)
+    if (decode_indexes.size() < static_cast<size_t>(K)) {
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+    }
 
     // 准备最终指针
     std::vector<unsigned char*> final_ptrs(K);

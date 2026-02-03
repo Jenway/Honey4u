@@ -1,6 +1,5 @@
-#include "threshold/utils.hpp"
+#include "utils.hpp"
 #include "crypto/hash.hpp"
-#include "impl_utils.hpp"
 #include <cstddef>
 #include <cstring>
 #include <openssl/evp.h>

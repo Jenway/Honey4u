@@ -46,12 +46,14 @@ private:
     friend class ErasureCodeImpl;
 };
 
+using ShardItem = std::pair<int, std::vector<Byte>>;
+
 [[nodiscard]]
 auto encode(const Context& ctx, BytesSpan data)
     -> std::expected<std::vector<std::vector<Byte>>, std::error_code>;
 
 [[nodiscard]]
-auto decode(const Context& ctx, const std::map<int, std::vector<Byte>>& received_shards)
+auto decode(const Context& ctx, std::span<const ShardItem> shards)
     -> std::expected<std::vector<Byte>, std::error_code>;
 
 } // namespace Honey::Crypto::ErasureCode

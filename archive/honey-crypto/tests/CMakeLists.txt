@@ -9,7 +9,11 @@ macro(add_hbft_test TEST_NAME SOURCE_FILE)
             GTest::gtest
             GTest::gtest_main
     )
+    target_include_directories(${TEST_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    )
 endmacro()
+
 
 add_hbft_test(ecdsa_test test_ecdsa.cc)
 add_hbft_test(tbls_test test_tbls.cc)

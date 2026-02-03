@@ -2,10 +2,9 @@ extern "C" {
 #include <blst.h>
 }
 
-#include "P2_Affine.hpp"
 #include "crypto/blst/P2.hpp"
 #include "impl_common.hpp"
-#include "impl_utils.hpp"
+#include "utils.hpp"
 #include <cstdint>
 #include <cstring>
 #include <span>
@@ -14,6 +13,8 @@ namespace Honey::Crypto::bls {
 
 static_assert(sizeof(P2) == sizeof(blst_p2), "P2 size mismatch");
 static_assert(alignof(P2) >= alignof(blst_p2), "P2 alignment mismatch");
+static_assert(std::is_trivially_copyable_v<P2>);
+static_assert(std::is_trivially_destructible_v<P2>);
 
 using impl::to_native;
 
@@ -22,6 +23,13 @@ P2 P2::generator()
     P2 ret {};
     *to_native<blst_p2>(&ret) = *blst_p2_generator();
     return ret;
+}
+
+bool P2::equals(const P2& rhs) const
+{
+    return blst_p2_is_equal(
+        to_native<blst_p2>(this),
+        to_native<blst_p2>(&rhs));
 }
 
 P2 P2::identity()
@@ -41,8 +49,6 @@ void P2::compress(std::span<uint8_t, P2::COMPRESSED_SIZE> out) const
     blst_p2_compress(out.data(), to_native<blst_p2>(this));
 }
 
-/* Methods removed from public API and moved to ops.hpp/ops.cc */
-
 P2 P2::from_hash(BytesSpan msg, BytesSpan dst)
 {
     P2 ret {};
@@ -56,9 +62,9 @@ P2 P2::from_hash(BytesSpan msg, BytesSpan dst)
 
 std::expected<P2, std::error_code> P2::deserialize(std::span<const Byte, SERIALIZED_SIZE> data)
 {
-    P2_Affine affine;
+    blst_p2_affine affine;
     BLST_ERROR err = blst_p2_deserialize(
-        to_native<blst_p2_affine>(&affine),
+        &affine,
         reinterpret_cast<const uint8_t*>(data.data()));
 
     if (err != BLST_SUCCESS) {
@@ -68,15 +74,15 @@ std::expected<P2, std::error_code> P2::deserialize(std::span<const Byte, SERIALI
     P2 ret {};
     blst_p2_from_affine(
         to_native<blst_p2>(&ret),
-        to_native<blst_p2_affine>(&affine));
+        &affine);
     return ret;
 }
 
 std::expected<P2, std::error_code> P2::uncompress(std::span<const Byte, COMPRESSED_SIZE> data)
 {
-    P2_Affine affine;
+    blst_p2_affine affine;
     BLST_ERROR err = blst_p2_uncompress(
-        to_native<blst_p2_affine>(&affine),
+        &affine,
         reinterpret_cast<const uint8_t*>(data.data()));
 
     if (err != BLST_SUCCESS) {
@@ -86,7 +92,7 @@ std::expected<P2, std::error_code> P2::uncompress(std::span<const Byte, COMPRESS
     P2 ret {};
     blst_p2_from_affine(
         to_native<blst_p2>(&ret),
-        to_native<blst_p2_affine>(&affine));
+        &affine);
     return ret;
 }
 

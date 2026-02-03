@@ -1,8 +1,10 @@
+#include "blst/ops.hpp"
 #include "crypto/blst/P1.hpp"
 #include "crypto/blst/P2.hpp"
 #include "crypto/blst/Scalar.hpp"
 #include <cstring>
 #include <gtest/gtest.h>
+#include <system_error>
 
 using namespace Honey::Crypto;
 using namespace Honey::Crypto::bls;

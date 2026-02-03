@@ -24,7 +24,7 @@ public:
     static P2 identity();
     static P2 from_hash(BytesSpan msg, BytesSpan dst = {});
 
-    friend bool operator==(const P2& a, const P2& b) = default;
+    [[nodiscard]] bool equals(const P2&) const;
 
     void serialize(std::span<uint8_t, SERIALIZED_SIZE> out) const;
     void compress(std::span<uint8_t, COMPRESSED_SIZE> out) const;
