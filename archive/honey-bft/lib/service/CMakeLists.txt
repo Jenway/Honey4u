@@ -9,6 +9,7 @@ file(GLOB_RECURSE HONEY_SERVICE_HEADERS
 target_sources(honey_service
     PRIVATE
         src/async_crypto_service.cc
+        src/tcp_transport.cc
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include

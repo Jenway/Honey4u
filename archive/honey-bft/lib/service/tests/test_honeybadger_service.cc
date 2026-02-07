@@ -1,6 +1,7 @@
 #include "service/hb/concepts.hpp"
 #include "service/hb/events.hpp"
 #include "service/hb/honeybadger.hpp"
+#include "service/hb/serialization.hpp"
 #include <exec/static_thread_pool.hpp>
 #include <gtest/gtest.h>
 #include <queue>
@@ -127,6 +128,7 @@ protected:
     MockTransceiver transport;
     MockACSService acs_svc;
     MockTPKEService crypto_svc;
+    DefaultHoneyBadgerSerializer serializer;
     exec::static_thread_pool pool { 4 };
 
     std::vector<Byte> make_data(const std::string& s)
@@ -137,6 +139,20 @@ protected:
         }
         return data;
     }
+
+    // Helper to create valid serialized HybridCiphertext
+    std::vector<Byte> make_valid_ciphertext(const std::string& payload_str)
+    {
+        auto payload = make_data(payload_str);
+        Honey::Crypto::Tpke::HybridCiphertext hct {
+            .key_ciphertext = {
+                .u_component = Honey::Crypto::bls::P1::identity(),
+                .v_component = payload, // In mock, we put payload in v_component for simplicity
+                .w_component = Honey::Crypto::bls::P2::identity() },
+            .data_ciphertext = payload
+        };
+        return serializer.serialize_ciphertext(hct);
+    }
 };
 
 // ============================================================================
@@ -146,7 +162,7 @@ protected:
 TEST_F(HoneyBadgerServiceTest, ConstructionSucceeds)
 {
     HoneyBadger<MockTransceiver, MockACSService, MockTPKEService> hb(
-        config, transport, acs_svc, crypto_svc);
+        config, transport, acs_svc, crypto_svc, serializer);
 
     EXPECT_EQ(hb.current_epoch(), 0);
     EXPECT_FALSE(hb.is_epoch_complete(0));
@@ -154,7 +170,7 @@ TEST_F(HoneyBadgerServiceTest, ConstructionSucceeds)
 
 TEST_F(HoneyBadgerServiceTest, SubmitTransactionsStoresInBuffer)
 {
-    HoneyBadger hb(config, transport, acs_svc, crypto_svc);
+    HoneyBadger hb(config, transport, acs_svc, crypto_svc, serializer);
 
     std::vector<std::vector<Byte>> txs;
     for (int i = 0; i < 10; ++i) {
@@ -167,7 +183,7 @@ TEST_F(HoneyBadgerServiceTest, SubmitTransactionsStoresInBuffer)
 
 TEST_F(HoneyBadgerServiceTest, RunStartsFirstEpoch)
 {
-    HoneyBadger hb(config, transport, acs_svc, crypto_svc);
+    HoneyBadger hb(config, transport, acs_svc, crypto_svc, serializer);
 
     // Submit transactions
     std::vector<std::vector<Byte>> txs;
@@ -188,16 +204,19 @@ TEST_F(HoneyBadgerServiceTest, RunStartsFirstEpoch)
     auto [epoch, input] = acs_svc.acs_calls.front();
     EXPECT_EQ(epoch, 0);
 
-    // Input should be encrypted (starts with "ENC:")
-    ASSERT_GE(input.size(), 4);
-    EXPECT_EQ(input[0], static_cast<Byte>('E'));
-    EXPECT_EQ(input[1], static_cast<Byte>('N'));
-    EXPECT_EQ(input[2], static_cast<Byte>('C'));
+    // Input should be a valid serialized HybridCiphertext (JSON)
+    // We can try to deserialize it to verify
+    auto hct_res = serializer.deserialize_ciphertext(input);
+    ASSERT_TRUE(hct_res.has_value());
+
+    // In MockTPKEService, we put transactions in v_component
+    // The "tx0", "tx1"... are inside. We won't check exact content here as it's binary,
+    // but we verified it's a valid HybridCiphertext structure.
 }
 
 TEST_F(HoneyBadgerServiceTest, ACSCompleteTriggersDecryptionShares)
 {
-    HoneyBadger hb(config, transport, acs_svc, crypto_svc);
+    HoneyBadger hb(config, transport, acs_svc, crypto_svc, serializer);
 
     hb.submit_transactions({ make_data("tx1"), make_data("tx2") });
 
@@ -206,8 +225,8 @@ TEST_F(HoneyBadgerServiceTest, ACSCompleteTriggersDecryptionShares)
     stream.push_event(ACSCompleteEvent {
         .epoch = 0,
         .ciphertexts = {
-            make_data("ENC:cipher0"),
-            make_data("ENC:cipher1") } });
+            make_valid_ciphertext("cipher0"),
+            make_valid_ciphertext("cipher1") } });
 
     auto run_task = hb.run(stream);
     auto blocks = stdexec::sync_wait(std::move(run_task));
@@ -227,7 +246,7 @@ TEST_F(HoneyBadgerServiceTest, ACSCompleteTriggersDecryptionShares)
 
 TEST_F(HoneyBadgerServiceTest, CollectSharesAndDecrypt)
 {
-    HoneyBadger hb(config, transport, acs_svc, crypto_svc);
+    HoneyBadger hb(config, transport, acs_svc, crypto_svc, serializer);
 
     hb.submit_transactions({ make_data("tx1") });
 
@@ -236,20 +255,28 @@ TEST_F(HoneyBadgerServiceTest, CollectSharesAndDecrypt)
     // Step 1: ACS completes with 1 ciphertext
     stream.push_event(ACSCompleteEvent {
         .epoch = 0,
-        .ciphertexts = { make_data("ENC:data") } });
+        .ciphertexts = { make_valid_ciphertext("data") } });
+
+    // Helper for shares
+    auto make_share = [&](const std::string& s) {
+        // We need a valid serialized P1 point
+        // But MockTPKEService::async_decrypt_share returns identity.
+        // And DefaultSerializer::serialize_share uses P1::serialize.
+        return serializer.serialize_share(Honey::Crypto::bls::P1::identity());
+    };
 
     // Step 2: Receive f+1 = 2 decryption shares
     stream.push_event(DecShareReceivedEvent {
         .epoch = 0,
         .ciphertext_index = 0,
         .sender_id = 0,
-        .share_data = make_data("share0") });
+        .share_data = make_share("share0") });
 
     stream.push_event(DecShareReceivedEvent {
         .epoch = 0,
         .ciphertext_index = 0,
         .sender_id = 1,
-        .share_data = make_data("share1") });
+        .share_data = make_share("share1") });
 
     // Run
     auto run_task = hb.run(stream);
@@ -265,29 +292,33 @@ TEST_F(HoneyBadgerServiceTest, CollectSharesAndDecrypt)
 
 TEST_F(HoneyBadgerServiceTest, MultipleEpochsSequential)
 {
-    HoneyBadger hb(config, transport, acs_svc, crypto_svc);
+    HoneyBadger hb(config, transport, acs_svc, crypto_svc, serializer);
 
     hb.submit_transactions({ make_data("tx1"), make_data("tx2") });
 
     MockEventStream stream;
 
+    auto make_share = [&](const std::string& s) {
+        return serializer.serialize_share(Honey::Crypto::bls::P1::identity());
+    };
+
     // Epoch 0: ACS + decrypt
     stream.push_event(ACSCompleteEvent {
         .epoch = 0,
-        .ciphertexts = { make_data("ENC:data0") } });
+        .ciphertexts = { make_valid_ciphertext("data0") } });
     stream.push_event(DecShareReceivedEvent {
-        .epoch = 0, .ciphertext_index = 0, .sender_id = 0, .share_data = make_data("s0") });
+        .epoch = 0, .ciphertext_index = 0, .sender_id = 0, .share_data = make_share("s0") });
     stream.push_event(DecShareReceivedEvent {
-        .epoch = 0, .ciphertext_index = 0, .sender_id = 1, .share_data = make_data("s1") });
+        .epoch = 0, .ciphertext_index = 0, .sender_id = 1, .share_data = make_share("s1") });
 
     // Epoch 1: ACS + decrypt
     stream.push_event(ACSCompleteEvent {
         .epoch = 1,
-        .ciphertexts = { make_data("ENC:data1") } });
+        .ciphertexts = { make_valid_ciphertext("data1") } });
     stream.push_event(DecShareReceivedEvent {
-        .epoch = 1, .ciphertext_index = 0, .sender_id = 0, .share_data = make_data("s0") });
+        .epoch = 1, .ciphertext_index = 0, .sender_id = 0, .share_data = make_share("s0") });
     stream.push_event(DecShareReceivedEvent {
-        .epoch = 1, .ciphertext_index = 0, .sender_id = 1, .share_data = make_data("s1") });
+        .epoch = 1, .ciphertext_index = 0, .sender_id = 1, .share_data = make_share("s1") });
 
     auto run_task = hb.run(stream);
     auto result = stdexec::sync_wait(std::move(run_task));
@@ -301,7 +332,7 @@ TEST_F(HoneyBadgerServiceTest, MultipleEpochsSequential)
 
 TEST_F(HoneyBadgerServiceTest, InsufficientSharesDoesNotDecrypt)
 {
-    HoneyBadger hb(config, transport, acs_svc, crypto_svc);
+    HoneyBadger hb(config, transport, acs_svc, crypto_svc, serializer);
 
     hb.submit_transactions({ make_data("tx1") });
 
@@ -309,11 +340,15 @@ TEST_F(HoneyBadgerServiceTest, InsufficientSharesDoesNotDecrypt)
 
     stream.push_event(ACSCompleteEvent {
         .epoch = 0,
-        .ciphertexts = { make_data("ENC:data") } });
+        .ciphertexts = { make_valid_ciphertext("data") } });
+
+    auto make_share = [&](const std::string& s) {
+        return serializer.serialize_share(Honey::Crypto::bls::P1::identity());
+    };
 
     // Only 1 share (need 2)
     stream.push_event(DecShareReceivedEvent {
-        .epoch = 0, .ciphertext_index = 0, .sender_id = 0, .share_data = make_data("s0") });
+        .epoch = 0, .ciphertext_index = 0, .sender_id = 0, .share_data = make_share("s0") });
 
     auto run_task = hb.run(stream);
     auto result = stdexec::sync_wait(std::move(run_task));
@@ -327,7 +362,7 @@ TEST_F(HoneyBadgerServiceTest, InsufficientSharesDoesNotDecrypt)
 
 TEST_F(HoneyBadgerServiceTest, DuplicateSharesIgnored)
 {
-    HoneyBadger hb(config, transport, acs_svc, crypto_svc);
+    HoneyBadger hb(config, transport, acs_svc, crypto_svc, serializer);
 
     hb.submit_transactions({ make_data("tx1") });
 
@@ -335,17 +370,21 @@ TEST_F(HoneyBadgerServiceTest, DuplicateSharesIgnored)
 
     stream.push_event(ACSCompleteEvent {
         .epoch = 0,
-        .ciphertexts = { make_data("ENC:data") } });
+        .ciphertexts = { make_valid_ciphertext("data") } });
+
+    auto make_share = [&](const std::string& s) {
+        return serializer.serialize_share(Honey::Crypto::bls::P1::identity());
+    };
 
     // Same sender twice
     stream.push_event(DecShareReceivedEvent {
-        .epoch = 0, .ciphertext_index = 0, .sender_id = 0, .share_data = make_data("s0") });
+        .epoch = 0, .ciphertext_index = 0, .sender_id = 0, .share_data = make_share("s0") });
     stream.push_event(DecShareReceivedEvent {
-        .epoch = 0, .ciphertext_index = 0, .sender_id = 0, .share_data = make_data("s0_dup") });
+        .epoch = 0, .ciphertext_index = 0, .sender_id = 0, .share_data = make_share("s0_dup") });
 
     // Add another valid share
     stream.push_event(DecShareReceivedEvent {
-        .epoch = 0, .ciphertext_index = 0, .sender_id = 1, .share_data = make_data("s1") });
+        .epoch = 0, .ciphertext_index = 0, .sender_id = 1, .share_data = make_share("s1") });
 
     auto run_task = hb.run(stream);
     auto result = stdexec::sync_wait(std::move(run_task));
