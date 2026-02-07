@@ -28,11 +28,6 @@ struct Ciphertext {
     P1 u_component; // U
     std::vector<Byte> v_component; // V
     P2 w_component; // W
-
-    // Serialization
-    [[nodiscard]] std::vector<Byte> serialize() const;
-    [[nodiscard]] static std::expected<Ciphertext, std::error_code>
-    deserialize(std::span<const Byte> data);
 };
 
 struct PartialDecryption {
@@ -43,11 +38,6 @@ struct PartialDecryption {
 struct HybridCiphertext {
     Ciphertext key_ciphertext;
     std::vector<Byte> data_ciphertext;
-
-    // Serialization
-    [[nodiscard]] std::vector<Byte> serialize() const;
-    [[nodiscard]] static std::expected<HybridCiphertext, std::error_code>
-    deserialize(std::span<const Byte> data);
 };
 
 // Opaque context for encryption/decryption state (e.g., AES context)

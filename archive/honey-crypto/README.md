@@ -7,7 +7,7 @@ The cryptographic foundation for HoneyBadger BFT, providing robust and type-safe
 This library is designed as a **pure logic layer**. It handles cryptographic transformations but avoids:
 - I/O operations (file/network)
 - Concurrency management (threading/schedulers)
-- Wire format serialization (except where strictly defined by crypto standards)
+- Wire format serialization (except where strictly defined by crypto standards). Service layer is responsible for JSON serialization.
 
 ### Components
 

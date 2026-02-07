@@ -16,7 +16,6 @@ target_sources(honey_crypto
         src/ecdsa.cc
         src/threshold/tbls.cc
         src/threshold/tpke.cc
-        src/threshold/tpke_serialization.cc
         src/erasure_code.cc
         src/merkle_tree.cc
         src/utils.cc
