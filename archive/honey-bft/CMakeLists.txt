@@ -17,13 +17,13 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(cmake/dependencies.cmake)
 
-# include(cmake/compilers.cmake)
-
 include(CTest)
 enable_testing()
 
 add_subdirectory(lib/crypto)
 add_subdirectory(lib/core)
+add_subdirectory(lib/service)
+add_subdirectory(src)
 
 
 include(GNUInstallDirs)
