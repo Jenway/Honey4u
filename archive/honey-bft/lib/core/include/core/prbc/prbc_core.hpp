@@ -10,11 +10,22 @@
 
 namespace Honey::BFT::PRBC {
 
-using Honey::BFT::Action;
 using Honey::BFT::RBC::EchoPayload;
 using Honey::BFT::RBC::Hash;
 using Honey::BFT::RBC::RBCConfig;
 using Honey::BFT::RBC::ValPayload;
+
+struct Action {
+    enum class Type : uint8_t {
+        Broadcast,
+        Result,
+        Signal
+    } type {};
+
+    uint8_t tag {}; // For Result actions: 1 = SignAndBroadcastReady, 2 = Output
+
+    std::vector<std::byte> payload;
+};
 
 class Core {
 public:

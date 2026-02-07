@@ -10,7 +10,6 @@
 #include <optional>
 #include <set>
 #include <span>
-#include <variant>
 #include <vector>
 
 namespace Honey::BFT::RBC {
@@ -29,7 +28,7 @@ struct Action {
         BroadcastReady,
         Decode,
         Output
-    } type;
+    } type {};
 
     Hash root_hash {};
 

@@ -92,7 +92,6 @@ std::generator<Action> Core::start_as_leader(ValPayload self_val)
         };
         std::vector<std::byte> payload;
         payload.push_back(static_cast<std::byte>(PRBCMessage::Type::Echo));
-        serialize_payload(echo_p, payload);
 
         co_yield Action { .type = Action::Type::Broadcast, .payload = std::move(payload) };
     }
@@ -124,7 +123,6 @@ std::generator<Action> Core::on_val(int sender, ValPayload p)
         };
         std::vector<std::byte> payload;
         payload.push_back(static_cast<std::byte>(PRBCMessage::Type::Echo));
-        serialize_payload(echo_p, payload);
 
         co_yield Action { .type = Action::Type::Broadcast, .payload = std::move(payload) };
     }
@@ -200,7 +198,6 @@ std::generator<Action> Core::try_send_ready(const Hash& root)
         // Core cannot sign. Request Service to sign.
 
         std::vector<std::byte> payload;
-        append_hash(payload, root);
 
         co_yield Action {
             .type = Action::Type::Signal,
@@ -226,7 +223,6 @@ std::generator<Action> Core::check_completion(const Hash& root)
     if (has_enough_shards && has_enough_sigs) {
         output_produced_[root] = true;
         std::vector<std::byte> payload;
-        append_hash(payload, root);
         co_yield Action { .type = Action::Type::Result, .tag = 2, .payload = std::move(payload) };
     }
 }

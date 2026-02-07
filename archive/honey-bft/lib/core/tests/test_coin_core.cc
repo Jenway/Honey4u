@@ -1,6 +1,9 @@
 #include "core/coin/coin_core.hpp"
 #include "core/coin/messages.hpp"
 #include <gtest/gtest.h>
+
+#include <algorithm>
+
 #include <vector>
 
 namespace Honey::BFT::Coin {
