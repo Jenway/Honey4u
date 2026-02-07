@@ -1,6 +1,4 @@
-add_executable(hbbft_node
-    main.cpp
-)
+add_executable(hbbft_node main.cpp)
 
 target_link_libraries(hbbft_node
     PRIVATE
@@ -9,12 +7,10 @@ target_link_libraries(hbbft_node
         Honey::Service
 )
 
-target_include_directories(hbbft_node PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(hbbft_node PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
-# Demo application
-add_executable(honeybadger_demo
-    demo/main.cc
-)
+add_executable(honeybadger_demo demo/main.cc)
+
 target_link_libraries(honeybadger_demo
     PRIVATE
         Honey::Core
@@ -22,7 +18,9 @@ target_link_libraries(honeybadger_demo
         Honey::Crypto
         spdlog::spdlog
 )
-target_include_directories(honeybadger_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_include_directories(honeybadger_demo PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 install(TARGETS hbbft_node honeybadger_demo
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)

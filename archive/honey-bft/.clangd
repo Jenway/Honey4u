@@ -1,33 +1,42 @@
 CompileFlags:
   CompilationDatabase: "build"
-
   Add: [
-    "-std=c++23",
     "-Wall",
     "-Wno-unknown-pragmas"
   ]
-  Compiler: g++
+  # Compiler: clang
+
 Diagnostics:
   ClangTidy:
-    Add: [
-      "*"
-      ]
+    Add: ["*"]
     Remove: [
-      altera-*,
-      boost-use-*,
-      fuchsia-*,
-      google-readability-braces-around-statements,
-      modernize-use-trailing-return-type,
-      readability-identifier-naming,
-      readability-identifier-length,
-      readability-braces-around-statements,
-      hicpp-braces-around-statements,
-      llvmlibc-*,
-      misc-non-private-member-*
-      ]
+      "altera-*",
+      "android-*",
+      "boost-use-*",
+      "cert-err33-c",
+      "fuchsia-*",
+      "google-readability-braces-around-statements",
+      "modernize-use-trailing-return-type",
+      "readability-identifier-naming",
+      "readability-identifier-length",
+      "readability-braces-around-statements",
+      "hicpp-braces-around-statements",
+      "llvmlibc-*",
+      "misc-non-private-member-*"
+    ]
     CheckOptions:
       readability-identifier-naming.VariableCase: CamelCase
   UnusedIncludes: Strict
 
 Index:
   Background: Build
+
+---
+
+If:
+  PathMatch: .*\.(cpp|cxx|cc|hpp|hxx)$
+
+CompileFlags:
+  Add: [
+    # "-std=c++23"
+  ]

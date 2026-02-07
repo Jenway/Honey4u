@@ -4,3 +4,6 @@ build
 .vscode
 .clice
 refer
+# pixi environments
+.pixi/*
+!.pixi/config.toml

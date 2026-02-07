@@ -3,12 +3,17 @@ cmake_minimum_required(VERSION 3.28)
 project(HBFT
     VERSION 0.1.0
     LANGUAGES C CXX
+    HOMEPAGE_URL "https://github.com/jenway/honeyBFT"
 )
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_EXPORT_COMPILE_COMMANDS On)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST CACHE STRING "Discovery mode" FORCE)
+include(CTest)
+enable_testing()
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -17,14 +22,10 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(cmake/dependencies.cmake)
 
-include(CTest)
-enable_testing()
-
 add_subdirectory(lib/crypto)
 add_subdirectory(lib/core)
 add_subdirectory(lib/service)
 add_subdirectory(src)
-
 
 include(GNUInstallDirs)
 install(EXPORT HBFTTargets
