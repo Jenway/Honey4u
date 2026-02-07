@@ -47,29 +47,11 @@ int main(int argc, char** argv)
 
     fprintf(f, "inline constexpr std::size_t blst_scalar_serialized_size = 32;\n");
 
-#ifdef BLST_P1_SERIALIZED_SIZE
-    fprintf(f, "inline constexpr std::size_t blst_p1_serialized_size = %zu;\n", (size_t)BLST_P1_SERIALIZED_SIZE);
-#else
     fprintf(f, "inline constexpr std::size_t blst_p1_serialized_size = 96;\n");
-#endif
-
-#ifdef BLST_P1_COMPRESSED_SIZE
-    fprintf(f, "inline constexpr std::size_t blst_p1_compressed_size = %zu;\n", (size_t)BLST_P1_COMPRESSED_SIZE);
-#else
     fprintf(f, "inline constexpr std::size_t blst_p1_compressed_size = 48;\n");
-#endif
 
-#ifdef BLST_P2_SERIALIZED_SIZE
-    fprintf(f, "inline constexpr std::size_t blst_p2_serialized_size = %zu;\n", (size_t)BLST_P2_SERIALIZED_SIZE);
-#else
     fprintf(f, "inline constexpr std::size_t blst_p2_serialized_size = 192;\n");
-#endif
-
-#ifdef BLST_P2_COMPRESSED_SIZE
-    fprintf(f, "inline constexpr std::size_t blst_p2_compressed_size = %zu;\n", (size_t)BLST_P2_COMPRESSED_SIZE);
-#else
     fprintf(f, "inline constexpr std::size_t blst_p2_compressed_size = 96;\n");
-#endif
 
     fprintf(f, "\n} // namespace Honey::Crypto::bls::abi\n");
 

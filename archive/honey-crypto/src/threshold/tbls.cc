@@ -1,7 +1,5 @@
 #include "crypto/threshold/tbls.hpp"
 #include "blst/ops.hpp"
-#include "crypto/blst/P1.hpp"
-#include "crypto/blst/P2.hpp"
 #include "crypto/blst/Scalar.hpp"
 #include "threshold/interpolate.hpp"
 #include "threshold/key_gen.hpp"
@@ -14,8 +12,6 @@
 
 namespace Honey::Crypto::Tbls {
 using Scalar = Honey::Crypto::bls::Scalar;
-using P1_Affine = Honey::Crypto::bls::P1_Affine;
-using P2_Affine = Honey::Crypto::bls::P2_Affine;
 
 namespace Constants {
     inline constexpr std::string_view DST_SIG = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";

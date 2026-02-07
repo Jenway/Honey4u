@@ -10,8 +10,6 @@
 
 namespace Honey::Crypto::bls {
 
-class P2_Affine;
-
 /// P2 (G2 Jacobian Point)
 class P2 {
 public:
