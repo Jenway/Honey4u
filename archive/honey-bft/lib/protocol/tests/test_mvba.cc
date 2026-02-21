@@ -1,5 +1,5 @@
 #include "core/common.hpp"
-#include "service/mvba/mvba.hpp"
+#include "protocol/mvba/mvba.hpp"
 #include <deque>
 #include <exec/task.hpp>
 #include <gtest/gtest.h>

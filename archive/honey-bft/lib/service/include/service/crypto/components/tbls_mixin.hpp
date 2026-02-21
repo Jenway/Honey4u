@@ -2,7 +2,7 @@
 
 #include "core/rbc/messages.hpp"
 #include "crypto/threshold/tbls.hpp"
-#include "service/coin/concepts.hpp"
+#include "protocol/coin/concepts.hpp"
 #include <optional>
 #include <stdexcept>
 #include <stdexec/execution.hpp>

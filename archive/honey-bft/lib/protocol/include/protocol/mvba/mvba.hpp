@@ -2,8 +2,8 @@
 
 #include "core/common.hpp"
 #include "core/mvba/mvba_core.hpp"
-#include "service/concepts.hpp"
-#include "service/mvba/concepts.hpp"
+#include "protocol/concepts.hpp"
+#include "protocol/mvba/concepts.hpp"
 #include <deque>
 #include <exec/task.hpp>
 #include <map>

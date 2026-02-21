@@ -3,8 +3,8 @@
 #include "core/coin/coin_core.hpp"
 #include "core/coin/messages.hpp"
 #include "core/common.hpp"
-#include "service/coin/concepts.hpp"
-#include "service/concepts.hpp"
+#include "protocol/coin/concepts.hpp"
+#include "protocol/concepts.hpp"
 #include <exec/task.hpp>
 #include <map>
 #include <stdexec/execution.hpp>

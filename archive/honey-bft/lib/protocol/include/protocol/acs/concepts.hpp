@@ -1,5 +1,5 @@
 #pragma once
-#include "core/acs/acs_core.hpp"
+#include <cstddef>
 #include <span>
 #include <vector>
 

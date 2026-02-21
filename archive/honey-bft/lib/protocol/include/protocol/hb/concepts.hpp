@@ -1,6 +1,6 @@
 #pragma once
 #include "crypto/threshold/tpke.hpp"
-#include "service/concepts.hpp"
+#include "protocol/concepts.hpp"
 #include <concepts>
 #include <vector>
 

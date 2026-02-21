@@ -2,8 +2,8 @@
 
 #include "core/common.hpp"
 #include "core/rbc/rbc_core.hpp"
-#include "service/concepts.hpp"
-#include "service/rbc/concepts.hpp"
+#include "protocol/concepts.hpp"
+#include "protocol/rbc/concepts.hpp"
 #include <exec/async_scope.hpp>
 #include <exec/task.hpp>
 #include <stdexec/execution.hpp>

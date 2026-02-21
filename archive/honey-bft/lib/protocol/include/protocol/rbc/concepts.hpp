@@ -2,7 +2,7 @@
 
 #include "core/common.hpp"
 #include "core/rbc/rbc_core.hpp"
-#include "service/concepts.hpp"
+#include "protocol/concepts.hpp"
 #include <optional>
 #include <span>
 #include <vector>

@@ -1,9 +1,10 @@
 #pragma once
 
 #include "crypto/threshold/tpke.hpp"
-#include "service/concepts.hpp"
+#include "protocol/concepts.hpp"
 #include <exec/task.hpp>
 #include <stdexec/execution.hpp>
+#include <utility>
 #include <vector>
 
 namespace Honey::BFT::Crypto::Components {
@@ -22,9 +23,9 @@ public:
     using TpkeParams = TpkeVerificationParameters;
     using TpkeShare = TpkePrivateKeyShare;
 
-    TpkeMixin(Scheduler scheduler, const TpkeParams& params, const TpkeShare& share)
+    TpkeMixin(Scheduler scheduler, TpkeParams params, const TpkeShare& share)
         : scheduler_(scheduler)
-        , tpke_params_(params)
+        , tpke_params_(std::move(params))
         , tpke_share_(share)
         , ctx_()
     {

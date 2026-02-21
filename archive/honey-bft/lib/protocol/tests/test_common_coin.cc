@@ -1,6 +1,6 @@
 #include "core/coin/messages.hpp"
 #include "core/common.hpp"
-#include "service/coin/common_coin.hpp"
+#include "protocol/coin/common_coin.hpp"
 #include <chrono>
 #include <deque>
 #include <exec/static_thread_pool.hpp>

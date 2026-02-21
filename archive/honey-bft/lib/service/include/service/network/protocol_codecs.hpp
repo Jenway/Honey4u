@@ -4,7 +4,7 @@
 #include "core/coin/messages.hpp"
 #include "core/prbc/messages.hpp"
 #include "core/rbc/messages.hpp"
-#include "service/hb/concepts.hpp"
+#include "protocol/hb/concepts.hpp"
 #include <cstddef>
 #include <cstring>
 #include <optional>

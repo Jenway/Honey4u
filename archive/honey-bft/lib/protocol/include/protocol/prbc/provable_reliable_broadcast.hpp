@@ -4,9 +4,9 @@
 #include "core/prbc/prbc_core.hpp"
 #include "core/rbc/messages.hpp"
 #include "crypto/blst/P1.hpp"
-#include "service/concepts.hpp"
-#include "service/prbc/concepts.hpp"
-#include "service/rbc/concepts.hpp"
+#include "protocol/concepts.hpp"
+#include "protocol/prbc/concepts.hpp"
+#include "protocol/rbc/concepts.hpp"
 #include <algorithm>
 #include <array>
 #include <exec/task.hpp>

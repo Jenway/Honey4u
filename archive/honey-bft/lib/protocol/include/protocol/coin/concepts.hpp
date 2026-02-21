@@ -2,7 +2,7 @@
 
 #include "core/coin/messages.hpp"
 #include "core/common.hpp"
-#include "service/concepts.hpp"
+#include "protocol/concepts.hpp"
 #include <cstddef>
 #include <optional>
 #include <span>

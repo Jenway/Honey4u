@@ -1,5 +1,5 @@
 #include "core/common.hpp"
-#include "service/rbc/reliable_broadcast.hpp"
+#include "protocol/rbc/reliable_broadcast.hpp"
 #include "test_utils.hpp"
 #include <algorithm>
 #include <expected>

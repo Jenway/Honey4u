@@ -1,7 +1,7 @@
 #pragma once
 
-#include "service/coin/concepts.hpp"
-#include "service/rbc/concepts.hpp"
+#include "protocol/coin/concepts.hpp"
+#include "protocol/rbc/concepts.hpp"
 
 namespace Honey::BFT::Crypto {
 

@@ -3,7 +3,7 @@
 #include "core/ba/ba_core.hpp"
 #include "core/ba/messages.hpp"
 #include "core/common.hpp"
-#include "service/concepts.hpp"
+#include "protocol/concepts.hpp"
 #include <exec/task.hpp>
 #include <map>
 #include <optional>

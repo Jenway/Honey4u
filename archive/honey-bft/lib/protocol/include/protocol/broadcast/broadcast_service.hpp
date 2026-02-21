@@ -1,8 +1,8 @@
 #pragma once
 
 #include "core/common.hpp"
-#include "service/broadcast/late_message_cache.hpp"
-#include "service/concepts.hpp"
+#include "protocol/broadcast/late_message_cache.hpp"
+#include "protocol/concepts.hpp"
 #include <exec/task.hpp>
 #include <optional>
 #include <stdexcept>

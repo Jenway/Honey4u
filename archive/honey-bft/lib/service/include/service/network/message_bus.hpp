@@ -1,10 +1,11 @@
 #pragma once
 
-#include "service/concepts.hpp"
 #include "service/network/blocking_queue.hpp"
-#include <exec/task.hpp>
+#include <cstddef>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace Honey::BFT::Network {
 
@@ -24,6 +25,7 @@ enum class FrameDirection : uint8_t {
 
 struct Frame {
     ProtocolTag tag;
+    int sender_id = -1; // 发送方节点ID（-1表示本地）
     int target = -1; // -1 broadcast, >=0 unicast
     std::vector<std::byte> payload;
     FrameDirection direction = FrameDirection::Outbound;

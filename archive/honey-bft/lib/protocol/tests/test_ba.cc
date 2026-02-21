@@ -1,6 +1,6 @@
 #include "core/ba/messages.hpp"
 #include "core/common.hpp"
-#include "service/ba/binary_agreement.hpp"
+#include "protocol/ba/binary_agreement.hpp"
 #include "test_utils.hpp"
 #include <deque>
 #include <gtest/gtest.h>

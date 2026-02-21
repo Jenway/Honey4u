@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/prbc/messages.hpp"
-#include "service/rbc/concepts.hpp"
+#include "protocol/rbc/concepts.hpp"
 #include <optional>
 #include <utility>
 #include <vector>
