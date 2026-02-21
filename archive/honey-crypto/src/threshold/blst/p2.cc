@@ -2,9 +2,10 @@ extern "C" {
 #include <blst.h>
 }
 
-#include "crypto/blst/P2.hpp"
+#include "crypto/threshold/blst/P2.hpp"
 #include "impl_common.hpp"
 #include "utils.hpp"
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <span>
@@ -97,3 +98,43 @@ std::expected<P2, std::error_code> P2::uncompress(std::span<const Byte, COMPRESS
 }
 
 } // namespace Honey::Crypto::bls
+
+#if defined(HONEYBFT_INTERNAL_TESTS)
+#include <doctest/doctest.h>
+
+namespace Honey::Crypto::bls {
+
+TEST_CASE("SerializationTest.P2RoundTrip")
+{
+    P2 p2 = P2::generator();
+
+    std::array<uint8_t, P2::SERIALIZED_SIZE> serialized;
+    p2.serialize(serialized);
+
+    std::array<Byte, P2::SERIALIZED_SIZE> serialized_bytes;
+    std::memcpy(serialized_bytes.data(), serialized.data(), P2::SERIALIZED_SIZE);
+
+    auto p2_back_result = P2::deserialize(std::span(serialized_bytes));
+    REQUIRE(p2_back_result.has_value());
+
+    CHECK(p2.equals(*p2_back_result));
+}
+
+TEST_CASE("SerializationTest.P2CompressRoundTrip")
+{
+    P2 p2 = P2::generator();
+
+    std::array<uint8_t, P2::COMPRESSED_SIZE> compressed;
+    p2.compress(compressed);
+
+    std::array<Byte, P2::COMPRESSED_SIZE> compressed_bytes;
+    std::memcpy(compressed_bytes.data(), compressed.data(), P2::COMPRESSED_SIZE);
+
+    auto p2_back_result = P2::uncompress(std::span(compressed_bytes));
+    REQUIRE(p2_back_result.has_value());
+
+    CHECK(p2.equals(*p2_back_result));
+}
+
+} // namespace Honey::Crypto::bls
+#endif

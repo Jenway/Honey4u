@@ -2,8 +2,8 @@ extern "C" {
 #include <blst.h>
 }
 
-#include "crypto/blst/Scalar.hpp"
 #include "crypto/error.hpp"
+#include "crypto/threshold/blst/Scalar.hpp"
 #include "impl_common.hpp"
 #include "utils.hpp"
 #include <array>
@@ -68,3 +68,37 @@ std::expected<Scalar, std::error_code> Scalar::from_bytes(std::span<const uint8_
 }
 
 } // namespace Honey::Crypto::bls
+
+#if defined(HONEYBFT_INTERNAL_TESTS)
+#include <doctest/doctest.h>
+
+namespace Honey::Crypto::bls {
+
+TEST_CASE("SerializationTest.ScalarRoundTrip")
+{
+    Scalar s = Scalar::from_uint64(12345);
+
+    auto serialized = s.to_bytes();
+
+    auto s_back_result = Scalar::from_bytes(serialized);
+    REQUIRE(s_back_result.has_value());
+
+    CHECK_EQ(s, *s_back_result);
+}
+
+TEST_CASE("SerializationTest.ScalarRandomRoundTrip")
+{
+    auto s_result = Scalar::random();
+    REQUIRE(s_result.has_value());
+    Scalar s = *s_result;
+
+    auto serialized = s.to_bytes();
+
+    auto s_back_result = Scalar::from_bytes(serialized);
+    REQUIRE(s_back_result.has_value());
+
+    CHECK_EQ(s, *s_back_result);
+}
+
+} // namespace Honey::Crypto::bls
+#endif

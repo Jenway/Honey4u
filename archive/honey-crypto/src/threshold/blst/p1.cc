@@ -2,7 +2,7 @@ extern "C" {
 #include <blst.h>
 }
 
-#include "crypto/blst/P1.hpp"
+#include "crypto/threshold/blst/P1.hpp"
 #include "impl_common.hpp"
 #include "utils.hpp"
 #include <array>
@@ -115,3 +115,35 @@ bool P1::equals(const P1& others) const
 }
 
 } // namespace Honey::Crypto::bls
+
+#if defined(HONEYBFT_INTERNAL_TESTS)
+#include <doctest/doctest.h>
+
+namespace Honey::Crypto::bls {
+
+TEST_CASE("SerializationTest.P1RoundTrip")
+{
+    P1 p1 = P1::generator();
+
+    auto serialized = p1.serialize();
+
+    auto p1_back_result = P1::deserialize(serialized);
+    REQUIRE(p1_back_result.has_value());
+
+    CHECK(p1.equals(*p1_back_result));
+}
+
+TEST_CASE("SerializationTest.P1CompressRoundTrip")
+{
+    P1 p1 = P1::generator();
+
+    auto compressed = p1.compress();
+
+    auto p1_back_result = P1::uncompress(compressed);
+    REQUIRE(p1_back_result.has_value());
+
+    CHECK(p1.equals(*p1_back_result));
+}
+
+} // namespace Honey::Crypto::bls
+#endif

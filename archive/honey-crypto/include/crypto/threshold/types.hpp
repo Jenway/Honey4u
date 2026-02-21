@@ -1,12 +1,24 @@
 #pragma once
-
-#include "crypto/blst/Scalar.hpp"
+#include "crypto/threshold/blst/P1.hpp"
+#include "crypto/threshold/blst/P2.hpp"
+#include "crypto/threshold/blst/Scalar.hpp"
 #include <vector>
 
 namespace Honey::Crypto::Threshold {
 
-using Scalar = Honey::Crypto::bls::Scalar;
+using G1Point = bls::P1;
+using G2Point = bls::P2;
+using Scalar = bls::Scalar;
+
 using SecretShare = Scalar;
+
+struct SystemTopology {
+    int n; // total_players
+    int f; // fault_tolerance
+    int k; // threshold (usually f + 1)
+
+    [[nodiscard]] bool is_valid() const { return n >= (3 * f) + 1 && k == f + 1; }
+};
 
 template <typename MasterKeyT, typename ShareKeyT>
 struct VerificationParameters {

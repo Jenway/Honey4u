@@ -1,9 +1,10 @@
 #pragma once
 
-#include "../blst/ops.hpp"
-#include "crypto/blst/Scalar.hpp"
+#include "blst/ops.hpp"
+#include "crypto/threshold/blst/Scalar.hpp"
 #include "crypto/threshold/types.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <expected>
 #include <ranges>
 #include <span>
@@ -63,7 +64,7 @@ auto generate_keys(int players, int k)
     private_shares.reserve(players);
     verification_vector.reserve(players);
 
-    for (int player_id : std::views::iota(1, players + 1)) {
+    for (auto player_id : std::views::iota(1, players + 1)) {
         // Evaluate the polynomial at the player's ID to get their secret share.
         SecretShare player_secret_share = polynom_eval(Scalar::from_uint64(player_id), secret_polynomial);
 

@@ -1,5 +1,5 @@
 #include "utils.hpp"
-#include "crypto/hash.hpp"
+#include "hash.hpp"
 #include <cstddef>
 #include <cstring>
 #include <openssl/evp.h>

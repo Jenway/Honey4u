@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../blst/ops.hpp"
-#include "crypto/blst/Scalar.hpp"
+#include "blst/ops.hpp"
+#include "crypto/threshold/blst/Scalar.hpp"
 #include <span>
 #include <vector>
 

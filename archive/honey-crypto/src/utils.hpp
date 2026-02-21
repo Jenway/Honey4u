@@ -1,7 +1,7 @@
 #pragma once
 
-#include "crypto/blst/P1.hpp"
-#include "crypto/blst/P2.hpp"
+#include "crypto/threshold/blst/P1.hpp"
+#include "crypto/threshold/blst/P2.hpp"
 #include "crypto/types.hpp"
 #include <cstddef>
 #include <cstdint>

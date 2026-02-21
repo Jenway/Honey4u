@@ -10,7 +10,8 @@ struct evp_cipher_ctx_st;
 
 namespace Honey::Crypto::Aes {
 
-using AesKey = std::array<Byte, 32>; // AES-256 key
+static constexpr size_t KEY_SIZE = 32; // AES-256 key size in bytes
+using AesKey = std::array<Byte, KEY_SIZE>; // AES-256 key
 
 class Context {
 public:
@@ -28,10 +29,10 @@ private:
     evp_cipher_ctx_st* ptr_ = nullptr;
 };
 
-auto encrypt(Context& ctx, BytesSpan key, BytesSpan plaintext)
+auto encrypt(Context& ctx, const AesKey& key, BytesSpan plaintext)
     -> std::expected<std::vector<Byte>, std::error_code>;
 
-auto decrypt(Context& ctx, BytesSpan key, BytesSpan ciphertext)
+auto decrypt(Context& ctx, const AesKey& key, BytesSpan ciphertext)
     -> std::expected<std::vector<Byte>, std::error_code>;
 
 } // namespace Honey::Crypto::Aes

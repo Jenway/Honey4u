@@ -1,7 +1,6 @@
 #pragma once
 
 #include "blst_abi_config.hpp"
-#include "crypto/types.hpp"
 #include <array>
 #include <cstdint>
 #include <expected>
@@ -20,7 +19,7 @@ public:
 
     static P2 generator();
     static P2 identity();
-    static P2 from_hash(BytesSpan msg, BytesSpan dst = {});
+    static P2 from_hash(std::span<const std::byte> msg, std::span<const std::byte> dst = {});
 
     [[nodiscard]] bool equals(const P2&) const;
 
@@ -29,9 +28,9 @@ public:
 
     // Deserialization
     [[nodiscard]] static std::expected<P2, std::error_code>
-    deserialize(std::span<const Byte, SERIALIZED_SIZE> data);
+    deserialize(std::span<const std::byte, SERIALIZED_SIZE> data);
     [[nodiscard]] static std::expected<P2, std::error_code>
-    uncompress(std::span<const Byte, COMPRESSED_SIZE> data);
+    uncompress(std::span<const std::byte, COMPRESSED_SIZE> data);
 
 private:
     alignas(abi::blst_p2_align) std::array<std::byte, abi::blst_p2_size> storage;

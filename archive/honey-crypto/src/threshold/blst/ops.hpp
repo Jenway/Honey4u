@@ -1,10 +1,10 @@
 #pragma once
 
-#include "blst/impl_common.hpp"
-#include "crypto/blst/P1.hpp"
-#include "crypto/blst/P2.hpp"
-#include "crypto/blst/Scalar.hpp"
+#include "crypto/threshold/blst/P1.hpp"
+#include "crypto/threshold/blst/P2.hpp"
+#include "crypto/threshold/blst/Scalar.hpp"
 #include "crypto/types.hpp"
+#include "impl_common.hpp"
 #include <system_error>
 
 namespace Honey::Crypto::bls {

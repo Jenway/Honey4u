@@ -1,4 +1,4 @@
-#include "aes.hpp"
+#include "crypto/aes.hpp"
 #include "crypto/error.hpp"
 #include "utils.hpp"
 #include <cstdint>
@@ -36,22 +36,23 @@ Context& Context::operator=(Context&& other) noexcept
     return *this;
 }
 
-auto encrypt(Context& ctx, BytesSpan key, BytesSpan plaintext)
+static constexpr size_t BLOCK_SIZE = 16;
+static constexpr size_t IV_SIZE = 16;
+static constexpr size_t PADDING_SIZE = 16;
+
+auto encrypt(Context& ctx, const AesKey& key, BytesSpan plaintext)
     -> std::expected<std::vector<Byte>, std::error_code>
 {
-    if (key.size() != 32) {
-        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-    }
     auto* native_ctx = ctx.get();
 
     // 生成随机 IV
-    std::vector<Byte> iv(16);
-    if (RAND_bytes(u8ptr(iv.data()), 16) != 1) {
+    std::array<Byte, IV_SIZE> iv {};
+    if (RAND_bytes(u8ptr(iv.data()), IV_SIZE) != 1) {
         return std::unexpected(std::make_error_code(std::errc::io_error));
     }
 
     // 预留空间: IV(16) + Plaintext + Padding(最多16)
-    std::vector<Byte> ciphertext(16 + plaintext.size() + 16);
+    std::vector<Byte> ciphertext(IV_SIZE + plaintext.size() + PADDING_SIZE);
     int len = 0;
     int ciphertext_len = 0;
 
@@ -74,13 +75,13 @@ auto encrypt(Context& ctx, BytesSpan key, BytesSpan plaintext)
     ciphertext_len += len;
 
     // 将 IV 拷贝到头部
-    std::memcpy(ciphertext.data(), iv.data(), 16);
-    ciphertext.resize(16 + ciphertext_len);
+    std::memcpy(ciphertext.data(), iv.data(), IV_SIZE);
+    ciphertext.resize(IV_SIZE + ciphertext_len);
 
     return ciphertext;
 }
 
-auto decrypt(Context& ctx, BytesSpan key, BytesSpan ciphertext)
+auto decrypt(Context& ctx, const AesKey& key, BytesSpan ciphertext)
     -> std::expected<std::vector<Byte>, std::error_code>
 {
     if (key.size() != 32 || ciphertext.size() < 16) {
@@ -97,7 +98,7 @@ auto decrypt(Context& ctx, BytesSpan key, BytesSpan ciphertext)
     int len = 0;
     int plaintext_len = 0;
 
-    if (1 != EVP_DecryptInit_ex(native_ctx, EVP_aes_256_cbc(), nullptr, u8ptr(key), u8ptr(iv))) {
+    if (1 != EVP_DecryptInit_ex(native_ctx, EVP_aes_256_cbc(), nullptr, u8ptr(key.data()), u8ptr(iv))) {
         return std::unexpected(make_error_code(Error::OpenSSLError));
     }
 
@@ -117,3 +118,52 @@ auto decrypt(Context& ctx, BytesSpan key, BytesSpan ciphertext)
     return plaintext;
 }
 } // namespace Honey::Crypto::Aes
+
+// =============================================================================
+// 测试
+// =============================================================================
+#ifndef DOCTEST_CONFIG_DISABLE
+#include <doctest/doctest.h>
+
+namespace Honey::Crypto::Aes {
+AesKey test_key {};
+
+TEST_CASE("AES-256-CBC Encryption/Decryption Roundtrip")
+{
+    Context ctx;
+
+    std::string_view message = "Some secret message to encrypt";
+    BytesSpan plaintext { reinterpret_cast<const Byte*>(message.data()), message.size() };
+
+    auto encrypt_res = encrypt(ctx, test_key, plaintext);
+
+    REQUIRE(encrypt_res.has_value());
+    auto ciphertext = encrypt_res.value();
+
+    CHECK(ciphertext.size() > plaintext.size()); // 密文应包含 IV 和 Padding
+    CHECK(ciphertext.size() % 16 == 0); // CBC 密文长度应是 BlockSize 的倍数
+
+    auto decrypt_res = decrypt(ctx, test_key, ciphertext);
+
+    REQUIRE(decrypt_res.has_value());
+    auto decrypted_text = decrypt_res.value();
+
+    CHECK(decrypted_text.size() == plaintext.size());
+    CHECK(std::memcmp(decrypted_text.data(), plaintext.data(), plaintext.size()) == 0);
+}
+
+TEST_CASE("AES Error Handling")
+{
+    Context ctx;
+
+    SUBCASE("Short ciphertext should return error")
+    {
+        std::vector<Byte> tiny_ciphertext(10, Byte { 0 });
+        auto res = decrypt(ctx, test_key, tiny_ciphertext);
+        CHECK(!res.has_value());
+        CHECK(res.error() == std::errc::invalid_argument);
+    }
+}
+} // namespace Honey::Crypto::Aes
+
+#endif

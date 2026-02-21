@@ -48,7 +48,6 @@ std::error_code core_verify_pk_in_g2(
 [[nodiscard]]
 bool verify_pairing_equality(const P2& q1, const P1& p1, const P2& q2, const P1& p2)
 {
-    // 1. 在栈上直接分配 C 结构体 (POD)，无构造析构开销
     blst_p1_affine p1_aff;
     blst_p1_affine p2_aff;
     blst_p2_affine q1_aff;

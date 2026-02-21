@@ -15,7 +15,7 @@ This library is designed as a **pure logic layer**. It handles cryptographic tra
     *   **TPKE (Threshold Public Key Encryption)**: Allows encryption to a master public key, where decryption requires cooperation of `f+1` nodes. Implemented using **Pimpl pattern** (`Tpke::Context`) to hide OpenSSL/AES implementation details.
     *   **TBLS (Threshold BLS Signatures)**: Distributed signing and aggregation using BLS12-381 curves.
 
-2.  **BLS12-381 Primitives** (`crypto/blst/`)
+2.  **BLS12-381 Primitives** (`crypto/threshold/blst/`)
     *   Type-safe C++ wrappers around [BLST](https://github.com/supranational/blst).
     *   `Scalar`, `P1` (G1 group), `P2` (G2 group), `GT`.
     *   Strong typing prevents mixing group elements.
