@@ -5,23 +5,26 @@ file(GLOB_RECURSE HONEY_CRYPTO_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "include/*.h" "include/*.hpp" "include/**/*.h" "include/**/*.hpp"
 )
+file(GLOB_RECURSE HONEY_CRYPTO_SOURCES
+    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    "src/*.cc" "src/**/*.cc" "src/*.c" "src/**/*.c"
+)
+
+file(GLOB_RECURSE HONEY_CRYPTO_INTERNAL_HEADERS
+    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+    "src/*.h" "src/*.hpp" "src/**/*.h" "src/**/*.hpp"
+)
+
 
 target_compile_features(honey_crypto PUBLIC cxx_std_23)
+# Enable C99 for C wrapper layer
+target_compile_features(honey_crypto PRIVATE c_std_11)
 target_include_directories(honey_crypto PRIVATE src)
 
 target_sources(honey_crypto
     PRIVATE
-        src/blst/ops.cc
-        src/blst/scalar.cc
-        src/blst/p1.cc
-        src/blst/p2.cc
-        src/aes.cc
-        src/ecdsa.cc
-        src/threshold/tbls.cc
-        src/threshold/tpke.cc
-        src/erasure_code.cc
-        src/merkle_tree.cc
-        src/utils.cc
+        ${HONEY_CRYPTO_SOURCES}
+        ${HONEY_CRYPTO_INTERNAL_HEADERS}
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -34,6 +37,7 @@ target_link_libraries(honey_crypto
         blst::blst
         ISAL::isal
         ${SECP256K1_LIBRARIES}
+        spdlog::spdlog
 )
 
 install(TARGETS honey_crypto
