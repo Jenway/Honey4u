@@ -3,7 +3,8 @@
 #include "protocol/ba/binary_agreement.hpp"
 #include "test_utils.hpp"
 #include <deque>
-#include <gtest/gtest.h>
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
 #include <vector>
 
 namespace Honey::BFT::BA {
@@ -42,13 +43,11 @@ struct MockStream {
     }
 };
 
-class BinaryAgreementTest : public ::testing::Test {
-public:
+struct BinaryAgreementTest {
     MockTransport transport;
     MockCoin coin;
     MockStream stream;
 
-protected:
     static constexpr int N = 4;
     static constexpr int f = 1;
     static constexpr int MyPid = 0;
@@ -78,7 +77,7 @@ protected:
 // Test Case 1: 0-Input 一致性 (Happy Path)
 // 所有人都输入 0，应该在第 0 轮直接决定 0
 // -----------------------------------------------------------------------------
-TEST_F(BinaryAgreementTest, AgreementOnZero)
+TEST_CASE_FIXTURE(BinaryAgreementTest, "BinaryAgreementTest.AgreementOnZero")
 {
     BinaryAgreement<MockTransport, MockCoin> ba(
         1, // session id
@@ -122,7 +121,7 @@ TEST_F(BinaryAgreementTest, AgreementOnZero)
     auto combined = stdexec::when_all(std::move(bg_task), std::move(fg_task));
 
     auto result = TestUtils::sync_wait(std::move(combined));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
 
     // bg_task returns int, fg_task returns void
     // when_all returns tuple containing results of tasks.
@@ -131,29 +130,29 @@ TEST_F(BinaryAgreementTest, AgreementOnZero)
     auto& [outcome] = *result;
 
     // 4. 验证
-    EXPECT_EQ(outcome, 0);
+    CHECK_EQ(outcome, 0);
 
     // 验证网络行为
     // 应该至少广播了 BVAL(0, 0) 和 AUX(0, 0)
-    ASSERT_GE(transport.broadcasts->size(), 2);
+    REQUIRE_GE(transport.broadcasts->size(), 2);
 
     // 检查发出的消息内容
     auto msg1 = transport.broadcasts->at(0);
     auto* p1 = std::get_if<ValPayload>(&msg1.payload);
-    ASSERT_TRUE(p1);
-    EXPECT_EQ(p1->value, 0); // BVAL(0)
+    REQUIRE(p1 != nullptr);
+    CHECK_EQ(p1->value, 0); // BVAL(0)
 
     auto msg2 = transport.broadcasts->at(1);
     auto* p2 = std::get_if<AuxPayload>(&msg2.payload);
-    ASSERT_TRUE(p2);
-    EXPECT_EQ(p2->value, 0); // AUX(0)
+    REQUIRE(p2 != nullptr);
+    CHECK_EQ(p2->value, 0); // AUX(0)
 }
 
 // -----------------------------------------------------------------------------
 // Test Case 2: 1-Input 一致性
 // 所有人都输入 1，应该决定 1
 // -----------------------------------------------------------------------------
-TEST_F(BinaryAgreementTest, AgreementOnOne)
+TEST_CASE_FIXTURE(BinaryAgreementTest, "BinaryAgreementTest.AgreementOnOne")
 {
     BinaryAgreement<MockTransport, MockCoin> ba(
         1, // session id
@@ -175,11 +174,11 @@ TEST_F(BinaryAgreementTest, AgreementOnOne)
 
     auto combined = stdexec::when_all(std::move(bg_task), std::move(fg_task));
     auto result = TestUtils::sync_wait(std::move(combined));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
 
     auto& [outcome] = *result;
 
-    EXPECT_EQ(outcome, 1);
+    CHECK_EQ(outcome, 1);
 }
 
 // -----------------------------------------------------------------------------
@@ -187,7 +186,7 @@ TEST_F(BinaryAgreementTest, AgreementOnOne)
 // 我输入 0，但网络上 0 和 1 都有，导致 AUX 阶段收到 {0, 1}
 // 需要硬币来打破僵局
 // -----------------------------------------------------------------------------
-TEST_F(BinaryAgreementTest, CoinFlipDecides)
+TEST_CASE_FIXTURE(BinaryAgreementTest, "BinaryAgreementTest.CoinFlipDecides")
 {
     BinaryAgreement<MockTransport, MockCoin> ba(
         1, // session id
@@ -242,19 +241,19 @@ TEST_F(BinaryAgreementTest, CoinFlipDecides)
 
     auto combined = stdexec::when_all(std::move(bg_task), std::move(fg_task));
     auto result = TestUtils::sync_wait(std::move(combined));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
 
     auto& [outcome] = *result;
 
     // 验证：
     // 虽然我初始是 0，但因为硬币是 1，且第 0 轮冲突了，第 1 轮应该达成 1
-    EXPECT_EQ(outcome, 1);
+    CHECK_EQ(outcome, 1);
 
     // 检查是否进行了两轮广播
     // Round 0: BVAL(0), AUX(0)
     // Round 1: BVAL(1), AUX(1)
     // 至少 4 条广播
-    ASSERT_GE(transport.broadcasts->size(), 4);
+    REQUIRE_GE(transport.broadcasts->size(), 4);
 }
 
 } // namespace Honey::BFT::BA

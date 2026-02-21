@@ -11,7 +11,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST CACHE STRING "Discovery mode" FORCE)
 include(CTest)
 enable_testing()
 
@@ -25,6 +24,7 @@ include(cmake/dependencies.cmake)
 add_subdirectory(lib/crypto)
 add_subdirectory(lib/core)
 add_subdirectory(lib/service)
+add_subdirectory(lib/protocol)
 add_subdirectory(src)
 
 include(GNUInstallDirs)

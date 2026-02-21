@@ -10,6 +10,8 @@ target_compile_features(honey_protocol PUBLIC cxx_std_23)
 set_target_properties(honey_protocol PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 
 target_sources(honey_protocol
+    PRIVATE
+        src/dummy.cc
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -25,8 +27,7 @@ target_link_libraries(honey_protocol
         Honey::Core
 )
 
-# nlohmann/json is header-only
-target_include_directories(honey_protocol PUBLIC ${nlohmann_json_SOURCE_DIR}/include)
+target_link_libraries(honey_protocol PUBLIC nlohmann_json::nlohmann_json)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)

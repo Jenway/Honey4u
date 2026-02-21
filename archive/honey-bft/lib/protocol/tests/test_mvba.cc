@@ -2,7 +2,8 @@
 #include "protocol/mvba/mvba.hpp"
 #include <deque>
 #include <exec/task.hpp>
-#include <gtest/gtest.h>
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
 #include <optional>
 #include <stdexec/execution.hpp>
 #include <string>
@@ -62,8 +63,7 @@ struct MockEventStream {
     }
 };
 
-class MVBATest : public ::testing::Test {
-protected:
+struct MVBATest {
     static constexpr int N = 4;
     static constexpr int f = 1;
     static constexpr int MyPid = 0;
@@ -74,7 +74,7 @@ protected:
     MockEventStream stream;
 };
 
-TEST_F(MVBATest, StartsPrbcAndOutputsOnLeader)
+TEST_CASE_FIXTURE(MVBATest, "MVBATest.StartsPrbcAndOutputsOnLeader")
 {
     MVBAService<TaskT, MockPRBCService, MockBAService> mvba(sys_ctx, MyPid, prbc_svc, ba_svc);
 
@@ -108,22 +108,22 @@ TEST_F(MVBATest, StartsPrbcAndOutputsOnLeader)
     auto task = mvba.run(proposal, stream);
     auto result = stdexec::sync_wait(std::move(task));
 
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
     auto [output] = *result;
 
-    EXPECT_EQ(output.leader_id, 1);
-    EXPECT_EQ(output.data, std::vector<Byte>({ std::byte { 0x01 } }));
-    EXPECT_EQ(output.proof, std::vector<Byte>({ std::byte { 0xAA } }));
+    CHECK_EQ(output.leader_id, 1);
+    CHECK_EQ(output.data, std::vector<Byte>({ std::byte { 0x01 } }));
+    CHECK_EQ(output.proof, std::vector<Byte>({ std::byte { 0xAA } }));
 
-    EXPECT_FALSE(prbc_svc.call_log.empty());
-    EXPECT_FALSE(ba_svc.call_log.empty());
+    CHECK_FALSE(prbc_svc.call_log.empty());
+    CHECK_FALSE(ba_svc.call_log.empty());
     bool started_ba = false;
     for (const auto& log : ba_svc.call_log) {
         if (log == "start_ba") {
             started_ba = true;
         }
     }
-    EXPECT_TRUE(started_ba);
+    CHECK(started_ba);
 }
 
 } // namespace Honey::BFT::MVBA

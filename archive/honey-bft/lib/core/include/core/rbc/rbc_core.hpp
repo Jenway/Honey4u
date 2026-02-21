@@ -1,8 +1,6 @@
 #pragma once
 
-#include "core/common.hpp"
 #include "core/rbc/messages.hpp"
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <generator>

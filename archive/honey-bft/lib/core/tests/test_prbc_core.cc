@@ -1,9 +1,9 @@
 #include "core/prbc/prbc_core.hpp"
-#include <gtest/gtest.h>
+#include <doctest/doctest.h>
 
 namespace Honey::BFT::PRBC {
 
-TEST(PRBCCoreTest, TriggersSignReadyOnEchoThreshold)
+TEST_CASE("PRBCCoreTest.TriggersSignReadyOnEchoThreshold")
 {
     RBCConfig cfg { .session_id = 1, .node_id = 0, .total_nodes = 4, .fault_tolerance = 1, .leader_id = 0 };
     Core core(cfg);
@@ -58,7 +58,7 @@ TEST(PRBCCoreTest, TriggersSignReadyOnEchoThreshold)
         }
     }
 
-    EXPECT_TRUE(sign_ready);
+    CHECK(sign_ready);
 }
 
 } // namespace Honey::BFT::PRBC

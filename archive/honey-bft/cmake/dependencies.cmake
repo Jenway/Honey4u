@@ -35,21 +35,18 @@ CPMAddPackage(
         "STDEXEC_BUILD_EXAMPLES OFF"
 )
 
-CPMAddPackage(
-    NAME googletest
-    GITHUB_REPOSITORY google/googletest
-    GIT_TAG v1.15.2
-    VERSION 1.15.2
-    OPTIONS
-        "INSTALL_GTEST OFF"
-        "BUILD_GMOCK OFF"
-)
+find_package(nlohmann_json REQUIRED CONFIG)
+
+if(BUILD_TESTING)
+    find_package(doctest REQUIRED CONFIG)
+endif()
 
 # Find system dependencies
-find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SECP256K1 REQUIRED libsecp256k1)
-find_package(spdlog 1.0 REQUIRED CONFIG)
+find_package(spdlog REQUIRED CONFIG)
+find_package(fmt REQUIRED CONFIG)
 
 # Include custom build scripts
 include(BuildBlst)

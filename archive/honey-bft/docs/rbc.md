@@ -1,4 +1,4 @@
-### Algorithm 2: Reliable Broadcast
+### Algorithm : Reliable Broadcast
 
 **For party $P_i$, with sender $P_{Sender}$**
 

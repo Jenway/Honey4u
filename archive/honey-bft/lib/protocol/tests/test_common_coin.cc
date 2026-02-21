@@ -5,7 +5,8 @@
 #include <deque>
 #include <exec/static_thread_pool.hpp>
 #include <exec/task.hpp>
-#include <gtest/gtest.h>
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
 #include <optional>
 #include <stdexec/execution.hpp>
 #include <thread>
@@ -86,8 +87,7 @@ namespace {
     static_assert(Honey::BFT::AsyncStreamOf<MockMessageStream, Message>);
 } // namespace
 
-class CommonCoinTest : public ::testing::Test {
-protected:
+struct CommonCoinTest {
     static constexpr int N = 4;
     static constexpr int f = 1;
     static constexpr int MyPid = 1;
@@ -111,7 +111,7 @@ protected:
 };
 
 // Test 1: Request coin broadcasts own share
-TEST_F(CommonCoinTest, RequestCoinBroadcastsShare)
+TEST_CASE_FIXTURE(CommonCoinTest, "CommonCoinTest.RequestCoinBroadcastsShare")
 {
     CommonCoin<MockTransport, MockCryptoSvc> coin(SysCtx, Sid, MyPid, transport, crypto);
 
@@ -145,16 +145,16 @@ TEST_F(CommonCoinTest, RequestCoinBroadcastsShare)
     }
 
     // Should have broadcast our share
-    ASSERT_GE(transport.broadcasts.size(), 1);
+    REQUIRE_GE(transport.broadcasts.size(), 1);
 
     auto& msg = transport.broadcasts[0];
-    EXPECT_EQ(msg.sender, MyPid);
-    EXPECT_EQ(msg.session_id, Sid);
-    EXPECT_EQ(msg.payload.round, 1);
+    CHECK_EQ(msg.sender, MyPid);
+    CHECK_EQ(msg.session_id, Sid);
+    CHECK_EQ(msg.payload.round, 1);
 }
 
 // Test 2: Combine shares when threshold reached
-TEST_F(CommonCoinTest, CombinesOnThresholdAndReturnsResult)
+TEST_CASE_FIXTURE(CommonCoinTest, "CommonCoinTest.CombinesOnThresholdAndReturnsResult")
 {
     CommonCoin<MockTransport, MockCryptoSvc> coin(SysCtx, Sid, MyPid, transport, crypto);
 
@@ -166,20 +166,20 @@ TEST_F(CommonCoinTest, CombinesOnThresholdAndReturnsResult)
     // Start processing messages
     auto run_task = coin.run(stream);
     auto run_result = stdexec::sync_wait(std::move(run_task));
-    ASSERT_TRUE(run_result.has_value());
+    REQUIRE(run_result.has_value());
 
     // Now request the coin - should return immediately as it's computed
     auto request_task = coin.get_coin(1);
     auto result_opt = stdexec::sync_wait(std::move(request_task));
-    ASSERT_TRUE(result_opt.has_value());
+    REQUIRE(result_opt.has_value());
     uint8_t result = std::get<0>(*result_opt);
 
     // Result should be 0 (even number hashes to 0)
-    EXPECT_EQ(result, 0);
+    CHECK_EQ(result, 0);
 }
 
 // Test 3: Ignore messages for wrong session
-TEST_F(CommonCoinTest, IgnoresWrongSession)
+TEST_CASE_FIXTURE(CommonCoinTest, "CommonCoinTest.IgnoresWrongSession")
 {
     CommonCoin<MockTransport, MockCryptoSvc> coin(SysCtx, Sid, MyPid, transport, crypto);
 
@@ -190,14 +190,14 @@ TEST_F(CommonCoinTest, IgnoresWrongSession)
 
     auto run_task = coin.run(stream);
     auto result = stdexec::sync_wait(std::move(run_task));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
 
     // Should not have processed, no broadcasts triggered
-    EXPECT_EQ(transport.broadcasts.size(), 0);
+    CHECK_EQ(transport.broadcasts.size(), 0);
 }
 
 // Test 4: Ignore duplicate shares from same sender
-TEST_F(CommonCoinTest, IgnoresDuplicateShares)
+TEST_CASE_FIXTURE(CommonCoinTest, "CommonCoinTest.IgnoresDuplicateShares")
 {
     CommonCoin<MockTransport, MockCryptoSvc> coin(SysCtx, Sid, MyPid, transport, crypto);
 
@@ -213,13 +213,13 @@ TEST_F(CommonCoinTest, IgnoresDuplicateShares)
     // The duplicate should be ignored
     auto request_task = coin.get_coin(1);
     auto result_opt = stdexec::sync_wait(std::move(request_task));
-    ASSERT_TRUE(result_opt.has_value());
+    REQUIRE(result_opt.has_value());
     uint8_t result = std::get<0>(*result_opt);
-    EXPECT_EQ(result, 0);
+    CHECK_EQ(result, 0);
 }
 
 // Test 5: Multiple rounds are independent
-TEST_F(CommonCoinTest, MultipleRoundsIndependent)
+TEST_CASE_FIXTURE(CommonCoinTest, "CommonCoinTest.MultipleRoundsIndependent")
 {
     CommonCoin<MockTransport, MockCryptoSvc> coin(SysCtx, Sid, MyPid, transport, crypto);
 
@@ -241,20 +241,20 @@ TEST_F(CommonCoinTest, MultipleRoundsIndependent)
     // Get results for both rounds
     auto result1_task = coin.get_coin(1);
     auto result1_opt = stdexec::sync_wait(std::move(result1_task));
-    ASSERT_TRUE(result1_opt.has_value());
+    REQUIRE(result1_opt.has_value());
     uint8_t result1 = std::get<0>(*result1_opt);
 
     auto result2_task = coin.get_coin(2);
     auto result2_opt = stdexec::sync_wait(std::move(result2_task));
-    ASSERT_TRUE(result2_opt.has_value());
+    REQUIRE(result2_opt.has_value());
     uint8_t result2 = std::get<0>(*result2_opt);
 
-    EXPECT_EQ(result1, 0);
-    EXPECT_EQ(result2, 1);
+    CHECK_EQ(result1, 0);
+    CHECK_EQ(result2, 1);
 }
 
 // Test 6: Hash to bit correctness
-TEST_F(CommonCoinTest, HashToBitWorks)
+TEST_CASE_FIXTURE(CommonCoinTest, "CommonCoinTest.HashToBitWorks")
 {
     CommonCoin<MockTransport, MockCryptoSvc> coin(SysCtx, Sid, MyPid, transport, crypto);
 
@@ -267,10 +267,10 @@ TEST_F(CommonCoinTest, HashToBitWorks)
 
     auto result_task = coin.get_coin(1);
     auto result_opt = stdexec::sync_wait(std::move(result_task));
-    ASSERT_TRUE(result_opt.has_value());
+    REQUIRE(result_opt.has_value());
     uint8_t result = std::get<0>(*result_opt);
 
-    EXPECT_EQ(result, 0); // Even should give 0
+    CHECK_EQ(result, 0); // Even should give 0
 
     // Now test odd
     MockMessageStream stream_odd;
@@ -282,10 +282,10 @@ TEST_F(CommonCoinTest, HashToBitWorks)
 
     auto result_task2 = coin.get_coin(2);
     auto result_opt2 = stdexec::sync_wait(std::move(result_task2));
-    ASSERT_TRUE(result_opt2.has_value());
+    REQUIRE(result_opt2.has_value());
     uint8_t result2 = std::get<0>(*result_opt2);
 
-    EXPECT_EQ(result2, 1); // Odd should give 1
+    CHECK_EQ(result2, 1); // Odd should give 1
 }
 
 } // namespace Honey::BFT::Coin

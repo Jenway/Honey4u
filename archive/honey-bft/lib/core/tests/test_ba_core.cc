@@ -1,12 +1,11 @@
 #include "core/ba/ba_core.hpp"
 #include "core/ba/messages.hpp"
-#include <gtest/gtest.h>
+#include <doctest/doctest.h>
 #include <vector>
 
 namespace Honey::BFT::BA {
 
-class BACoreTest : public ::testing::Test {
-protected:
+struct BACoreTest {
     static constexpr int N = 4;
     static constexpr int f = 1;
     static constexpr int MyPid = 1;
@@ -29,25 +28,25 @@ protected:
     }
 };
 
-TEST_F(BACoreTest, ProposeValueBroadcastsBval)
+TEST_CASE_FIXTURE(BACoreTest, "BACoreTest.ProposeValueBroadcastsBval")
 {
     Core core(config);
 
     auto actions = collect_actions(core.start_round(0, 1));
 
-    ASSERT_GE(actions.size(), 1);
+    REQUIRE_GE(actions.size(), 1);
     bool found_bval = false;
     for (const auto& action : actions) {
         if (action.type == Action::Type::BroadcastBval) {
             found_bval = true;
-            EXPECT_EQ(action.round, 0);
-            EXPECT_EQ(action.value, 1);
+            CHECK_EQ(action.round, 0);
+            CHECK_EQ(action.value, 1);
         }
     }
-    EXPECT_TRUE(found_bval);
+    CHECK(found_bval);
 }
 
-TEST_F(BACoreTest, BvalQuorumTriggersBinValue)
+TEST_CASE_FIXTURE(BACoreTest, "BACoreTest.BvalQuorumTriggersBinValue")
 {
     Core core(config);
 
@@ -64,13 +63,13 @@ TEST_F(BACoreTest, BvalQuorumTriggersBinValue)
     for (const auto& action : actions) {
         if (action.type == Action::Type::BroadcastAux) {
             found_aux = true;
-            EXPECT_EQ(action.round, 0);
+            CHECK_EQ(action.round, 0);
         }
     }
-    EXPECT_TRUE(found_aux);
+    CHECK(found_aux);
 }
 
-TEST_F(BACoreTest, AuxQuorumRequestsCoin)
+TEST_CASE_FIXTURE(BACoreTest, "BACoreTest.AuxQuorumRequestsCoin")
 {
     Core core(config);
 
@@ -91,13 +90,13 @@ TEST_F(BACoreTest, AuxQuorumRequestsCoin)
     for (const auto& action : actions) {
         if (action.type == Action::Type::RequestCoin) {
             found_coin_request = true;
-            EXPECT_EQ(action.round, 0);
+            CHECK_EQ(action.round, 0);
         }
     }
-    EXPECT_TRUE(found_coin_request);
+    CHECK(found_coin_request);
 }
 
-TEST_F(BACoreTest, CoinResultTriggersDecision)
+TEST_CASE_FIXTURE(BACoreTest, "BACoreTest.CoinResultTriggersDecision")
 {
     Core core(config);
 
@@ -118,14 +117,14 @@ TEST_F(BACoreTest, CoinResultTriggersDecision)
     for (const auto& action : actions) {
         if (action.type == Action::Type::Output) {
             found_output = true;
-            EXPECT_EQ(action.value, 1);
-            EXPECT_TRUE(action.decided);
+            CHECK_EQ(action.value, 1);
+            CHECK(action.decided);
         }
     }
-    EXPECT_TRUE(found_output);
+    CHECK(found_output);
 }
 
-TEST_F(BACoreTest, DuplicateMessagesIgnored)
+TEST_CASE_FIXTURE(BACoreTest, "BACoreTest.DuplicateMessagesIgnored")
 {
     Core core(config);
 
@@ -136,7 +135,7 @@ TEST_F(BACoreTest, DuplicateMessagesIgnored)
     auto second_actions = collect_actions(core.on_bval(0, 2, 1));
 
     // No new actions from duplicate
-    EXPECT_EQ(second_actions.size(), 0);
+    CHECK_EQ(second_actions.size(), 0);
 }
 
 } // namespace Honey::BFT::BA

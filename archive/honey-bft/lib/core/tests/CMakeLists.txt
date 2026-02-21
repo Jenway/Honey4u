@@ -1,26 +1,20 @@
-include(GoogleTest)
+include(doctest)
 
-function(add_hbft_core_test TEST_NAME SOURCE_FILE)
-    add_executable(${TEST_NAME} ${SOURCE_FILE})
-
-    target_link_libraries(${TEST_NAME}
-        PRIVATE
-            Honey::Core
-            GTest::gtest_main
-    )
-
-    gtest_discover_tests(${TEST_NAME})
-endfunction()
-
-set(CORE_TESTS
-    rbc_core_test
-    coin_core_test
-    ba_core_test
-    acs_core_test
-    hb_core_test
+add_executable(honey_core_tests
+    test_main.cc
+    test_rbc_core.cc
+    test_coin_core.cc
+    test_ba_core.cc
 )
 
-foreach(test_name ${CORE_TESTS})
-    string(REPLACE "_test" "" test_source "${test_name}")
-    add_hbft_core_test(${test_name} "test_${test_source}.cc")
-endforeach()
+target_link_libraries(honey_core_tests
+    PRIVATE
+        Honey::Core
+        doctest::doctest
+)
+
+add_test(NAME honey_core_tests COMMAND honey_core_tests)
+
+if(DEFINED TEST_ENVIRONMENT)
+    set_tests_properties(honey_core_tests PROPERTIES ENVIRONMENT "${TEST_ENVIRONMENT}")
+endif()

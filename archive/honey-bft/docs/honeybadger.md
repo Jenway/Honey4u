@@ -1,7 +1,9 @@
-Algorithm HoneyBadgerBFT (for node Pi)
-Let B = Ω(λ N2 log N) be the batch size parameter.
-Let PK be the public key received from TPKE.Setup (executed
-by a dealer), and let SKi be the secret key for Pi.
+### Algorithm : HoneyBadgerBFT (for node Pi)
+
+Let $B = Ω(λ N2 log N)$ be the batch size parameter.
+
+Let $P_K$ be the public key received from TPKE.Setup (executed by a dealer), and let $S_{Ki}$ be the secret key for $P_i$.
+
 Let buf := [ ] be a FIFO queue of input transactions.
 Proceed in consecutive epochs numbered r:
 // Step 1: Random selection and encryption
@@ -21,4 +23,3 @@ decode y j := TPKE.Dec(PK, {(k, e j,k)})
 • let blockr := sorted(∪ j∈S{y j}), such that blockr is sorted in a
 canonical order (e.g., lexicographically)
 • set buf := buf − blockr
-Figure 1: HoneyBadgerBFT.

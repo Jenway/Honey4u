@@ -3,7 +3,8 @@
 #include "service/crypto/crypto_service.hpp"
 #include <algorithm>
 #include <cstddef>
-#include <gtest/gtest.h>
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
 #include <optional>
 #include <span>
 #include <stdexec/execution.hpp>
@@ -45,10 +46,10 @@ namespace {
 
 } // namespace
 
-TEST(AsyncCryptoServiceTest, BuildsMerkleAndVerifiesProof)
+TEST_CASE("AsyncCryptoServiceTest.BuildsMerkleAndVerifiesProof")
 {
     auto keyset = Honey::Crypto::Tbls::generate_keys(4, 3);
-    ASSERT_TRUE(keyset.has_value());
+    REQUIRE(keyset.has_value());
     auto svc = make_service(keyset->public_params, keyset->private_shares[0]);
 
     const auto data = to_bytes("hello async crypto");
@@ -56,29 +57,28 @@ TEST(AsyncCryptoServiceTest, BuildsMerkleAndVerifiesProof)
     const int n = 4;
 
     auto tree_result = stdexec::sync_wait(svc.async_build_merkle_tree(k, n, BytesSpan { data }));
-    ASSERT_TRUE(tree_result.has_value());
+    REQUIRE(tree_result.has_value());
     auto& tree = std::get<0>(*tree_result);
 
-    Honey::Crypto::MerkleTree::Proof proof {
-        .leaf_index = 1,
-        .siblings = tree.proofs[1].siblings
-    };
+    const auto& proof = tree.proofs[1];
+    auto shard_span = tree.shards.shard(1);
+    std::vector<Byte> leaf_vec(shard_span.begin(), shard_span.end());
 
     auto verify_result = stdexec::sync_wait(
-        svc.async_verify_merkle(BytesSpan { tree.shards[1] }, proof.leaf_index, std::span { proof.siblings }, tree.root));
+        svc.async_verify_merkle(std::move(leaf_vec), proof.leaf_index, proof.siblings, tree.root));
 
-    ASSERT_TRUE(verify_result.has_value());
-    EXPECT_TRUE(std::get<0>(*verify_result));
+    REQUIRE(verify_result.has_value());
+    CHECK(std::get<0>(*verify_result));
 }
 
-TEST(AsyncCryptoServiceTest, SignsAndCombinesThresholdSignatures)
+TEST_CASE("AsyncCryptoServiceTest.SignsAndCombinesThresholdSignatures")
 {
     const int players = 4;
     const int threshold = 3;
     const auto message = to_bytes("threshold-signing-test");
 
     auto keyset = Honey::Crypto::Tbls::generate_keys(players, threshold);
-    ASSERT_TRUE(keyset.has_value());
+    REQUIRE(keyset.has_value());
 
     auto svc = make_service(keyset->public_params, keyset->private_shares[0]);
     svc.set_verification_params(keyset->public_params);
@@ -90,31 +90,31 @@ TEST(AsyncCryptoServiceTest, SignsAndCombinesThresholdSignatures)
         svc.set_private_key_share(keyset->private_shares[i]);
 
         auto share_result = stdexec::sync_wait(svc.async_sign_share(BytesSpan { message }));
-        ASSERT_TRUE(share_result.has_value());
+        REQUIRE(share_result.has_value());
         auto& share = std::get<0>(*share_result);
 
         parts.push_back({ keyset->private_shares[i].player_id, share });
 
         auto verify_share_result = stdexec::sync_wait(
             svc.async_verify_share(parts.back().value, BytesSpan { message }, parts.back().player_id));
-        ASSERT_TRUE(verify_share_result.has_value());
-        EXPECT_TRUE(std::get<0>(*verify_share_result));
+        REQUIRE(verify_share_result.has_value());
+        CHECK(std::get<0>(*verify_share_result));
     }
 
     auto combined_result = stdexec::sync_wait(svc.async_combine_signatures(parts));
-    ASSERT_TRUE(combined_result.has_value());
+    REQUIRE(combined_result.has_value());
     auto& combined = std::get<0>(*combined_result);
-    ASSERT_TRUE(combined.has_value());
+    REQUIRE(combined.has_value());
 
     auto verify_sig_result = stdexec::sync_wait(svc.async_verify_signature(*combined, BytesSpan { message }));
-    ASSERT_TRUE(verify_sig_result.has_value());
-    EXPECT_TRUE(std::get<0>(*verify_sig_result));
+    REQUIRE(verify_sig_result.has_value());
+    CHECK(std::get<0>(*verify_sig_result));
 }
 
-TEST(AsyncCryptoServiceTest, EncodesAndDecodesShards)
+TEST_CASE("AsyncCryptoServiceTest.EncodesAndDecodesShards")
 {
     auto keyset = Honey::Crypto::Tbls::generate_keys(4, 3);
-    ASSERT_TRUE(keyset.has_value());
+    REQUIRE(keyset.has_value());
     auto svc = make_service(keyset->public_params, keyset->private_shares[0]);
 
     const auto data = to_bytes("erasure-code payload");
@@ -122,23 +122,24 @@ TEST(AsyncCryptoServiceTest, EncodesAndDecodesShards)
     const int n = 5;
 
     auto tree_result = stdexec::sync_wait(svc.async_build_merkle_tree(k, n, BytesSpan { data }));
-    ASSERT_TRUE(tree_result.has_value());
+    REQUIRE(tree_result.has_value());
     auto& tree = std::get<0>(*tree_result);
 
     std::vector<std::pair<int, std::vector<Byte>>> shards;
     shards.reserve(k);
     for (int i = 0; i < k; ++i) {
-        shards.emplace_back(i, std::vector<Byte>(tree.shards[i].begin(), tree.shards[i].end()));
+        auto shard_span = tree.shards.shard(i);
+        shards.emplace_back(i, std::vector<Byte>(shard_span.begin(), shard_span.end()));
     }
 
     auto decode_result = stdexec::sync_wait(svc.async_decode(k, n, std::span { shards }));
-    ASSERT_TRUE(decode_result.has_value());
+    REQUIRE(decode_result.has_value());
     auto& decoded_opt = std::get<0>(*decode_result);
 
-    ASSERT_TRUE(decoded_opt.has_value());
+    REQUIRE(decoded_opt.has_value());
     const auto& decoded = *decoded_opt;
 
-    ASSERT_EQ(decoded.size(), data.size());
-    EXPECT_TRUE(std::equal(decoded.begin(), decoded.end(), data.begin()));
+    REQUIRE_EQ(decoded.size(), data.size());
+    CHECK(std::equal(decoded.begin(), decoded.end(), data.begin()));
 }
 } // namespace Honey::BFT::Crypto

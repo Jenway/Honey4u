@@ -1,6 +1,6 @@
 #include "core/coin/coin_core.hpp"
 #include "core/coin/messages.hpp"
-#include <gtest/gtest.h>
+#include <doctest/doctest.h>
 
 #include <algorithm>
 
@@ -8,8 +8,7 @@
 
 namespace Honey::BFT::Coin {
 
-class CoinCoreTest : public ::testing::Test {
-protected:
+struct CoinCoreTest {
     static constexpr int N = 4;
     static constexpr int f = 1;
     static constexpr int MyPid = 1;
@@ -48,20 +47,20 @@ protected:
     }
 };
 
-TEST_F(CoinCoreTest, RequestCoinBroadcastsShare)
+TEST_CASE_FIXTURE(CoinCoreTest, "CoinCoreTest.RequestCoinBroadcastsShare")
 {
     Core core(config);
     auto my_share = make_share(0xAA);
 
     auto actions = collect_actions(core.request_coin(1, my_share));
 
-    ASSERT_EQ(actions.size(), 1);
-    EXPECT_EQ(actions[0].type, Action::Type::BroadcastShare);
-    EXPECT_EQ(actions[0].round, 1);
-    EXPECT_EQ(actions[0].my_share, my_share);
+    REQUIRE_EQ(actions.size(), 1);
+    CHECK_EQ(actions[0].type, Action::Type::BroadcastShare);
+    CHECK_EQ(actions[0].round, 1);
+    CHECK_EQ(actions[0].my_share, my_share);
 }
 
-TEST_F(CoinCoreTest, CollectingSharesTriggersOutput)
+TEST_CASE_FIXTURE(CoinCoreTest, "CoinCoreTest.CollectingSharesTriggersOutput")
 {
     Core core(config);
     auto my_share = make_share(0xAA);
@@ -86,10 +85,10 @@ TEST_F(CoinCoreTest, CollectingSharesTriggersOutput)
             break;
         }
     }
-    EXPECT_TRUE(found_combine);
+    CHECK(found_combine);
 }
 
-TEST_F(CoinCoreTest, DuplicateSharesIgnored)
+TEST_CASE_FIXTURE(CoinCoreTest, "CoinCoreTest.DuplicateSharesIgnored")
 {
     Core core(config);
     auto my_share = make_share(0xAA);
@@ -101,10 +100,10 @@ TEST_F(CoinCoreTest, DuplicateSharesIgnored)
     auto second_actions = collect_actions(core.on_share(1, 0, make_share(0x00)));
 
     // Second one should not produce additional actions
-    EXPECT_EQ(second_actions.size(), 0);
+    CHECK_EQ(second_actions.size(), 0);
 }
 
-TEST_F(CoinCoreTest, MultipleRoundsIndependent)
+TEST_CASE_FIXTURE(CoinCoreTest, "CoinCoreTest.MultipleRoundsIndependent")
 {
     Core core(config);
 
@@ -116,12 +115,12 @@ TEST_F(CoinCoreTest, MultipleRoundsIndependent)
     auto share2 = make_share(0xBB);
     auto actions = collect_actions(core.request_coin(2, share2));
 
-    ASSERT_EQ(actions.size(), 1);
-    EXPECT_EQ(actions[0].round, 2);
-    EXPECT_EQ(actions[0].my_share, share2);
+    REQUIRE_EQ(actions.size(), 1);
+    CHECK_EQ(actions[0].round, 2);
+    CHECK_EQ(actions[0].my_share, share2);
 }
 
-TEST_F(CoinCoreTest, SharesForWrongRoundIgnored)
+TEST_CASE_FIXTURE(CoinCoreTest, "CoinCoreTest.SharesForWrongRoundIgnored")
 {
     Core core(config);
     auto my_share = make_share(0xAA);
@@ -132,7 +131,7 @@ TEST_F(CoinCoreTest, SharesForWrongRoundIgnored)
     auto actions = collect_actions(core.on_share(2, 0, make_share(0x00)));
 
     // Should not produce any actions
-    EXPECT_EQ(actions.size(), 0);
+    CHECK_EQ(actions.size(), 0);
 }
 
 } // namespace Honey::BFT::Coin

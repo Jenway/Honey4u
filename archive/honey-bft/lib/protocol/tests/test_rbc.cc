@@ -3,7 +3,8 @@
 #include "test_utils.hpp"
 #include <algorithm>
 #include <expected>
-#include <gtest/gtest.h>
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -126,8 +127,7 @@ namespace {
     // static_assert(AsyncStreamOf<VectorStream, RBCMessage>);
 } // namespace
 
-class ReliableBroadcastTest : public ::testing::Test {
-protected:
+struct ReliableBroadcastTest {
     static constexpr int N = 4;
     static constexpr int f = 1;
     static constexpr int Leader = 0;
@@ -142,7 +142,7 @@ protected:
     Hash mock_root;
     std::vector<std::vector<Byte>> shards;
 
-    void SetUp() override
+    ReliableBroadcastTest()
     {
         original_message = { std::byte { 1 }, std::byte { 2 }, std::byte { 3 }, std::byte { 4 } };
 
@@ -192,7 +192,7 @@ protected:
     }
 };
 
-TEST_F(ReliableBroadcastTest, DeliversOnQuorum)
+TEST_CASE_FIXTURE(ReliableBroadcastTest, "ReliableBroadcastTest.DeliversOnQuorum")
 {
     ReliableBroadcast<TransportMock, CryptoMock> rbc(sys_ctx, Sid, MyPid, Leader, transport, crypto);
 
@@ -219,21 +219,21 @@ TEST_F(ReliableBroadcastTest, DeliversOnQuorum)
 
     // 断言结果
     auto result = stdexec::sync_wait(std::move(task));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
     auto [val] = *result;
-    EXPECT_EQ(val, original_message);
+    CHECK_EQ(val, original_message);
 
     // 验证网络行为
     // 应该广播了 1 次 ECHO 和 1 次 READY
-    ASSERT_EQ(transport.broadcasts.size(), 2);
+    REQUIRE_EQ(transport.broadcasts.size(), 2);
 
     // 第一个是 ECHO
-    EXPECT_TRUE(std::holds_alternative<EchoPayload>(transport.broadcasts[0].payload));
+    CHECK(std::holds_alternative<EchoPayload>(transport.broadcasts[0].payload));
     // 第二个是 READY
-    EXPECT_TRUE(std::holds_alternative<ReadyPayload>(transport.broadcasts[1].payload));
+    CHECK(std::holds_alternative<ReadyPayload>(transport.broadcasts[1].payload));
 }
 
-TEST_F(ReliableBroadcastTest, DeliversWithOnlyReadys)
+TEST_CASE_FIXTURE(ReliableBroadcastTest, "ReliableBroadcastTest.DeliversWithOnlyReadys")
 {
     ReliableBroadcast<TransportMock, CryptoMock> rbc(sys_ctx, Sid, MyPid, Leader, transport, crypto);
     VectorStream stream;
@@ -258,10 +258,10 @@ TEST_F(ReliableBroadcastTest, DeliversWithOnlyReadys)
     // 运行
     auto task = rbc.run(std::nullopt, stream);
     auto result = stdexec::sync_wait(std::move(task));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
     auto [val] = *result;
 
-    EXPECT_EQ(val, original_message);
+    CHECK_EQ(val, original_message);
 
     // 检查是否触发了 Ready 放大
     // 即使没收到足够的 ECHO，收到 f+1 个 READY 也应该广播 READY
@@ -272,10 +272,10 @@ TEST_F(ReliableBroadcastTest, DeliversWithOnlyReadys)
             break;
         }
     }
-    EXPECT_TRUE(sent_ready) << "Should verify ready amplification";
+    CHECK_MESSAGE(sent_ready, "Should verify ready amplification");
 }
 
-TEST_F(ReliableBroadcastTest, RejectsNonLeaderVal)
+TEST_CASE_FIXTURE(ReliableBroadcastTest, "ReliableBroadcastTest.RejectsNonLeaderVal")
 {
     ReliableBroadcast<TransportMock, CryptoMock> rbc(sys_ctx, Sid, MyPid, Leader, transport, crypto);
     VectorStream stream;
@@ -297,16 +297,16 @@ TEST_F(ReliableBroadcastTest, RejectsNonLeaderVal)
 
     auto task = rbc.run(std::nullopt, stream);
     auto result = stdexec::sync_wait(std::move(task));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
     const RBCOutput output = std::get<0>(*result);
 
-    EXPECT_EQ(output, original_message);
-    ASSERT_EQ(transport.broadcasts.size(), 2U);
-    EXPECT_TRUE(std::holds_alternative<EchoPayload>(transport.broadcasts[0].payload));
-    EXPECT_TRUE(std::holds_alternative<ReadyPayload>(transport.broadcasts[1].payload));
+    CHECK_EQ(output, original_message);
+    REQUIRE_EQ(transport.broadcasts.size(), 2U);
+    CHECK(std::holds_alternative<EchoPayload>(transport.broadcasts[0].payload));
+    CHECK(std::holds_alternative<ReadyPayload>(transport.broadcasts[1].payload));
 }
 
-TEST_F(ReliableBroadcastTest, DeliverOnEchoQuorum)
+TEST_CASE_FIXTURE(ReliableBroadcastTest, "ReliableBroadcastTest.DeliverOnEchoQuorum")
 {
     ReliableBroadcast<TransportMock, CryptoMock> rbc(sys_ctx, Sid, MyPid, Leader, transport, crypto);
     VectorStream stream;
@@ -325,13 +325,13 @@ TEST_F(ReliableBroadcastTest, DeliverOnEchoQuorum)
 
     auto task = rbc.run(std::nullopt, stream);
     auto result = stdexec::sync_wait(std::move(task));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
     const RBCOutput output = std::get<0>(*result);
 
-    EXPECT_EQ(output, original_message);
+    CHECK_EQ(output, original_message);
 }
 
-TEST_F(ReliableBroadcastTest, IgnoresInconsistentRootHash)
+TEST_CASE_FIXTURE(ReliableBroadcastTest, "ReliableBroadcastTest.IgnoresInconsistentRootHash")
 {
     ReliableBroadcast<TransportMock, CryptoMock> rbc(sys_ctx, Sid, MyPid, Leader, transport, crypto);
     VectorStream stream;
@@ -365,13 +365,13 @@ TEST_F(ReliableBroadcastTest, IgnoresInconsistentRootHash)
 
     auto task = rbc.run(std::nullopt, stream);
     auto result = stdexec::sync_wait(std::move(task));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
     const RBCOutput output = std::get<0>(*result);
 
-    EXPECT_EQ(output, original_message);
+    CHECK_EQ(output, original_message);
 }
 
-TEST_F(ReliableBroadcastTest, PartialEchoQuorumDoesNotTriggerReady)
+TEST_CASE_FIXTURE(ReliableBroadcastTest, "ReliableBroadcastTest.PartialEchoQuorumDoesNotTriggerReady")
 {
     ReliableBroadcast<TransportMock, CryptoMock> rbc(sys_ctx, Sid, MyPid, Leader, transport, crypto);
     VectorStream stream;
@@ -391,13 +391,13 @@ TEST_F(ReliableBroadcastTest, PartialEchoQuorumDoesNotTriggerReady)
 
     auto task = rbc.run(std::nullopt, stream);
     auto result = stdexec::sync_wait(std::move(task));
-    ASSERT_TRUE(result.has_value());
+    REQUIRE(result.has_value());
     const auto output = std::get<0>(*result);
 
-    EXPECT_EQ(output, original_message);
-    ASSERT_EQ(transport.broadcasts.size(), 2U);
-    EXPECT_TRUE(std::holds_alternative<EchoPayload>(transport.broadcasts[0].payload));
-    EXPECT_TRUE(std::holds_alternative<ReadyPayload>(transport.broadcasts[1].payload));
+    CHECK_EQ(output, original_message);
+    REQUIRE_EQ(transport.broadcasts.size(), 2U);
+    CHECK(std::holds_alternative<EchoPayload>(transport.broadcasts[0].payload));
+    CHECK(std::holds_alternative<ReadyPayload>(transport.broadcasts[1].payload));
 }
 
 } // namespace Honey::BFT::RBC

@@ -1,25 +1,30 @@
-if(WIN32)
-    add_library(ISAL::isal INTERFACE IMPORTED GLOBAL)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(PC_ISAL QUIET libisal)
+endif()
 
-    target_include_directories(ISAL::isal INTERFACE
-        "${CMAKE_SOURCE_DIR}/.pixi/envs/default/Library/include"
-    )
-
-    target_link_libraries(ISAL::isal INTERFACE
-        isa-l
-    )
-
-    target_link_directories(ISAL::isal INTERFACE
-        "${CMAKE_SOURCE_DIR}/.pixi/envs/default/Library/lib"
-    )
-
-    message(STATUS "Using ISA-L from pixi environment (Windows)")
-else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(ISAL REQUIRED libisal)
-
+if(PC_ISAL_FOUND)
     add_library(ISAL::isal INTERFACE IMPORTED GLOBAL)
     target_include_directories(ISAL::isal INTERFACE ${PC_ISAL_INCLUDE_DIRS})
     target_link_libraries(ISAL::isal INTERFACE ${PC_ISAL_LINK_LIBRARIES})
     target_link_directories(ISAL::isal INTERFACE ${PC_ISAL_LIBRARY_DIRS})
+
+    message(STATUS "Found ISA-L via pkg-config")
+    message(STATUS "  ISA-L include: ${PC_ISAL_INCLUDE_DIRS}")
+    message(STATUS "  ISA-L libraries: ${PC_ISAL_LINK_LIBRARIES}")
+else()
+    find_library(ISAL_LIBRARY NAMES isa-l isal)
+    find_path(ISAL_INCLUDE_DIR NAMES isa-l.h)
+
+    if(ISAL_LIBRARY AND ISAL_INCLUDE_DIR)
+        add_library(ISAL::isal INTERFACE IMPORTED GLOBAL)
+        target_include_directories(ISAL::isal INTERFACE "${ISAL_INCLUDE_DIR}")
+        target_link_libraries(ISAL::isal INTERFACE "${ISAL_LIBRARY}")
+
+        message(STATUS "Found ISA-L")
+        message(STATUS "  ISA-L include: ${ISAL_INCLUDE_DIR}")
+        message(STATUS "  ISA-L library: ${ISAL_LIBRARY}")
+    else()
+        message(FATAL_ERROR "Could not find ISA-L library. Ensure CMAKE_PREFIX_PATH is set or ISA-L is installed.")
+    endif()
 endif()

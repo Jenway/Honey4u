@@ -1,14 +1,13 @@
 #include "core/rbc/rbc_core.hpp"
 #include <algorithm>
-#include <gtest/gtest.h>
+#include <doctest/doctest.h>
 #include <vector>
 
 namespace Honey::BFT::RBC {
 
 using Byte = std::byte;
 
-class RBCCoreTest : public ::testing::Test {
-protected:
+struct RBCCoreTest {
     static constexpr int N = 4;
     static constexpr int f = 1;
     static constexpr int Leader = 0;
@@ -19,7 +18,7 @@ protected:
     Hash mock_root;
     std::vector<std::vector<Byte>> shards;
 
-    void SetUp() override
+    RBCCoreTest()
     {
         original_message = { std::byte { 1 }, std::byte { 2 }, std::byte { 3 }, std::byte { 4 } };
 
@@ -89,7 +88,7 @@ protected:
     }
 };
 
-TEST_F(RBCCoreTest, ReceivingValTriggersEcho)
+TEST_CASE_FIXTURE(RBCCoreTest, "RBCCoreTest.ReceivingValTriggersEcho")
 {
     Core core(make_config());
 
@@ -98,32 +97,32 @@ TEST_F(RBCCoreTest, ReceivingValTriggersEcho)
 
     // Should not trigger any action immediately (ECHO broadcast happens at higher level)
     // The core just stores the stripe and waits for more messages
-    EXPECT_TRUE(actions.empty());
+    CHECK(actions.empty());
 }
 
-TEST_F(RBCCoreTest, EchoQuorumTriggersBroadcastReady)
+TEST_CASE_FIXTURE(RBCCoreTest, "RBCCoreTest.EchoQuorumTriggersBroadcastReady")
 {
     Core core(make_config());
 
     // First receive VAL from leader
     auto actions1 = collect_actions(core.on_msg(make_val(Leader, MyPid)));
-    EXPECT_TRUE(actions1.empty());
+    CHECK(actions1.empty());
 
     // Receive N-f ECHOs (3 ECHOs including nodes 0, 2, 3)
     auto actions2 = collect_actions(core.on_msg(make_echo(0)));
-    EXPECT_TRUE(actions2.empty());
+    CHECK(actions2.empty());
 
     auto actions3 = collect_actions(core.on_msg(make_echo(2)));
-    EXPECT_TRUE(actions3.empty());
+    CHECK(actions3.empty());
 
     // The 3rd ECHO should trigger BroadcastReady
     auto actions4 = collect_actions(core.on_msg(make_echo(3)));
-    ASSERT_EQ(actions4.size(), 1);
-    EXPECT_EQ(actions4[0].type, Action::Type::BroadcastReady);
-    EXPECT_EQ(actions4[0].root_hash, mock_root);
+    REQUIRE_EQ(actions4.size(), 1);
+    CHECK_EQ(actions4[0].type, Action::Type::BroadcastReady);
+    CHECK_EQ(actions4[0].root_hash, mock_root);
 }
 
-TEST_F(RBCCoreTest, ReadyQuorumTriggersDecode)
+TEST_CASE_FIXTURE(RBCCoreTest, "RBCCoreTest.ReadyQuorumTriggersDecode")
 {
     Core core(make_config());
 
@@ -132,24 +131,24 @@ TEST_F(RBCCoreTest, ReadyQuorumTriggersDecode)
     collect_actions(core.on_msg(make_echo(0)));
     collect_actions(core.on_msg(make_echo(2)));
     auto actions_ready = collect_actions(core.on_msg(make_echo(3)));
-    ASSERT_EQ(actions_ready.size(), 1);
-    EXPECT_EQ(actions_ready[0].type, Action::Type::BroadcastReady);
+    REQUIRE_EQ(actions_ready.size(), 1);
+    CHECK_EQ(actions_ready[0].type, Action::Type::BroadcastReady);
 
     // Now receive 2f+1 READYs (3 READYs from nodes 0, 2, 3)
     auto actions1 = collect_actions(core.on_msg(make_ready(0)));
-    EXPECT_TRUE(actions1.empty());
+    CHECK(actions1.empty());
 
     auto actions2 = collect_actions(core.on_msg(make_ready(2)));
-    EXPECT_TRUE(actions2.empty());
+    CHECK(actions2.empty());
 
     // The 3rd READY should trigger Decode
     auto actions3 = collect_actions(core.on_msg(make_ready(3)));
-    ASSERT_EQ(actions3.size(), 1);
-    EXPECT_EQ(actions3[0].type, Action::Type::Decode);
-    EXPECT_EQ(actions3[0].root_hash, mock_root);
+    REQUIRE_EQ(actions3.size(), 1);
+    CHECK_EQ(actions3[0].type, Action::Type::Decode);
+    CHECK_EQ(actions3[0].root_hash, mock_root);
 }
 
-TEST_F(RBCCoreTest, ReadyAmplification)
+TEST_CASE_FIXTURE(RBCCoreTest, "RBCCoreTest.ReadyAmplification")
 {
     Core core(make_config());
 
@@ -162,41 +161,41 @@ TEST_F(RBCCoreTest, ReadyAmplification)
 
     // Receive f+1 READYs (2 READYs) - should trigger BroadcastReady
     auto actions1 = collect_actions(core.on_msg(make_ready(2)));
-    EXPECT_TRUE(actions1.empty());
+    CHECK(actions1.empty());
 
     // The 2nd READY (f+1) should trigger BroadcastReady
     auto actions2 = collect_actions(core.on_msg(make_ready(3)));
-    ASSERT_EQ(actions2.size(), 1);
-    EXPECT_EQ(actions2[0].type, Action::Type::BroadcastReady);
-    EXPECT_EQ(actions2[0].root_hash, mock_root);
+    REQUIRE_EQ(actions2.size(), 1);
+    CHECK_EQ(actions2[0].type, Action::Type::BroadcastReady);
+    CHECK_EQ(actions2[0].root_hash, mock_root);
 
     // Continue to 2f+1 READYs for Decode (now we have enough stripes)
     auto actions3 = collect_actions(core.on_msg(make_ready(0)));
-    ASSERT_EQ(actions3.size(), 1);
-    EXPECT_EQ(actions3[0].type, Action::Type::Decode);
+    REQUIRE_EQ(actions3.size(), 1);
+    CHECK_EQ(actions3[0].type, Action::Type::Decode);
 }
 
-TEST_F(RBCCoreTest, RejectsNonLeaderVal)
+TEST_CASE_FIXTURE(RBCCoreTest, "RBCCoreTest.RejectsNonLeaderVal")
 {
     Core core(make_config());
 
     // Non-leader sending VAL should be rejected
     auto actions1 = collect_actions(core.on_msg(make_val(2, MyPid)));
-    EXPECT_TRUE(actions1.empty());
+    CHECK(actions1.empty());
 
     // Valid VAL from leader
     auto actions2 = collect_actions(core.on_msg(make_val(Leader, MyPid)));
-    EXPECT_TRUE(actions2.empty());
+    CHECK(actions2.empty());
 
     // Proceed with normal flow
     collect_actions(core.on_msg(make_echo(0)));
     collect_actions(core.on_msg(make_echo(2)));
     auto actions_ready = collect_actions(core.on_msg(make_echo(3)));
-    ASSERT_EQ(actions_ready.size(), 1);
-    EXPECT_EQ(actions_ready[0].type, Action::Type::BroadcastReady);
+    REQUIRE_EQ(actions_ready.size(), 1);
+    CHECK_EQ(actions_ready[0].type, Action::Type::BroadcastReady);
 }
 
-TEST_F(RBCCoreTest, RejectsInconsistentRootHash)
+TEST_CASE_FIXTURE(RBCCoreTest, "RBCCoreTest.RejectsInconsistentRootHash")
 {
     Core core(make_config());
 
@@ -218,17 +217,17 @@ TEST_F(RBCCoreTest, RejectsInconsistentRootHash)
         },
     };
     auto actions_bad = collect_actions(core.on_msg(bad_val));
-    EXPECT_TRUE(actions_bad.empty());
+    CHECK(actions_bad.empty());
 
     // Normal flow with correct root should work
     collect_actions(core.on_msg(make_echo(0)));
     collect_actions(core.on_msg(make_echo(2)));
     auto actions_ready = collect_actions(core.on_msg(make_echo(3)));
-    ASSERT_EQ(actions_ready.size(), 1);
-    EXPECT_EQ(actions_ready[0].type, Action::Type::BroadcastReady);
+    REQUIRE_EQ(actions_ready.size(), 1);
+    CHECK_EQ(actions_ready[0].type, Action::Type::BroadcastReady);
 }
 
-TEST_F(RBCCoreTest, DuplicateMessagesIgnored)
+TEST_CASE_FIXTURE(RBCCoreTest, "RBCCoreTest.DuplicateMessagesIgnored")
 {
     Core core(make_config());
 
@@ -236,19 +235,19 @@ TEST_F(RBCCoreTest, DuplicateMessagesIgnored)
 
     // Send same ECHO twice
     auto actions1 = collect_actions(core.on_msg(make_echo(0)));
-    EXPECT_TRUE(actions1.empty());
+    CHECK(actions1.empty());
 
     auto actions2 = collect_actions(core.on_msg(make_echo(0)));
-    EXPECT_TRUE(actions2.empty());
+    CHECK(actions2.empty());
 
     // Need 2 more unique ECHOs to reach N-f
     collect_actions(core.on_msg(make_echo(2)));
     auto actions_ready = collect_actions(core.on_msg(make_echo(3)));
-    ASSERT_EQ(actions_ready.size(), 1);
-    EXPECT_EQ(actions_ready[0].type, Action::Type::BroadcastReady);
+    REQUIRE_EQ(actions_ready.size(), 1);
+    CHECK_EQ(actions_ready[0].type, Action::Type::BroadcastReady);
 }
 
-TEST_F(RBCCoreTest, PartialEchoQuorumDoesNotTriggerReady)
+TEST_CASE_FIXTURE(RBCCoreTest, "RBCCoreTest.PartialEchoQuorumDoesNotTriggerReady")
 {
     Core core(make_config());
 
@@ -256,16 +255,16 @@ TEST_F(RBCCoreTest, PartialEchoQuorumDoesNotTriggerReady)
 
     // Only f ECHOs (1 ECHO, less than N-f=3 required)
     auto actions1 = collect_actions(core.on_msg(make_echo(2)));
-    EXPECT_TRUE(actions1.empty());
+    CHECK(actions1.empty());
 
     // Add one more, still not enough (2 < 3)
     auto actions2 = collect_actions(core.on_msg(make_echo(0)));
-    EXPECT_TRUE(actions2.empty());
+    CHECK(actions2.empty());
 
     // Now reach N-f threshold
     auto actions3 = collect_actions(core.on_msg(make_echo(3)));
-    ASSERT_EQ(actions3.size(), 1);
-    EXPECT_EQ(actions3[0].type, Action::Type::BroadcastReady);
+    REQUIRE_EQ(actions3.size(), 1);
+    CHECK_EQ(actions3[0].type, Action::Type::BroadcastReady);
 }
 
 } // namespace Honey::BFT::RBC

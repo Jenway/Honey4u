@@ -38,7 +38,7 @@ struct RBCMessage {
         Val,
         Echo,
         Ready
-    } type;
+    } type {};
     NodeId sender {};
     int session_id {};
     RBCPayload payload;
