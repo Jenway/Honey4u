@@ -1,6 +1,6 @@
 #include "crypto/merkle/ec_code.hpp"
 #include "crypto/merkle/merkle_tree.hpp"
-#include "merkle/isal/merkle_hash.h"
+#include "merkle/merkle_hash.h"
 #include <cstddef>
 #include <cstring>
 

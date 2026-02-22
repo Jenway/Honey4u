@@ -16,9 +16,7 @@ using Honey::Crypto::bls::ops::sub;
 
 template <typename T>
 concept Interpolatable = requires(T a, T b, Scalar s) {
-    { a.identity() } -> std::same_as<T>;
-    // Check for ops::add, ops::mult availability via ADL or explicit ns
-    // Since we used namespace ops, we can just check add(a, b)
+    { Honey::Crypto::bls::ops::identity<T>() } -> std::same_as<T>;
     add(a, b);
     mult(a, s);
 };
@@ -121,7 +119,7 @@ auto interpolate_at_zero(std::span<const ShareT> shares)
     detail::batch_inverse(denominators);
 
     // --- 4. 计算分子并聚合结果 ---
-    auto result = ValueT::identity();
+    auto result = Honey::Crypto::bls::ops::identity<ValueT>();
 
     for (size_t i = 0; i < k; ++i) {
         // 计算分子: numerator_i = Π_{j≠i} (0 - x_j) = Π_{j≠i} (-x_j)

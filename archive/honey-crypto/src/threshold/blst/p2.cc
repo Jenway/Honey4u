@@ -4,9 +4,8 @@ extern "C" {
 
 #include "crypto/threshold/blst/P2.hpp"
 #include "impl_common.hpp"
-#include "utils.hpp"
+#include "ops.hpp"
 #include <array>
-#include <cstdint>
 #include <cstring>
 #include <span>
 
@@ -18,42 +17,25 @@ static_assert(std::is_trivially_copyable_v<P2>);
 static_assert(std::is_trivially_destructible_v<P2>);
 
 using impl::to_native;
-
-P2 P2::generator()
-{
-    P2 ret {};
-    *to_native<blst_p2>(&ret) = *blst_p2_generator();
-    return ret;
-}
+using impl::u8ptr;
 
 bool P2::equals(const P2& rhs) const
 {
     return blst_p2_is_equal(to_native<blst_p2>(this), to_native<blst_p2>(&rhs));
 }
 
-P2 P2::identity()
+std::array<std::byte, P2::SERIALIZED_SIZE> P2::serialize() const
 {
-    P2 ret {};
-    std::memset(to_native<blst_p2>(&ret), 0, sizeof(blst_p2));
-    return ret;
+    std::array<std::byte, P2::SERIALIZED_SIZE> buf {};
+    blst_p2_serialize(reinterpret_cast<uint8_t*>(buf.data()), to_native<blst_p2>(this));
+    return buf;
 }
 
-void P2::serialize(std::span<uint8_t, P2::SERIALIZED_SIZE> out) const
+std::array<std::byte, P2::COMPRESSED_SIZE> P2::compress() const
 {
-    blst_p2_serialize(out.data(), to_native<blst_p2>(this));
-}
-
-void P2::compress(std::span<uint8_t, P2::COMPRESSED_SIZE> out) const
-{
-    blst_p2_compress(out.data(), to_native<blst_p2>(this));
-}
-
-P2 P2::from_hash(BytesSpan msg, BytesSpan dst)
-{
-    P2 ret {};
-    blst_hash_to_g2(to_native<blst_p2>(&ret), u8ptr(msg.data()), msg.size(),
-        u8ptr(dst.data()), dst.size(), nullptr, 0);
-    return ret;
+    std::array<std::byte, P2::COMPRESSED_SIZE> buf {};
+    blst_p2_compress(reinterpret_cast<uint8_t*>(buf.data()), to_native<blst_p2>(this));
+    return buf;
 }
 
 std::expected<P2, std::error_code>
@@ -97,15 +79,10 @@ namespace Honey::Crypto::bls {
 
 TEST_CASE("SerializationTest.P2RoundTrip")
 {
-    P2 p2 = P2::generator();
+    P2 p2 = ops::generator<P2>();
 
-    std::array<uint8_t, P2::SERIALIZED_SIZE> serialized;
-    p2.serialize(serialized);
-
-    std::array<Byte, P2::SERIALIZED_SIZE> serialized_bytes;
-    std::memcpy(serialized_bytes.data(), serialized.data(), P2::SERIALIZED_SIZE);
-
-    auto p2_back_result = P2::deserialize(std::span(serialized_bytes));
+    auto serialized = p2.serialize();
+    auto p2_back_result = P2::deserialize(serialized);
     REQUIRE(p2_back_result.has_value());
 
     CHECK(p2.equals(*p2_back_result));
@@ -113,15 +90,10 @@ TEST_CASE("SerializationTest.P2RoundTrip")
 
 TEST_CASE("SerializationTest.P2CompressRoundTrip")
 {
-    P2 p2 = P2::generator();
+    P2 p2 = ops::generator<P2>();
 
-    std::array<uint8_t, P2::COMPRESSED_SIZE> compressed;
-    p2.compress(compressed);
-
-    std::array<Byte, P2::COMPRESSED_SIZE> compressed_bytes;
-    std::memcpy(compressed_bytes.data(), compressed.data(), P2::COMPRESSED_SIZE);
-
-    auto p2_back_result = P2::uncompress(std::span(compressed_bytes));
+    auto compressed = p2.compress();
+    auto p2_back_result = P2::uncompress(compressed);
     REQUIRE(p2_back_result.has_value());
 
     CHECK(p2.equals(*p2_back_result));

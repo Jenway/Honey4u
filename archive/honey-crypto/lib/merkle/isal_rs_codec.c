@@ -1,6 +1,6 @@
 #include "isal_rs_codec.h"
 #include "isal_message.h"
-#include "isal_wrapper.h"
+#include "isal_rs_tables.h"
 #include <isa-l/erasure_code.h>
 #include <stdalign.h>
 #include <stdlib.h>

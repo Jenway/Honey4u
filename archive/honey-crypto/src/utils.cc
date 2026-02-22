@@ -1,5 +1,6 @@
 #include "utils.hpp"
 #include "hash.hpp"
+#include "threshold/blst/ops.hpp"
 #include <cstddef>
 #include <cstring>
 #include <openssl/evp.h>
@@ -45,7 +46,7 @@ P2 hashH(const P1& u, BytesSpan v)
 
     static const std::string DST = "TPKE_HASH_H_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
 
-    auto h = P2::from_hash(msg, as_span(DST));
+    auto h = bls::ops::from_hash_g2(msg, as_span(DST));
     return h;
 }
 

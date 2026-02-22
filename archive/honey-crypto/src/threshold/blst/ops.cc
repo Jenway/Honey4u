@@ -5,11 +5,60 @@ extern "C" {
 #include "crypto/error.hpp"
 #include "impl_common.hpp"
 #include "ops.hpp"
-#include "utils.hpp"
+#include <cstring>
 
 namespace Honey::Crypto::bls::ops {
 
 using impl::to_native;
+using impl::u8ptr;
+
+template <>
+P1 generator<P1>()
+{
+    P1 ret {};
+    *to_native<blst_p1>(&ret) = *blst_p1_generator();
+    return ret;
+}
+
+template <>
+P2 generator<P2>()
+{
+    P2 ret {};
+    *to_native<blst_p2>(&ret) = *blst_p2_generator();
+    return ret;
+}
+
+template <>
+P1 identity<P1>()
+{
+    P1 ret {};
+    std::memset(to_native<blst_p1>(&ret), 0, sizeof(blst_p1));
+    return ret;
+}
+
+template <>
+P2 identity<P2>()
+{
+    P2 ret {};
+    std::memset(to_native<blst_p2>(&ret), 0, sizeof(blst_p2));
+    return ret;
+}
+
+P1 from_hash_g1(BytesSpan msg, BytesSpan dst)
+{
+    P1 ret {};
+    blst_hash_to_g1(to_native<blst_p1>(&ret), u8ptr(msg.data()), msg.size(),
+        u8ptr(dst.data()), dst.size(), nullptr, 0);
+    return ret;
+}
+
+P2 from_hash_g2(BytesSpan msg, BytesSpan dst)
+{
+    P2 ret {};
+    blst_hash_to_g2(to_native<blst_p2>(&ret), u8ptr(msg.data()), msg.size(),
+        u8ptr(dst.data()), dst.size(), nullptr, 0);
+    return ret;
+}
 
 std::error_code core_verify_pk_in_g2(const P1& sig, const P2& pk,
     bool hash_or_encode, BytesSpan msg,

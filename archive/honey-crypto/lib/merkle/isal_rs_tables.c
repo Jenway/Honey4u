@@ -1,4 +1,4 @@
-#include "isal_wrapper.h"
+#include "isal_rs_tables.h"
 #include <isa-l/erasure_code.h>
 #include <stdlib.h>
 #include <string.h>

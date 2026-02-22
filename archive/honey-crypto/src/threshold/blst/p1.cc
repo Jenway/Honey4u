@@ -4,7 +4,7 @@ extern "C" {
 
 #include "crypto/threshold/blst/P1.hpp"
 #include "impl_common.hpp"
-#include "utils.hpp"
+#include "ops.hpp"
 #include <array>
 #include <cstring>
 
@@ -16,35 +16,7 @@ static_assert(std::is_trivially_copyable_v<P1>);
 static_assert(std::is_trivially_destructible_v<P1>);
 
 using impl::to_native;
-
-P1 P1::generator()
-{
-    P1 ret {};
-    // blst_p1_generaor 返回一个 C 常量指针，这里是一个复制
-    *to_native<blst_p1>(&ret) = *blst_p1_generator();
-    return ret;
-}
-
-P1 P1::identity()
-{
-    P1 ret {};
-    // blst 中全 0 代表无穷远点 (除了 Z 坐标需要注意，但 memset 0
-    // 通常是安全的初始状态) 更正规的做法是设为无穷远 blst_p1 内部通常 Z=0
-    // 代表无穷远
-    std::memset(to_native<blst_p1>(&ret), 0, sizeof(blst_p1));
-    return ret;
-}
-
-/* Methods removed from public API and moved to ops.hpp/ops.cc */
-
-P1 P1::from_hash(BytesSpan msg, BytesSpan dst)
-{
-    P1 ret {};
-    blst_hash_to_g1(to_native<blst_p1>(&ret), u8ptr(msg.data()), msg.size(),
-        u8ptr(dst.data()), dst.size(), nullptr, 0 // No aug
-    );
-    return ret;
-}
+using impl::u8ptr;
 [[nodiscard]] std::array<Byte, P1::SERIALIZED_SIZE> P1::serialize() const
 {
     std::array<Byte, P1::SERIALIZED_SIZE> buf {};
@@ -94,8 +66,6 @@ P1::uncompress(std::span<const Byte, COMPRESSED_SIZE> data)
     return ret;
 }
 
-using impl::to_native;
-
 bool P1::equals(const P1& others) const
 {
     return blst_p1_is_equal(to_native<blst_p1>(this),
@@ -111,7 +81,7 @@ namespace Honey::Crypto::bls {
 
 TEST_CASE("SerializationTest.P1RoundTrip")
 {
-    P1 p1 = P1::generator();
+    P1 p1 = ops::generator<P1>();
 
     auto serialized = p1.serialize();
 
@@ -123,7 +93,7 @@ TEST_CASE("SerializationTest.P1RoundTrip")
 
 TEST_CASE("SerializationTest.P1CompressRoundTrip")
 {
-    P1 p1 = P1::generator();
+    P1 p1 = ops::generator<P1>();
 
     auto compressed = p1.compress();
 

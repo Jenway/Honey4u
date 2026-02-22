@@ -56,7 +56,7 @@ auto generate_keys(uint32_t players, uint32_t k)
 [[nodiscard]]
 PartialSignature sign(const PrivateKeyShare& share, BytesSpan message)
 {
-    auto h = bls::P1::from_hash(message, as_span(Constants::DST_SIG));
+    auto h = bls::ops::from_hash_g1(message, as_span(Constants::DST_SIG));
 
     bls::ops::sign_with(h, share.secret);
 

@@ -4,7 +4,6 @@
 #include "crypto/threshold/blst/Scalar.hpp"
 #include "crypto/threshold/types.hpp"
 #include <algorithm>
-#include <cstdint>
 #include <expected>
 #include <ranges>
 #include <span>
@@ -18,7 +17,7 @@ using namespace Honey::Crypto::bls::ops;
 
 template <typename T>
 concept IsGroupElement = requires(T a, Scalar s) {
-    { T::generator() } -> std::same_as<T>;
+    { generator<T>() } -> std::same_as<T>;
     mult(a, s);
 };
 
@@ -58,7 +57,7 @@ auto generate_keys(int players, int k)
     const auto& master_secret = secret_polynomial[0];
 
     // Calculate the master public key: G * master_secret
-    auto master_public_key = MasterKeyT::generator();
+    auto master_public_key = generator<MasterKeyT>();
     mult(master_public_key, master_secret);
 
     std::vector<PrivateKeyShare> private_shares;
@@ -77,7 +76,7 @@ auto generate_keys(int players, int k)
 
         // Calculate the corresponding public verification key for this share: H *
         // share
-        auto share_public_key = ShareKeyT::generator();
+        auto share_public_key = generator<ShareKeyT>();
         mult(share_public_key, player_secret_share);
         verification_vector.push_back(share_public_key);
     }

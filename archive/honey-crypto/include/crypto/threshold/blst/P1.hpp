@@ -17,10 +17,6 @@ public:
     static constexpr size_t SERIALIZED_SIZE = abi::blst_p1_serialized_size;
     static constexpr size_t COMPRESSED_SIZE = abi::blst_p1_compressed_size;
 
-    static P1 generator();
-    static P1 identity(); // 无穷远点/零点
-    static P1 from_hash(BytesSpan msg, BytesSpan dst = {});
-
     [[nodiscard]] bool equals(const P1&) const;
 
     [[nodiscard]] std::array<Byte, SERIALIZED_SIZE> serialize() const;

@@ -16,21 +16,23 @@ list(APPEND CMAKE_MODULE_PATH
 )
 include(Dependencies)
 
+add_subdirectory(lib/merkle)
+
 add_library(honey_crypto STATIC)
 add_library(Honey::Crypto ALIAS honey_crypto)
 
 target_compile_features(honey_crypto
     PUBLIC cxx_std_23
-    PRIVATE c_std_11
 )
 
 target_include_directories(honey_crypto
     PRIVATE
         src
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib"
 )
 
 file(GLOB_RECURSE HONEY_CRYPTO_SOURCES
-    "src/*.cc" "src/**/*.cc" "src/*.c" "src/**/*.c"
+    "src/*.cc" "src/**/*.cc"
 )
 file(GLOB_RECURSE HONEY_CRYPTO_INTERNAL_HEADERS
     "src/*.h" "src/*.hpp" "src/**/*.h" "src/**/*.hpp"
@@ -40,6 +42,7 @@ target_sources(honey_crypto
     PRIVATE
         ${HONEY_CRYPTO_SOURCES}
         ${HONEY_CRYPTO_INTERNAL_HEADERS}
+        $<TARGET_OBJECTS:honey_crypto_c_merkle>
 )
 
 file(GLOB_RECURSE HONEY_CRYPTO_PUBLIC_HEADERS CONFIGURE_DEPENDS

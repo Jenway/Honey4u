@@ -10,6 +10,19 @@
 namespace Honey::Crypto::bls {
 namespace ops {
 
+    // --- Construction helpers (moved from P1/P2 public API) ---
+    template <typename T> T generator();
+    template <> P1 generator<P1>();
+    template <> P2 generator<P2>();
+
+    template <typename T> T identity();
+    template <> P1 identity<P1>();
+    template <> P2 identity<P2>();
+
+    P1 from_hash_g1(BytesSpan msg, BytesSpan dst = {});
+    P2 from_hash_g2(BytesSpan msg, BytesSpan dst = {});
+
+    // --- Arithmetic ---
     void add(P1& acc, const P1& rhs);
     void mult(P1& p, const Scalar& s);
     void neg(P1& p);

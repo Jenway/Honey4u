@@ -2,7 +2,7 @@
 
 // isal_rs_codec.h is safe to include from C++ — isal_shard_block has no
 // flexible array.
-#include "merkle/isal/isal_rs_codec.h"
+#include "merkle/isal_rs_codec.h"
 
 // Declare isal_message_buffer functions WITHOUT including the struct
 // definition, which contains a C99 flexible array and must not be included from

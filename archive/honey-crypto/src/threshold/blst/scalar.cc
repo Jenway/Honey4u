@@ -5,7 +5,6 @@ extern "C" {
 #include "crypto/error.hpp"
 #include "crypto/threshold/blst/Scalar.hpp"
 #include "impl_common.hpp"
-#include "utils.hpp"
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -19,6 +18,7 @@ static_assert(sizeof(Scalar) == sizeof(blst_scalar),
     "Scalar size mismatch with blst_scalar");
 
 using impl::to_native;
+using impl::u8ptr;
 
 Scalar Scalar::from_uint64(uint64_t v)
 {

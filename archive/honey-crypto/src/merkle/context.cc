@@ -1,5 +1,5 @@
 #include "crypto/merkle/ec_code.hpp"
-#include "merkle/isal/isal_memory_arena.h"
+#include "merkle/isal_memory_arena.h"
 
 // Declare isal_rs_context functions WITHOUT including isal_wrapper.h,
 // which contains isal_decode_tables (C99 flexible array, C-only).

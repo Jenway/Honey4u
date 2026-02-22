@@ -2,7 +2,6 @@
 
 #include "blst_abi_config.hpp"
 #include <array>
-#include <cstdint>
 #include <expected>
 #include <span>
 #include <system_error>
@@ -17,15 +16,10 @@ public:
     static constexpr size_t SERIALIZED_SIZE = abi::blst_p2_serialized_size;
     static constexpr size_t COMPRESSED_SIZE = abi::blst_p2_compressed_size;
 
-    static P2 generator();
-    static P2 identity();
-    static P2 from_hash(std::span<const std::byte> msg,
-        std::span<const std::byte> dst = {});
-
     [[nodiscard]] bool equals(const P2&) const;
 
-    void serialize(std::span<uint8_t, SERIALIZED_SIZE> out) const;
-    void compress(std::span<uint8_t, COMPRESSED_SIZE> out) const;
+    [[nodiscard]] std::array<std::byte, SERIALIZED_SIZE> serialize() const;
+    [[nodiscard]] std::array<std::byte, COMPRESSED_SIZE> compress() const;
 
     // Deserialization
     [[nodiscard]] static std::expected<P2, std::error_code>

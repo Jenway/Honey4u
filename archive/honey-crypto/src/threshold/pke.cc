@@ -33,7 +33,7 @@ namespace {
         // 映射参数: (q1, p1, q2, p2) -> (G2, G1, G2, G1)
         return bls::ops::verify_pairing_equality(
             ciphertext.w, // q1: w
-            G1Point::generator(), // p1: G1_gen
+            bls::ops::generator<G1Point>(), // p1: G1_gen
             Utils::hashH(ciphertext.u, ciphertext.v), // q2: H(u,v)
             ciphertext.u // p2: u
         );
@@ -51,7 +51,7 @@ bool verify_share(const PublicParameters& public_params,
         return false;
 
     return bls::ops::verify_pairing_equality(
-        G2Point::generator(), // q1: G2_gen
+        bls::ops::generator<G2Point>(), // q1: G2_gen
         decryption.value, // p1: ui (份额)
         public_params.verification_vector[id - 1], // q2: yi (公钥份额)
         ciphertext.u // p2: u (密钥封装中的u)
@@ -69,7 +69,7 @@ Ciphertext seal(const MasterPublicKey& master_public_key, PlainText msg)
 {
     auto random_scalar = *Scalar::random();
 
-    G1Point u = G1Point::generator();
+    G1Point u = bls::ops::generator<G1Point>();
     bls::ops::mult(u, random_scalar);
 
     G1Point mask_point = master_public_key;
@@ -208,7 +208,7 @@ TEST_CASE_FIXTURE(TpkeTest, "TPKE.open_fails_with_invalid_share")
     shares.push_back(*s2);
 
     // 构造一个伪造份额
-    PartialDecryptionShare bad { .player_id = 3, .value = G1Point::generator() };
+    PartialDecryptionShare bad { .player_id = 3, .value = bls::ops::generator<G1Point>() };
     shares.push_back(bad);
 
     auto opened = open(key_set.public_params, ct, shares);
