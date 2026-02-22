@@ -28,22 +28,16 @@ struct merkle_context {
 struct merkle_context* merkle_context_create(int N);
 void merkle_context_free(struct merkle_context* ctx);
 
-int merkle_build_nodes(
-    struct merkle_context* ctx,
+int merkle_build_nodes(struct merkle_context* ctx,
     const struct isal_shard_block* shards,
     unsigned char root_out[32]);
 
-int merkle_hash_leaf(
-    struct evp_md_ctx_st* ctx,
-    const unsigned char* data,
-    size_t len,
-    unsigned char out[32]);
+int merkle_hash_leaf(struct evp_md_ctx_st* ctx, const unsigned char* data,
+    size_t len, unsigned char out[32]);
 
-int merkle_hash_internal(
-    struct evp_md_ctx_st* ctx,
+int merkle_hash_internal(struct evp_md_ctx_st* ctx,
     const unsigned char left[32],
-    const unsigned char right[32],
-    unsigned char out[32]);
+    const unsigned char right[32], unsigned char out[32]);
 
 #ifdef __cplusplus
 }

@@ -32,27 +32,22 @@ namespace {
     }
 
     [[nodiscard]]
-    auto verify_signature(const PublicParameters& params,
-        BytesSpan message,
+    auto verify_signature(const PublicParameters& params, BytesSpan message,
         const Signature& signature)
         -> std::expected<void, std::error_code>
     {
 
-        auto err = bls::ops::core_verify_pk_in_g2(
-            signature,
-            params.master_public_key,
-            true,
-            message,
-            as_span(Constants::DST_SIG),
-            {});
+        auto err = bls::ops::core_verify_pk_in_g2(signature, params.master_public_key, true,
+            message, as_span(Constants::DST_SIG), {});
 
         if (err) {
             return std::unexpected(err);
         }
         return {};
     }
-};
-auto generate_keys(uint32_t players, uint32_t k) -> std::expected<KeySet, std::error_code>
+}; // namespace
+auto generate_keys(uint32_t players, uint32_t k)
+    -> std::expected<KeySet, std::error_code>
 {
     return Threshold::generate_keys<MasterPublicKey, VerificationKey>(players, k);
 }
@@ -72,8 +67,7 @@ PartialSignature sign(const PrivateKeyShare& share, BytesSpan message)
 }
 
 // 验证单个签名份额
-[[nodiscard]] auto verify_share(
-    const PublicParameters& params,
+[[nodiscard]] auto verify_share(const PublicParameters& params,
     const PartialSignature& partial_signature,
     BytesSpan message)
     -> std::expected<void, std::error_code>
@@ -86,12 +80,8 @@ PartialSignature sign(const PrivateKeyShare& share, BytesSpan message)
     }
 
     auto err = bls::ops::core_verify_pk_in_g2(
-        partial_sig,
-        params.verification_vector[player_id - 1],
-        true,
-        message,
-        as_span(Constants::DST_SIG),
-        {});
+        partial_sig, params.verification_vector[player_id - 1], true, message,
+        as_span(Constants::DST_SIG), {});
     if (err) {
         return std::unexpected(err);
     }
@@ -99,8 +89,7 @@ PartialSignature sign(const PrivateKeyShare& share, BytesSpan message)
 }
 
 [[nodiscard]]
-auto validate(const PublicParameters& public_params,
-    BytesSpan message,
+auto validate(const PublicParameters& public_params, BytesSpan message,
     std::span<const PartialSignature> partial_signatures)
     -> std::expected<void, std::error_code>
 {

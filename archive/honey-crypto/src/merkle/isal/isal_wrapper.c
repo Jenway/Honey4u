@@ -5,10 +5,11 @@
 
 /* ============================================================================
    解码查表实现
-   ============================================================================ */
+   ============================================================================
+ */
 
-struct isal_decode_tables* isal_create_decode_tables(
-    int K, const unsigned char* invert_matrix)
+struct isal_decode_tables*
+isal_create_decode_tables(int K, const unsigned char* invert_matrix)
 {
     if (K <= 0 || !invert_matrix) {
         return NULL;
@@ -39,9 +40,11 @@ void isal_free_decode_tables(struct isal_decode_tables* tables)
 
 /* ============================================================================
    编码/解码辅助函数
-   ============================================================================ */
+   ============================================================================
+ */
 
-int isal_invert_matrix(unsigned char* matrix, unsigned char* out_matrix, int size)
+int isal_invert_matrix(unsigned char* matrix, unsigned char* out_matrix,
+    int size)
 {
     if (!matrix || !out_matrix || size <= 0) {
         return -1;
@@ -49,8 +52,7 @@ int isal_invert_matrix(unsigned char* matrix, unsigned char* out_matrix, int siz
     return gf_invert_matrix(matrix, out_matrix, size);
 }
 
-int isal_decode_data_direct(
-    int block_size, int K,
+int isal_decode_data_direct(int block_size, int K,
     const unsigned char* tables_buffer,
     unsigned char** input, unsigned char** output)
 {
@@ -58,10 +60,8 @@ int isal_decode_data_direct(
         return -1;
     }
 
-    ec_encode_data(
-        block_size, K, K,
-        (unsigned char*)tables_buffer,
-        input, output);
+    ec_encode_data(block_size, K, K, (unsigned char*)tables_buffer, input,
+        output);
 
     return 0;
 }
@@ -118,12 +118,14 @@ void isal_rs_context_free(struct isal_rs_context* ctx)
     }
 }
 
-const unsigned char* isal_rs_context_encode_matrix(const struct isal_rs_context* ctx)
+const unsigned char*
+isal_rs_context_encode_matrix(const struct isal_rs_context* ctx)
 {
     return ctx ? ctx->encode_matrix : NULL;
 }
 
-const unsigned char* isal_rs_context_encode_g_tbls(const struct isal_rs_context* ctx)
+const unsigned char*
+isal_rs_context_encode_g_tbls(const struct isal_rs_context* ctx)
 {
     return ctx ? ctx->encode_g_tbls : NULL;
 }

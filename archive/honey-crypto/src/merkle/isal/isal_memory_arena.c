@@ -96,8 +96,7 @@ void isal_memory_arena_free(struct isal_memory_arena* arena)
     }
 }
 
-int isal_memory_arena_fill_shards(
-    struct isal_memory_arena* arena,
+int isal_memory_arena_fill_shards(struct isal_memory_arena* arena,
     const struct isal_shard_view* shards,
     int count)
 {

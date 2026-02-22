@@ -1,12 +1,15 @@
 #include "crypto/merkle/struct.hpp"
 
-// isal_rs_codec.h is safe to include from C++ — isal_shard_block has no flexible array.
+// isal_rs_codec.h is safe to include from C++ — isal_shard_block has no
+// flexible array.
 #include "merkle/isal/isal_rs_codec.h"
 
-// Declare isal_message_buffer functions WITHOUT including the struct definition,
-// which contains a C99 flexible array and must not be included from C++.
+// Declare isal_message_buffer functions WITHOUT including the struct
+// definition, which contains a C99 flexible array and must not be included from
+// C++.
 extern "C" {
-struct isal_message_buffer* isal_message_buffer_create(const void* data, size_t len);
+struct isal_message_buffer* isal_message_buffer_create(const void* data,
+    size_t len);
 const void* isal_message_buffer_payload(const struct isal_message_buffer* msg);
 const void* isal_message_buffer_storage(const struct isal_message_buffer* msg);
 size_t isal_message_buffer_storage_size(const struct isal_message_buffer* msg);
@@ -18,7 +21,8 @@ namespace Honey::Crypto::Merkle {
 
 // --- IsalMessageBufferDeleter ---
 
-void IsalMessageBufferDeleter::operator()(isal_message_buffer* p) const noexcept
+void IsalMessageBufferDeleter::operator()(
+    isal_message_buffer* p) const noexcept
 {
     if (p != nullptr) {
         isal_message_buffer_free(p);
@@ -44,7 +48,8 @@ std::span<const std::byte> MessageBuffer::payload() const
     if (!ptr) {
         return {};
     }
-    return { static_cast<const std::byte*>(ptr), isal_message_buffer_payload_size(c_buffer.get()) };
+    return { static_cast<const std::byte*>(ptr),
+        isal_message_buffer_payload_size(c_buffer.get()) };
 }
 
 std::span<const std::byte> MessageBuffer::storage() const
@@ -91,7 +96,8 @@ std::span<unsigned char> ShardBlock::full_span()
     if (!c_block || c_block->storage == nullptr) {
         return {};
     }
-    return { static_cast<unsigned char*>(c_block->storage), static_cast<size_t>(N) * block_size };
+    return { static_cast<unsigned char*>(c_block->storage),
+        static_cast<size_t>(N) * block_size };
 }
 
 std::span<const unsigned char> ShardBlock::full_span() const
@@ -99,7 +105,8 @@ std::span<const unsigned char> ShardBlock::full_span() const
     if (!c_block || c_block->storage == nullptr) {
         return {};
     }
-    return { static_cast<const unsigned char*>(c_block->storage), static_cast<size_t>(N) * block_size };
+    return { static_cast<const unsigned char*>(c_block->storage),
+        static_cast<size_t>(N) * block_size };
 }
 
 std::span<unsigned char> ShardBlock::shard(int i)

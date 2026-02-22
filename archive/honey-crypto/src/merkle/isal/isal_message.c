@@ -2,7 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct isal_message_buffer* isal_message_buffer_create(const void* data, size_t len)
+struct isal_message_buffer* isal_message_buffer_create(const void* data,
+    size_t len)
 {
     if (!data && len > 0) {
         return NULL;
@@ -59,9 +60,8 @@ void isal_message_buffer_free(struct isal_message_buffer* msg)
     }
 }
 
-struct isal_message_buffer* isal_message_buffer_from_packed(
-    const void* packed_data,
-    size_t packed_size)
+struct isal_message_buffer*
+isal_message_buffer_from_packed(const void* packed_data, size_t packed_size)
 {
     if (!packed_data || packed_size < 4) {
         return NULL;

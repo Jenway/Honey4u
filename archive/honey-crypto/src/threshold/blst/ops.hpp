@@ -30,25 +30,19 @@ namespace ops {
     /**
      * @brief 验证签名 pk 对消息 msg 的有效性
      */
-    std::error_code core_verify_pk_in_g2(
-        const P1& sig,
-        const P2& pk,
-        bool hash_or_encode,
-        BytesSpan msg,
-        BytesSpan dst,
-        BytesSpan aug);
+    std::error_code core_verify_pk_in_g2(const P1& sig, const P2& pk,
+        bool hash_or_encode, BytesSpan msg,
+        BytesSpan dst, BytesSpan aug);
     /**
      * @brief 验证双线性配对等式: e(q1, p1) == e(q2, p2)
      */
     [[nodiscard]]
-    bool verify_pairing_equality(const P2& q1, const P1& p1, const P2& q2, const P1& p2);
+    bool verify_pairing_equality(const P2& q1, const P1& p1, const P2& q2,
+        const P1& p2);
 
 } // namespace ops
 
-inline Scalar operator-(const Scalar& s)
-{
-    return ops::neg(s);
-}
+inline Scalar operator-(const Scalar& s) { return ops::neg(s); }
 
 inline Scalar operator-(const Scalar& lhs, const Scalar& rhs)
 {
@@ -63,14 +57,8 @@ inline Scalar operator*=(Scalar& lhs, const Scalar& rhs)
     return lhs;
 }
 
-inline bool operator==(const P1& lhs, const P1& rhs)
-{
-    return lhs.equals(rhs);
-}
+inline bool operator==(const P1& lhs, const P1& rhs) { return lhs.equals(rhs); }
 
-inline bool operator==(const P2& lhs, const P2& rhs)
-{
-    return lhs.equals(rhs);
-}
+inline bool operator==(const P2& lhs, const P2& rhs) { return lhs.equals(rhs); }
 
 } // namespace Honey::Crypto::bls

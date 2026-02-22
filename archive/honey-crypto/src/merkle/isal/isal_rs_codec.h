@@ -18,22 +18,19 @@ struct isal_shard_block {
     int N; /* 总分片数 */
 };
 
-struct isal_shard_block* isal_rs_encode_create(
-    const struct isal_memory_arena* arena,
+struct isal_shard_block*
+isal_rs_encode_create(const struct isal_memory_arena* arena,
     const unsigned char* encode_tables,
-    const void* input_data,
-    size_t input_len);
+    const void* input_data, size_t input_len);
 
 void isal_shard_block_free(struct isal_shard_block* block);
 
-int isal_rs_decode_into(
-    const struct isal_memory_arena* arena,
-    const unsigned char* encode_matrix,
-    void* output,
+int isal_rs_decode_into(const struct isal_memory_arena* arena,
+    const unsigned char* encode_matrix, void* output,
     size_t* payload_size);
 
-struct isal_message_buffer* isal_rs_decode_create(
-    const struct isal_memory_arena* arena,
+struct isal_message_buffer*
+isal_rs_decode_create(const struct isal_memory_arena* arena,
     const unsigned char* encode_matrix);
 
 void isal_aligned_free(void* ptr);

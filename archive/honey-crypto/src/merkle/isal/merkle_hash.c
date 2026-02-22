@@ -5,7 +5,8 @@
 
 /* ============================================================================
    内部辅助
-   ============================================================================ */
+   ============================================================================
+ */
 
 static const unsigned char LEAF_PREFIX = 0x00;
 static const unsigned char INTERNAL_PREFIX = 0x01;
@@ -23,7 +24,8 @@ static int next_power_of_two(int n)
 
 /* ============================================================================
    生命周期
-   ============================================================================ */
+   ============================================================================
+ */
 
 struct merkle_context* merkle_context_create(int N)
 {
@@ -66,45 +68,34 @@ void merkle_context_free(struct merkle_context* ctx)
 
 /* ============================================================================
    哈希原语
-   ============================================================================ */
+   ============================================================================
+ */
 
-int merkle_hash_leaf(
-    struct evp_md_ctx_st* ctx,
-    const unsigned char* data,
-    size_t len,
-    unsigned char out[32])
+int merkle_hash_leaf(struct evp_md_ctx_st* ctx, const unsigned char* data,
+    size_t len, unsigned char out[32])
 {
     unsigned int out_len = 0;
-    if (1 != EVP_DigestInit_ex(ctx, EVP_sha256(), NULL)
-        || 1 != EVP_DigestUpdate(ctx, &LEAF_PREFIX, 1)
-        || 1 != EVP_DigestUpdate(ctx, data, len)
-        || 1 != EVP_DigestFinal_ex(ctx, out, &out_len))
+    if (1 != EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) || 1 != EVP_DigestUpdate(ctx, &LEAF_PREFIX, 1) || 1 != EVP_DigestUpdate(ctx, data, len) || 1 != EVP_DigestFinal_ex(ctx, out, &out_len))
         return -1;
     return 0;
 }
 
-int merkle_hash_internal(
-    struct evp_md_ctx_st* ctx,
+int merkle_hash_internal(struct evp_md_ctx_st* ctx,
     const unsigned char left[32],
-    const unsigned char right[32],
-    unsigned char out[32])
+    const unsigned char right[32], unsigned char out[32])
 {
     unsigned int out_len = 0;
-    if (1 != EVP_DigestInit_ex(ctx, EVP_sha256(), NULL)
-        || 1 != EVP_DigestUpdate(ctx, &INTERNAL_PREFIX, 1)
-        || 1 != EVP_DigestUpdate(ctx, left, 32)
-        || 1 != EVP_DigestUpdate(ctx, right, 32)
-        || 1 != EVP_DigestFinal_ex(ctx, out, &out_len))
+    if (1 != EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) || 1 != EVP_DigestUpdate(ctx, &INTERNAL_PREFIX, 1) || 1 != EVP_DigestUpdate(ctx, left, 32) || 1 != EVP_DigestUpdate(ctx, right, 32) || 1 != EVP_DigestFinal_ex(ctx, out, &out_len))
         return -1;
     return 0;
 }
 
 /* ============================================================================
    节点构建
-   ============================================================================ */
+   ============================================================================
+ */
 
-int merkle_build_nodes(
-    struct merkle_context* ctx,
+int merkle_build_nodes(struct merkle_context* ctx,
     const struct isal_shard_block* shards,
     unsigned char root_out[32])
 {
@@ -137,8 +128,7 @@ int merkle_build_nodes(
 
     /* 3. 自底向上构建内部节点 */
     for (int i = P - 1; i > 0; --i) {
-        if (merkle_hash_internal(md,
-                nodes + (size_t)(2 * i) * 32,
+        if (merkle_hash_internal(md, nodes + (size_t)(2 * i) * 32,
                 nodes + (size_t)(2 * i + 1) * 32,
                 nodes + (size_t)i * 32)
             != 0)

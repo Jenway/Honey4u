@@ -35,72 +35,65 @@ Context& Context::operator=(Context&& other) noexcept
     return *this;
 }
 
-auto sign(const Context& ctx,
-    const PrivateKey& priv_key,
-    BytesSpan msg) -> std::expected<Signature, std::error_code>
+auto sign(const Context& ctx, const PrivateKey& priv_key, BytesSpan msg)
+    -> std::expected<Signature, std::error_code>
 {
     auto msg_hash = Utils::sha256(msg);
 
     secp256k1_ecdsa_signature sig_struct;
 
-    if (secp256k1_ecdsa_sign(
-            ctx.get(),
-            &sig_struct,
-            u8ptr(msg_hash.data()),
-            u8ptr(priv_key.data()),
-            nullptr,
-            nullptr)
+    if (secp256k1_ecdsa_sign(ctx.get(), &sig_struct, u8ptr(msg_hash.data()),
+            u8ptr(priv_key.data()), nullptr, nullptr)
         == 0) {
         return std::unexpected(std::make_error_code(std::errc::protocol_error));
     }
 
     Signature output;
-    secp256k1_ecdsa_signature_serialize_compact(
-        ctx.get(),
-        u8ptr(output.data()),
+    secp256k1_ecdsa_signature_serialize_compact(ctx.get(), u8ptr(output.data()),
         &sig_struct);
 
     return output;
 }
 
-bool verify(
-    const Context& ctx,
-    const PublicKey& pub_key,
-    BytesSpan msg,
+bool verify(const Context& ctx, const PublicKey& pub_key, BytesSpan msg,
     const Signature& sig)
 {
     auto msg_hash = Utils::sha256(msg);
 
     secp256k1_pubkey pubkey_struct;
-    if (secp256k1_ec_pubkey_parse(ctx.get(), &pubkey_struct, u8ptr(pub_key.data()), pub_key.size()) == 0) {
+    if (secp256k1_ec_pubkey_parse(ctx.get(), &pubkey_struct,
+            u8ptr(pub_key.data()), pub_key.size())
+        == 0) {
         return false;
     }
 
     secp256k1_ecdsa_signature sig_struct;
-    if (secp256k1_ecdsa_signature_parse_compact(ctx.get(), &sig_struct, u8ptr(sig.data())) == 0) {
+    if (secp256k1_ecdsa_signature_parse_compact(ctx.get(), &sig_struct,
+            u8ptr(sig.data()))
+        == 0) {
         return false;
     }
 
-    return secp256k1_ecdsa_verify(
-               ctx.get(),
-               &sig_struct,
-               u8ptr(msg_hash.data()),
+    return secp256k1_ecdsa_verify(ctx.get(), &sig_struct, u8ptr(msg_hash.data()),
                &pubkey_struct)
         == 1;
 }
 
-auto get_public_key(const Context& ctx,
-    const PrivateKey& priv_key) -> std::expected<PublicKey, std::error_code>
+auto get_public_key(const Context& ctx, const PrivateKey& priv_key)
+    -> std::expected<PublicKey, std::error_code>
 {
     secp256k1_pubkey pubkey_struct;
-    if (secp256k1_ec_pubkey_create(ctx.get(), &pubkey_struct, u8ptr(priv_key.data())) == 0) {
+    if (secp256k1_ec_pubkey_create(ctx.get(), &pubkey_struct,
+            u8ptr(priv_key.data()))
+        == 0) {
         return std::unexpected(std::make_error_code(std::errc::protocol_error));
     }
 
     PublicKey output;
     size_t output_len = output.size();
 
-    secp256k1_ec_pubkey_serialize(ctx.get(), u8ptr(output.data()), &output_len, &pubkey_struct, SECP256K1_EC_COMPRESSED);
+    secp256k1_ec_pubkey_serialize(ctx.get(), u8ptr(output.data()), &output_len,
+        &pubkey_struct, SECP256K1_EC_COMPRESSED);
 
     return output;
 }
@@ -118,10 +111,10 @@ namespace Honey::Crypto::Ecdsa {
 struct EcdsaTest {
     Context ctx;
 
-    const PrivateKey sample_priv_key_ = Honey::Crypto::Utils::make_bytes<32>({ 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 });
+    const PrivateKey sample_priv_key_ = Honey::Crypto::Utils::make_bytes<32>(
+        { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x11, 0x22, 0x33,
+            0x44, 0x55, 0x66, 0x77, 0x88, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+            0x77, 0x88, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 });
 
     const std::string sample_msg_str_ = "this is a test message for signing";
     BytesSpan sample_msg_ = as_span(sample_msg_str_);
@@ -176,7 +169,8 @@ TEST_CASE_FIXTURE(EcdsaTest, "EcdsaTest.VerifyFailsWithTamperedSignature")
     REQUIRE_FALSE(is_valid);
 }
 
-TEST_CASE_FIXTURE(EcdsaTest, "EcdsaTest.GetPublicKeyFailsWithInvalidPrivateKey")
+TEST_CASE_FIXTURE(EcdsaTest,
+    "EcdsaTest.GetPublicKeyFailsWithInvalidPrivateKey")
 {
     PrivateKey zero_priv_key {};
     auto pub_key_res = get_public_key(ctx, zero_priv_key);

@@ -19,13 +19,13 @@ include(Dependencies)
 add_library(honey_crypto STATIC)
 add_library(Honey::Crypto ALIAS honey_crypto)
 
-target_compile_features(honey_crypto 
+target_compile_features(honey_crypto
     PUBLIC cxx_std_23
     PRIVATE c_std_11
 )
 
-target_include_directories(honey_crypto 
-    PRIVATE 
+target_include_directories(honey_crypto
+    PRIVATE
         src
 )
 
@@ -90,8 +90,8 @@ add_custom_command(
 add_custom_target(blst_abi ALL DEPENDS "${BLST_ABI_HPP}")
 add_dependencies(honey_crypto blst_abi)
 
-target_include_directories(honey_crypto 
-    PUBLIC 
+target_include_directories(honey_crypto
+    PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated>"
 )
 
@@ -104,7 +104,7 @@ install(TARGETS honey_crypto
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
-install(FILES "${BLST_ABI_HPP}" 
+install(FILES "${BLST_ABI_HPP}"
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/crypto
 )
 

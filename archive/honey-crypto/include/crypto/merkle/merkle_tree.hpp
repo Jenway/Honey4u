@@ -9,7 +9,6 @@
 #include <system_error>
 #include <vector>
 
-
 namespace Honey::Crypto::Merkle {
 
 using Hash = Honey::Crypto::Hash256;
@@ -52,9 +51,7 @@ struct MerkleBuildResult {
 };
 
 std::expected<MerkleResult, std::error_code>
-build_and_prove(
-    Context& ctx,
-    const ShardBlock& shards);
+build_and_prove(Context& ctx, const ShardBlock& shards);
 
 /**
  * @brief 组合函数：对数据进行纠删码编码并构建 Merkle 树
@@ -67,17 +64,12 @@ build_and_prove(
  * @param data 原始数据
  * @return 编码后的分片、Merkle 根哈希和证明
  */
-auto build_merkle_tree(
-    const RsContext& rs_ctx,
-    Context& merkle_ctx,
+auto build_merkle_tree(const RsContext& rs_ctx, Context& merkle_ctx,
     std::span<const std::byte> data)
     -> std::expected<MerkleBuildResult, std::error_code>;
 
-auto verify(
-    Context& ctx,
-    std::span<const std::byte> leaf,
-    const MerkleProof& proof,
-    const Hash& expected_root) noexcept
+auto verify(Context& ctx, std::span<const std::byte> leaf,
+    const MerkleProof& proof, const Hash& expected_root) noexcept
     -> std::expected<void, std::error_code>;
 
 struct ShardWithProof {
@@ -97,9 +89,7 @@ struct ShardWithProof {
  * @param expected_root 期望的 Merkle 根哈希
  * @return 解码后的原始数据
  */
-auto verify_and_decode(
-    const RsContext& rs_ctx,
-    Context& merkle_ctx,
+auto verify_and_decode(const RsContext& rs_ctx, Context& merkle_ctx,
     std::span<const ShardWithProof> shards_with_proofs,
     const Hash& expected_root)
     -> std::expected<MessageBuffer, std::error_code>;

@@ -63,7 +63,8 @@ auto generate_keys(uint32_t num_players, uint32_t threshold)
  * @return 密钥封装和生成的会话密钥。
  */
 [[nodiscard]]
-auto seal(const MasterPublicKey& master_public_key, PlainText msg) -> Ciphertext;
+auto seal(const MasterPublicKey& master_public_key, PlainText msg)
+    -> Ciphertext;
 
 /**
  * @brief 节点使用自己的私钥份额为给定的密钥封装生成一个解密份额。
@@ -73,8 +74,7 @@ auto seal(const MasterPublicKey& master_public_key, PlainText msg) -> Ciphertext
  * @return 成功时返回一个有效的解密份额，失败（如密钥封装无效）则返回错误码。
  */
 [[nodiscard]]
-auto partial_open(
-    const PrivateKeyShare& private_key_share,
+auto partial_open(const PrivateKeyShare& private_key_share,
     const Ciphertext& ciphertext)
     -> std::expected<PartialDecryptionShare, std::error_code>;
 
@@ -96,12 +96,12 @@ bool verify_share(const PublicParameters& public_params,
  * @param public_params 用于验证份额的公共参数。
  * @param ciphertext 密钥封装。
  * @param shares 来自不同参与者的解密份额集合视图。
- * @return 成功时返回恢复的 32 字节会话密钥，失败（如份额不足/无效）则返回错误码。
+ * @return 成功时返回恢复的 32
+ * 字节会话密钥，失败（如份额不足/无效）则返回错误码。
  */
 [[nodiscard]]
-auto open(
-    const PublicParameters& public_params,
-    const Ciphertext& ciphertext,
-    std::span<const PartialDecryptionShare> shares) -> std::expected<std::array<Byte, 32>, std::error_code>;
+auto open(const PublicParameters& public_params, const Ciphertext& ciphertext,
+    std::span<const PartialDecryptionShare> shares)
+    -> std::expected<std::array<Byte, 32>, std::error_code>;
 
-} // namespace Honey::Crypto::Tpke
+} // namespace Honey::Crypto::Threshold::Pke

@@ -16,9 +16,7 @@ Hash256 sha256(BytesSpan data)
     size_t len = 0;
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
-    EVP_Q_digest(
-        nullptr, "SHA256", nullptr,
-        u8ptr(data), data.size(),
+    EVP_Q_digest(nullptr, "SHA256", nullptr, u8ptr(data), data.size(),
         u8ptr(hash.data()), &len);
 #else
     // 兼容旧版本或通用写法
@@ -31,10 +29,7 @@ Hash256 sha256(BytesSpan data)
     return hash;
 }
 
-Hash256 hashG(const P1& point)
-{
-    return sha256(point.compress());
-}
+Hash256 hashG(const P1& point) { return sha256(point.compress()); }
 
 // HashH: (G1, V) -> G2.
 P2 hashH(const P1& u, BytesSpan v)
@@ -54,7 +49,8 @@ P2 hashH(const P1& u, BytesSpan v)
     return h;
 }
 
-// XOR: Inputs are now flexible spans. Output is still vector as size is dynamic.
+// XOR: Inputs are now flexible spans. Output is still vector as size is
+// dynamic.
 std::vector<Byte> xor_bytes(BytesSpan a, BytesSpan b)
 {
     if (a.size() != b.size()) {

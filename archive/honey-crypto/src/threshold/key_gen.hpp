@@ -44,12 +44,14 @@ inline Scalar polynom_eval(Scalar x, std::span<const Scalar> coeffs)
 
 template <IsGroupElement MasterKeyT, IsGroupElement ShareKeyT>
 auto generate_keys(int players, int k)
-    -> std::expected<DistributedKeySet<MasterKeyT, ShareKeyT>, std::error_code>
+    -> std::expected<DistributedKeySet<MasterKeyT, ShareKeyT>,
+        std::error_code>
 {
     if (k < 1 || k > players || players < 1)
         return std::unexpected(std::make_error_code(std::errc::invalid_argument));
 
-    // A (k, n) scheme requires a polynomial of degree k-1, which has k coefficients.
+    // A (k, n) scheme requires a polynomial of degree k-1, which has k
+    // coefficients.
     auto secret_polynomial = random_poly(k);
 
     // The master secret key is the constant term (a_0) of the polynomial.
@@ -73,7 +75,8 @@ auto generate_keys(int players, int k)
             .secret = player_secret_share,
         });
 
-        // Calculate the corresponding public verification key for this share: H * share
+        // Calculate the corresponding public verification key for this share: H *
+        // share
         auto share_public_key = ShareKeyT::generator();
         mult(share_public_key, player_secret_share);
         verification_vector.push_back(share_public_key);

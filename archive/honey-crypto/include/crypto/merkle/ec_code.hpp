@@ -2,7 +2,6 @@
 
 #include "isal_fwd.hpp"
 #include "struct.hpp"
-#include <cstddef>
 #include <expected>
 #include <memory>
 #include <span>
@@ -36,19 +35,14 @@ struct RsContext {
 
     static std::expected<RsContext, std::error_code> create(int K, int N);
 
-    void build_decode_matrix(
-        std::span<const int> shard_indexes,
+    void build_decode_matrix(std::span<const int> shard_indexes,
         std::span<unsigned char> out_matrix) const;
 };
 
-auto rs_encode(
-    const RsContext& ctx,
-    MessageBuffer& msg)
+auto rs_encode(const RsContext& ctx, MessageBuffer& msg)
     -> std::expected<ShardBlock, std::error_code>;
 
-auto rs_decode(
-    const RsContext& ctx,
-    std::span<const ShardView> shards)
+auto rs_decode(const RsContext& ctx, std::span<const ShardView> shards)
     -> std::expected<MessageBuffer, std::error_code>;
 
 } // namespace Honey::Crypto::Merkle

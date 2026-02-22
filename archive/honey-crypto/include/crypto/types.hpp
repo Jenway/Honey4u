@@ -36,7 +36,8 @@ namespace Utils {
     }
 
     template <size_t N>
-    constexpr std::array<std::byte, N> make_bytes(std::initializer_list<uint8_t> l)
+    constexpr std::array<std::byte, N>
+    make_bytes(std::initializer_list<uint8_t> l)
     {
         std::array<std::byte, N> res {};
         const auto* it = l.begin();

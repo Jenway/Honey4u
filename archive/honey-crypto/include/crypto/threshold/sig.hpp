@@ -36,13 +36,11 @@ PartialSignature sign(const PrivateKeyShare& share, BytesSpan message);
 
 [[nodiscard]]
 auto verify_share(const PublicParameters& params,
-    const PartialSignature& partial_signature,
-    BytesSpan message)
+    const PartialSignature& partial_signature, BytesSpan message)
     -> std::expected<void, std::error_code>;
 
 [[nodiscard]]
-auto validate(const PublicParameters& public_params,
-    BytesSpan message,
+auto validate(const PublicParameters& public_params, BytesSpan message,
     std::span<const PartialSignature> partial_signatures)
     -> std::expected<void, std::error_code>;
 

@@ -133,7 +133,8 @@ TEST_CASE("AES-256-CBC Encryption/Decryption Roundtrip")
     Context ctx;
 
     std::string_view message = "Some secret message to encrypt";
-    BytesSpan plaintext { reinterpret_cast<const Byte*>(message.data()), message.size() };
+    BytesSpan plaintext { reinterpret_cast<const Byte*>(message.data()),
+        message.size() };
 
     auto encrypt_res = encrypt(ctx, test_key, plaintext);
 
@@ -149,7 +150,9 @@ TEST_CASE("AES-256-CBC Encryption/Decryption Roundtrip")
     auto decrypted_text = decrypt_res.value();
 
     CHECK(decrypted_text.size() == plaintext.size());
-    CHECK(std::memcmp(decrypted_text.data(), plaintext.data(), plaintext.size()) == 0);
+    CHECK(std::memcmp(decrypted_text.data(), plaintext.data(),
+              plaintext.size())
+        == 0);
 }
 
 TEST_CASE("AES Error Handling")

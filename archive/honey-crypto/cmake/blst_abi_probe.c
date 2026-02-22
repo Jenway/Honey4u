@@ -30,23 +30,36 @@ int main(int argc, char** argv)
     fprintf(f, "#include <cstddef>\n\n");
     fprintf(f, "namespace Honey::Crypto::bls::abi {\n\n");
 
-    fprintf(f, "inline constexpr std::size_t blst_p1_size = %zu;\n", (size_t)sizeof(blst_p1));
-    fprintf(f, "inline constexpr std::size_t blst_p1_align = %zu;\n", (size_t)_Alignof(blst_p1));
-    fprintf(f, "inline constexpr std::size_t blst_p1_affine_size = %zu;\n", (size_t)sizeof(blst_p1_affine));
-    fprintf(f, "inline constexpr std::size_t blst_p1_affine_align = %zu;\n", (size_t)_Alignof(blst_p1_affine));
+    fprintf(f, "inline constexpr std::size_t blst_p1_size = %zu;\n",
+        (size_t)sizeof(blst_p1));
+    fprintf(f, "inline constexpr std::size_t blst_p1_align = %zu;\n",
+        (size_t)_Alignof(blst_p1));
+    fprintf(f, "inline constexpr std::size_t blst_p1_affine_size = %zu;\n",
+        (size_t)sizeof(blst_p1_affine));
+    fprintf(f, "inline constexpr std::size_t blst_p1_affine_align = %zu;\n",
+        (size_t)_Alignof(blst_p1_affine));
 
-    fprintf(f, "inline constexpr std::size_t blst_p2_size = %zu;\n", (size_t)sizeof(blst_p2));
-    fprintf(f, "inline constexpr std::size_t blst_p2_align = %zu;\n", (size_t)_Alignof(blst_p2));
-    fprintf(f, "inline constexpr std::size_t blst_p2_affine_size = %zu;\n", (size_t)sizeof(blst_p2_affine));
-    fprintf(f, "inline constexpr std::size_t blst_p2_affine_align = %zu;\n", (size_t)_Alignof(blst_p2_affine));
+    fprintf(f, "inline constexpr std::size_t blst_p2_size = %zu;\n",
+        (size_t)sizeof(blst_p2));
+    fprintf(f, "inline constexpr std::size_t blst_p2_align = %zu;\n",
+        (size_t)_Alignof(blst_p2));
+    fprintf(f, "inline constexpr std::size_t blst_p2_affine_size = %zu;\n",
+        (size_t)sizeof(blst_p2_affine));
+    fprintf(f, "inline constexpr std::size_t blst_p2_affine_align = %zu;\n",
+        (size_t)_Alignof(blst_p2_affine));
 
-    fprintf(f, "inline constexpr std::size_t blst_scalar_size = %zu;\n", (size_t)sizeof(blst_scalar));
-    fprintf(f, "inline constexpr std::size_t blst_scalar_align = %zu;\n", (size_t)_Alignof(blst_scalar));
+    fprintf(f, "inline constexpr std::size_t blst_scalar_size = %zu;\n",
+        (size_t)sizeof(blst_scalar));
+    fprintf(f, "inline constexpr std::size_t blst_scalar_align = %zu;\n",
+        (size_t)_Alignof(blst_scalar));
 
-    fprintf(f, "inline constexpr std::size_t blst_fp12_size = %zu;\n", (size_t)sizeof(blst_fp12));
-    fprintf(f, "inline constexpr std::size_t blst_fp12_align = %zu;\n", (size_t)_Alignof(blst_fp12));
+    fprintf(f, "inline constexpr std::size_t blst_fp12_size = %zu;\n",
+        (size_t)sizeof(blst_fp12));
+    fprintf(f, "inline constexpr std::size_t blst_fp12_align = %zu;\n",
+        (size_t)_Alignof(blst_fp12));
 
-    fprintf(f, "inline constexpr std::size_t blst_scalar_serialized_size = 32;\n");
+    fprintf(f,
+        "inline constexpr std::size_t blst_scalar_serialized_size = 32;\n");
 
     fprintf(f, "inline constexpr std::size_t blst_p1_serialized_size = 96;\n");
     fprintf(f, "inline constexpr std::size_t blst_p1_compressed_size = 48;\n");

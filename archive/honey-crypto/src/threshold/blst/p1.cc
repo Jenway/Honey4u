@@ -28,9 +28,9 @@ P1 P1::generator()
 P1 P1::identity()
 {
     P1 ret {};
-    // blst 中全 0 代表无穷远点 (除了 Z 坐标需要注意，但 memset 0 通常是安全的初始状态)
-    // 更正规的做法是设为无穷远
-    // blst_p1 内部通常 Z=0 代表无穷远
+    // blst 中全 0 代表无穷远点 (除了 Z 坐标需要注意，但 memset 0
+    // 通常是安全的初始状态) 更正规的做法是设为无穷远 blst_p1 内部通常 Z=0
+    // 代表无穷远
     std::memset(to_native<blst_p1>(&ret), 0, sizeof(blst_p1));
     return ret;
 }
@@ -40,11 +40,8 @@ P1 P1::identity()
 P1 P1::from_hash(BytesSpan msg, BytesSpan dst)
 {
     P1 ret {};
-    blst_hash_to_g1(
-        to_native<blst_p1>(&ret),
-        u8ptr(msg.data()), msg.size(),
-        u8ptr(dst.data()), dst.size(),
-        nullptr, 0 // No aug
+    blst_hash_to_g1(to_native<blst_p1>(&ret), u8ptr(msg.data()), msg.size(),
+        u8ptr(dst.data()), dst.size(), nullptr, 0 // No aug
     );
     return ret;
 }
@@ -52,56 +49,48 @@ P1 P1::from_hash(BytesSpan msg, BytesSpan dst)
 {
     std::array<Byte, P1::SERIALIZED_SIZE> buf {};
 
-    blst_p1_serialize(
-        u8ptr(buf.data()),
-        to_native<blst_p1>(this));
+    blst_p1_serialize(u8ptr(buf.data()), to_native<blst_p1>(this));
     return buf;
 }
 
 [[nodiscard]] std::array<Byte, P1::COMPRESSED_SIZE> P1::compress() const
 {
     std::array<Byte, P1::COMPRESSED_SIZE> buf {};
-    blst_p1_compress(
-        u8ptr(buf.data()),
-        to_native<blst_p1>(this));
+    blst_p1_compress(u8ptr(buf.data()), to_native<blst_p1>(this));
     return buf;
 };
 
-std::expected<P1, std::error_code> P1::deserialize(std::span<const Byte, SERIALIZED_SIZE> data)
+std::expected<P1, std::error_code>
+P1::deserialize(std::span<const Byte, SERIALIZED_SIZE> data)
 {
     blst_p1_affine affine;
     BLST_ERROR err = blst_p1_deserialize(
-        &affine,
-        reinterpret_cast<const uint8_t*>(data.data()));
+        &affine, reinterpret_cast<const uint8_t*>(data.data()));
 
     if (err != BLST_SUCCESS) {
         return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
     P1 ret {};
-    blst_p1_from_affine(
-        to_native<blst_p1>(&ret),
-        &affine);
+    blst_p1_from_affine(to_native<blst_p1>(&ret), &affine);
     return ret;
 }
 
-std::expected<P1, std::error_code> P1::uncompress(std::span<const Byte, COMPRESSED_SIZE> data)
+std::expected<P1, std::error_code>
+P1::uncompress(std::span<const Byte, COMPRESSED_SIZE> data)
 {
     // P1_Affine affine;
     blst_p1_affine affine;
 
     BLST_ERROR err = blst_p1_uncompress(
-        &affine,
-        reinterpret_cast<const uint8_t*>(data.data()));
+        &affine, reinterpret_cast<const uint8_t*>(data.data()));
 
     if (err != BLST_SUCCESS) {
         return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
     P1 ret {};
-    blst_p1_from_affine(
-        to_native<blst_p1>(&ret),
-        &affine);
+    blst_p1_from_affine(to_native<blst_p1>(&ret), &affine);
     return ret;
 }
 
@@ -109,8 +98,7 @@ using impl::to_native;
 
 bool P1::equals(const P1& others) const
 {
-    return blst_p1_is_equal(
-        to_native<blst_p1>(this),
+    return blst_p1_is_equal(to_native<blst_p1>(this),
         to_native<blst_p1>(&others));
 }
 

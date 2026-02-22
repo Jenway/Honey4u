@@ -21,7 +21,8 @@ struct Scalar {
     friend bool operator==(const Scalar&, const Scalar&) = default;
 
     static Scalar from_uint64(uint64_t v);
-    static std::expected<Scalar, std::error_code> random(const char* DST = "HBFT_DEFAULT_SALT");
+    static std::expected<Scalar, std::error_code>
+    random(const char* DST = "HBFT_DEFAULT_SALT");
 
     [[nodiscard]] std::array<uint8_t, BYTE_LENGTH> to_bytes() const;
     [[nodiscard]] static std::expected<Scalar, std::error_code>

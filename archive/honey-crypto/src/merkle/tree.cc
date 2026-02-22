@@ -19,9 +19,7 @@ Context::Context(int N)
 Context::~Context() = default;
 
 std::expected<MerkleResult, std::error_code>
-build_and_prove(
-    Context& ctx,
-    const ShardBlock& shards)
+build_and_prove(Context& ctx, const ShardBlock& shards)
 {
     if (!ctx.c_ctx) {
         return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
@@ -50,8 +48,7 @@ build_and_prove(
             std::memcpy(h.data(), nodes + sib * 32, 32);
             siblings.push_back(h);
         }
-        result.proofs.push_back(MerkleProof {
-            .leaf_index = static_cast<int>(i),
+        result.proofs.push_back(MerkleProof { .leaf_index = static_cast<int>(i),
             .siblings = std::move(siblings) });
     }
 
@@ -59,10 +56,7 @@ build_and_prove(
 }
 
 std::expected<void, std::error_code>
-verify(
-    Context& ctx,
-    std::span<const std::byte> leaf,
-    const MerkleProof& proof,
+verify(Context& ctx, std::span<const std::byte> leaf, const MerkleProof& proof,
     const Hash& expected_root) noexcept
 {
     if (!ctx.c_ctx) {
@@ -85,8 +79,10 @@ verify(
         const auto* a = reinterpret_cast<const unsigned char*>(acc.data());
         const auto* s = reinterpret_cast<const unsigned char*>(sib.data());
         const int ret = ((idx & 1U) != 0U)
-            ? merkle_hash_internal(md, s, a, reinterpret_cast<unsigned char*>(next.data()))
-            : merkle_hash_internal(md, a, s, reinterpret_cast<unsigned char*>(next.data()));
+            ? merkle_hash_internal(
+                  md, s, a, reinterpret_cast<unsigned char*>(next.data()))
+            : merkle_hash_internal(
+                  md, a, s, reinterpret_cast<unsigned char*>(next.data()));
         if (ret != 0) {
             return std::unexpected(std::make_error_code(std::errc::io_error));
         }
@@ -101,9 +97,7 @@ verify(
     return {};
 }
 
-auto build_merkle_tree(
-    const RsContext& rs_ctx,
-    Context& merkle_ctx,
+auto build_merkle_tree(const RsContext& rs_ctx, Context& merkle_ctx,
     std::span<const std::byte> data)
     -> std::expected<MerkleBuildResult, std::error_code>
 {
@@ -124,16 +118,12 @@ auto build_merkle_tree(
     }
 
     // Step 4: 组合结果
-    return MerkleBuildResult {
-        .root = tree_result->root,
+    return MerkleBuildResult { .root = tree_result->root,
         .shards = std::move(*shards_result),
-        .proofs = std::move(tree_result->proofs)
-    };
+        .proofs = std::move(tree_result->proofs) };
 }
 
-auto verify_and_decode(
-    const RsContext& rs_ctx,
-    Context& merkle_ctx,
+auto verify_and_decode(const RsContext& rs_ctx, Context& merkle_ctx,
     std::span<const ShardWithProof> shards_with_proofs,
     const Hash& expected_root)
     -> std::expected<MessageBuffer, std::error_code>
@@ -150,11 +140,7 @@ auto verify_and_decode(
         };
 
         // 验证 Merkle 证明
-        auto verify_result = verify(
-            merkle_ctx,
-            shard_bytes,
-            proof,
-            expected_root);
+        auto verify_result = verify(merkle_ctx, shard_bytes, proof, expected_root);
 
         if (!verify_result) {
             return std::unexpected(verify_result.error());
@@ -193,7 +179,7 @@ namespace {
         }
         return out;
     }
-}
+} // namespace
 
 TEST_CASE(" Merkle.BuildsAndVerifiesProofs")
 {

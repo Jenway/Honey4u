@@ -15,7 +15,8 @@ extern "C" {
 #include <system_error>
 
 namespace Honey::Crypto::bls {
-static_assert(sizeof(Scalar) == sizeof(blst_scalar), "Scalar size mismatch with blst_scalar");
+static_assert(sizeof(Scalar) == sizeof(blst_scalar),
+    "Scalar size mismatch with blst_scalar");
 
 using impl::to_native;
 
@@ -38,9 +39,8 @@ std::expected<Scalar, std::error_code> Scalar::random(const char* DST)
     // 生成 48 字节 (384 bits) 的均匀随机数，然后模 r
     // 这样做是为了消除模偏差 (modular bias)
     uint8_t out[48];
-    blst_expand_message_xmd(out, sizeof(out),
-        ikm.data(), ikm.size(),
-        u8ptr(DST), std::strlen(DST));
+    blst_expand_message_xmd(out, sizeof(out), ikm.data(), ikm.size(), u8ptr(DST),
+        std::strlen(DST));
 
     Scalar s;
     blst_scalar_from_be_bytes(to_native<blst_scalar>(&s), out, sizeof(out));
@@ -54,7 +54,8 @@ std::array<uint8_t, Scalar::BYTE_LENGTH> Scalar::to_bytes() const
     return ret;
 }
 
-std::expected<Scalar, std::error_code> Scalar::from_bytes(std::span<const uint8_t, 32> data)
+std::expected<Scalar, std::error_code>
+Scalar::from_bytes(std::span<const uint8_t, 32> data)
 {
     Scalar ret;
     blst_scalar_from_bendian(to_native<blst_scalar>(&ret), data.data());

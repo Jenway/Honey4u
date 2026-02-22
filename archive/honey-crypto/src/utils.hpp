@@ -20,26 +20,23 @@ Hash256 hashG(const P1& point);
 // HashH: (G1, V) -> G2.
 P2 hashH(const P1& u, BytesSpan v);
 
-// XOR: Inputs are now flexible spans. Output is still vector as size is dynamic.
+// XOR: Inputs are now flexible spans. Output is still vector as size is
+// dynamic.
 std::vector<Byte> xor_bytes(BytesSpan a, BytesSpan b);
 
 } // namespace Honey::Crypto::Utils
 
 namespace Honey::Crypto::impl {
 
-using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX, decltype([](EVP_MD_CTX* ctx) {
-    EVP_MD_CTX_free(ctx);
-})>;
+using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX,
+    decltype([](EVP_MD_CTX* ctx) { EVP_MD_CTX_free(ctx); })>;
 
 inline const uint8_t* u8ptr(std::span<const std::byte> s)
 {
     return reinterpret_cast<const uint8_t*>(s.data());
 }
 
-inline const uint8_t* u8ptr(std::span<const uint8_t> s)
-{
-    return s.data();
-}
+inline const uint8_t* u8ptr(std::span<const uint8_t> s) { return s.data(); }
 
 inline const uint8_t* u8ptr(const void* ptr)
 {
@@ -51,10 +48,7 @@ inline uint8_t* u8ptr(std::span<std::byte> s)
     return reinterpret_cast<uint8_t*>(s.data());
 }
 
-inline uint8_t* u8ptr(std::span<uint8_t> s)
-{
-    return s.data();
-}
+inline uint8_t* u8ptr(std::span<uint8_t> s) { return s.data(); }
 
 inline const uint8_t* u8ptr(const std::byte* ptr)
 {

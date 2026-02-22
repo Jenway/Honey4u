@@ -90,7 +90,8 @@ auto interpolate_at_zero(std::span<const ShareT> shares)
     for (size_t i = 0; i < k; ++i) {
         for (size_t j = 0; j < i; ++j) {
             if (shares[i].player_id == shares[j].player_id)
-                return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+                return std::unexpected(
+                    std::make_error_code(std::errc::invalid_argument));
         }
         xs.push_back(Scalar::from_uint64(shares[i].player_id));
     }

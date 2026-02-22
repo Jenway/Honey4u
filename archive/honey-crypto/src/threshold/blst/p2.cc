@@ -28,9 +28,7 @@ P2 P2::generator()
 
 bool P2::equals(const P2& rhs) const
 {
-    return blst_p2_is_equal(
-        to_native<blst_p2>(this),
-        to_native<blst_p2>(&rhs));
+    return blst_p2_is_equal(to_native<blst_p2>(this), to_native<blst_p2>(&rhs));
 }
 
 P2 P2::identity()
@@ -53,47 +51,40 @@ void P2::compress(std::span<uint8_t, P2::COMPRESSED_SIZE> out) const
 P2 P2::from_hash(BytesSpan msg, BytesSpan dst)
 {
     P2 ret {};
-    blst_hash_to_g2(
-        to_native<blst_p2>(&ret),
-        u8ptr(msg.data()), msg.size(),
-        u8ptr(dst.data()), dst.size(),
-        nullptr, 0);
+    blst_hash_to_g2(to_native<blst_p2>(&ret), u8ptr(msg.data()), msg.size(),
+        u8ptr(dst.data()), dst.size(), nullptr, 0);
     return ret;
 }
 
-std::expected<P2, std::error_code> P2::deserialize(std::span<const Byte, SERIALIZED_SIZE> data)
+std::expected<P2, std::error_code>
+P2::deserialize(std::span<const Byte, SERIALIZED_SIZE> data)
 {
     blst_p2_affine affine;
     BLST_ERROR err = blst_p2_deserialize(
-        &affine,
-        reinterpret_cast<const uint8_t*>(data.data()));
+        &affine, reinterpret_cast<const uint8_t*>(data.data()));
 
     if (err != BLST_SUCCESS) {
         return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
     P2 ret {};
-    blst_p2_from_affine(
-        to_native<blst_p2>(&ret),
-        &affine);
+    blst_p2_from_affine(to_native<blst_p2>(&ret), &affine);
     return ret;
 }
 
-std::expected<P2, std::error_code> P2::uncompress(std::span<const Byte, COMPRESSED_SIZE> data)
+std::expected<P2, std::error_code>
+P2::uncompress(std::span<const Byte, COMPRESSED_SIZE> data)
 {
     blst_p2_affine affine;
     BLST_ERROR err = blst_p2_uncompress(
-        &affine,
-        reinterpret_cast<const uint8_t*>(data.data()));
+        &affine, reinterpret_cast<const uint8_t*>(data.data()));
 
     if (err != BLST_SUCCESS) {
         return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
     P2 ret {};
-    blst_p2_from_affine(
-        to_native<blst_p2>(&ret),
-        &affine);
+    blst_p2_from_affine(to_native<blst_p2>(&ret), &affine);
     return ret;
 }
 

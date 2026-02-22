@@ -19,7 +19,8 @@ public:
 
     static P2 generator();
     static P2 identity();
-    static P2 from_hash(std::span<const std::byte> msg, std::span<const std::byte> dst = {});
+    static P2 from_hash(std::span<const std::byte> msg,
+        std::span<const std::byte> dst = {});
 
     [[nodiscard]] bool equals(const P2&) const;
 

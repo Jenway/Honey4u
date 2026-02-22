@@ -47,13 +47,13 @@ void isal_aligned_free(void* ptr)
 
 /* ============================================================================
    编码实现
-   ============================================================================ */
+   ============================================================================
+ */
 
-struct isal_shard_block* isal_rs_encode_create(
-    const struct isal_memory_arena* arena,
+struct isal_shard_block*
+isal_rs_encode_create(const struct isal_memory_arena* arena,
     const unsigned char* encode_tables,
-    const void* input_data,
-    size_t input_len)
+    const void* input_data, size_t input_len)
 {
     if (!arena || arena->K <= 0 || arena->N <= arena->K || !encode_tables || !input_data) {
         return NULL;
@@ -89,7 +89,8 @@ struct isal_shard_block* isal_rs_encode_create(
     }
 
     /* 5. 执行纠删码编码 */
-    ec_encode_data((int)block_size, K, N - K, (unsigned char*)encode_tables, ptrs, ptrs + K);
+    ec_encode_data((int)block_size, K, N - K, (unsigned char*)encode_tables,
+        ptrs, ptrs + K);
 
     /* 6. 创建返回结构 */
     struct isal_shard_block* block = (struct isal_shard_block*)malloc(sizeof(struct isal_shard_block));
@@ -118,16 +119,14 @@ void isal_shard_block_free(struct isal_shard_block* block)
 
 /* ============================================================================
    解码实现
-   ============================================================================ */
+   ============================================================================
+ */
 
-int isal_rs_decode_into(
-    const struct isal_memory_arena* arena,
-    const unsigned char* encode_matrix,
-    void* output,
+int isal_rs_decode_into(const struct isal_memory_arena* arena,
+    const unsigned char* encode_matrix, void* output,
     size_t* payload_size)
 {
-    if (!arena || arena->K <= 0 || arena->block_size == 0 || !encode_matrix
-        || !arena->shard_indexes || !arena->shard_ptrs || !output || !payload_size) {
+    if (!arena || arena->K <= 0 || arena->block_size == 0 || !encode_matrix || !arena->shard_indexes || !arena->shard_ptrs || !output || !payload_size) {
         return -1;
     }
 
@@ -148,7 +147,8 @@ int isal_rs_decode_into(
     /* 2. Fast Path：直接拷贝数据 */
     if (is_fast_path) {
         for (int i = 0; i < K; ++i) {
-            memcpy((char*)output + (size_t)i * block_size, shard_data[i], block_size);
+            memcpy((char*)output + (size_t)i * block_size, shard_data[i],
+                block_size);
         }
         uint32_t len;
         memcpy(&len, output, 4);
@@ -162,7 +162,8 @@ int isal_rs_decode_into(
     unsigned char* decode_matrix = arena->decode_matrix;
     for (int i = 0; i < K; ++i) {
         int src_idx = shard_indexes[i];
-        memcpy(decode_matrix + (size_t)i * K, encode_matrix + (size_t)src_idx * K, (size_t)K);
+        memcpy(decode_matrix + (size_t)i * K, encode_matrix + (size_t)src_idx * K,
+            (size_t)K);
     }
 
     /* 3.2 矩阵反演 */
@@ -186,12 +187,8 @@ int isal_rs_decode_into(
     }
 
     /* 3.5 执行解码 */
-    int decode_ret = isal_decode_data_direct(
-        (int)block_size,
-        K,
-        tables->tables,
-        input_ptrs,
-        output_ptrs);
+    int decode_ret = isal_decode_data_direct((int)block_size, K, tables->tables,
+        input_ptrs, output_ptrs);
 
     isal_free_decode_tables(tables);
 
@@ -206,8 +203,8 @@ int isal_rs_decode_into(
     return 0;
 }
 
-struct isal_message_buffer* isal_rs_decode_create(
-    const struct isal_memory_arena* arena,
+struct isal_message_buffer*
+isal_rs_decode_create(const struct isal_memory_arena* arena,
     const unsigned char* encode_matrix)
 {
     if (!arena || arena->K <= 0 || arena->block_size == 0 || !encode_matrix) {

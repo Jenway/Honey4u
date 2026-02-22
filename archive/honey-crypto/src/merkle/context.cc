@@ -6,8 +6,10 @@
 extern "C" {
 struct isal_rs_context* isal_rs_context_create(int K, int N);
 void isal_rs_context_free(struct isal_rs_context* ctx);
-const unsigned char* isal_rs_context_encode_matrix(const struct isal_rs_context* ctx);
-const unsigned char* isal_rs_context_encode_g_tbls(const struct isal_rs_context* ctx);
+const unsigned char*
+isal_rs_context_encode_matrix(const struct isal_rs_context* ctx);
+const unsigned char*
+isal_rs_context_encode_g_tbls(const struct isal_rs_context* ctx);
 }
 #include <cassert>
 #include <cstring>
@@ -39,8 +41,7 @@ std::expected<RsContext, std::error_code> RsContext::create(int K, int N)
     return result;
 }
 
-void RsContext::build_decode_matrix(
-    std::span<const int> shard_indexes,
+void RsContext::build_decode_matrix(std::span<const int> shard_indexes,
     std::span<unsigned char> out_matrix) const
 {
     assert(shard_indexes.size() <= static_cast<size_t>(K));
@@ -49,7 +50,9 @@ void RsContext::build_decode_matrix(
     assert(c_context && matrix);
     for (int i = 0; i < static_cast<int>(shard_indexes.size()); i++) {
         const int src_idx = shard_indexes[i];
-        std::memcpy(&out_matrix[static_cast<size_t>(i) * K], &matrix[static_cast<size_t>(src_idx) * K], static_cast<size_t>(K));
+        std::memcpy(&out_matrix[static_cast<size_t>(i) * K],
+            &matrix[static_cast<size_t>(src_idx) * K],
+            static_cast<size_t>(K));
     }
 }
 
@@ -65,7 +68,8 @@ const unsigned char* RsContext::encode_g_tbls_data() const
     return c_context ? isal_rs_context_encode_g_tbls(c_context.get()) : nullptr;
 }
 
-void IsalMemoryArenaDeleter::operator()(isal_memory_arena* arena) const noexcept
+void IsalMemoryArenaDeleter::operator()(
+    isal_memory_arena* arena) const noexcept
 {
     if (arena != nullptr) {
         isal_memory_arena_free(arena);

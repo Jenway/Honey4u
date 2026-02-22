@@ -32,18 +32,13 @@ private:
     secp256k1_context_struct* ptr_ = nullptr;
 };
 
-auto sign(const Context& ctx,
-    const PrivateKey& priv_key,
-    BytesSpan msg)
+auto sign(const Context& ctx, const PrivateKey& priv_key, BytesSpan msg)
     -> std::expected<Signature, std::error_code>;
 
-bool verify(const Context& ctx,
-    const PublicKey& pub_key,
-    BytesSpan msg,
+bool verify(const Context& ctx, const PublicKey& pub_key, BytesSpan msg,
     const Signature& sig);
 
-auto get_public_key(const Context& ctx,
-    const PrivateKey& priv_key)
+auto get_public_key(const Context& ctx, const PrivateKey& priv_key)
     -> std::expected<PublicKey, std::error_code>;
 
 } // namespace Honey::Crypto::Ecdsa

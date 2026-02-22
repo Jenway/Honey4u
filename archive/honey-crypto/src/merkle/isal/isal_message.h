@@ -18,13 +18,15 @@ struct isal_message_buffer {
     unsigned char storage[]; /* 柔性数组：4 + payload_size 字节 */
 };
 
-struct isal_message_buffer* isal_message_buffer_create(const void* data, size_t len);
+struct isal_message_buffer* isal_message_buffer_create(const void* data,
+    size_t len);
 const void* isal_message_buffer_payload(const struct isal_message_buffer* msg);
 const void* isal_message_buffer_storage(const struct isal_message_buffer* msg);
 size_t isal_message_buffer_storage_size(const struct isal_message_buffer* msg);
 size_t isal_message_buffer_payload_size(const struct isal_message_buffer* msg);
 void isal_message_buffer_free(struct isal_message_buffer* msg);
-struct isal_message_buffer* isal_message_buffer_from_packed(const void* packed_data, size_t packed_size);
+struct isal_message_buffer*
+isal_message_buffer_from_packed(const void* packed_data, size_t packed_size);
 
 #ifdef __cplusplus
 }

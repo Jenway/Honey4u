@@ -18,7 +18,10 @@ enum class Error : std::uint8_t {
 
 class HoneyCryptoErrorCategory : public std::error_category {
 public:
-    [[nodiscard]] const char* name() const noexcept override { return "HoneyCrypto"; }
+    [[nodiscard]] const char* name() const noexcept override
+    {
+        return "HoneyCrypto";
+    }
 
     [[nodiscard]] std::string message(int ev) const override
     {

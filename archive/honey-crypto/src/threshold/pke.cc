@@ -16,7 +16,8 @@
 namespace Honey::Crypto::Threshold::Pke {
 
 namespace {
-    std::array<Byte, 32> xor_bytes(std::span<const Byte, 32> a, std::span<const Byte, 32> b)
+    std::array<Byte, 32> xor_bytes(std::span<const Byte, 32> a,
+        std::span<const Byte, 32> b)
     {
         std::array<Byte, 32> res;
         for (size_t i = 0; i < a.size(); ++i) {
@@ -60,12 +61,11 @@ bool verify_share(const PublicParameters& public_params,
 auto generate_keys(uint32_t num_players, uint32_t threshold)
     -> std::expected<KeySet, std::error_code>
 {
-    return Threshold::generate_keys<MasterPublicKey, VerificationKey>(num_players, threshold);
+    return Threshold::generate_keys<MasterPublicKey, VerificationKey>(num_players,
+        threshold);
 }
 
-Ciphertext seal(
-    const MasterPublicKey& master_public_key,
-    PlainText msg)
+Ciphertext seal(const MasterPublicKey& master_public_key, PlainText msg)
 {
     auto random_scalar = *Scalar::random();
 
@@ -86,9 +86,9 @@ Ciphertext seal(
     return result;
 }
 
-auto partial_open(
-    const PrivateKeyShare& private_key_share,
-    const Ciphertext& ciphertext) -> std::expected<PartialDecryptionShare, std::error_code>
+auto partial_open(const PrivateKeyShare& private_key_share,
+    const Ciphertext& ciphertext)
+    -> std::expected<PartialDecryptionShare, std::error_code>
 {
     if (!verify_encapsulation(ciphertext)) {
         return std::unexpected(make_error_code(Crypto::Error::InvalidCiphertext));
@@ -104,8 +104,7 @@ auto partial_open(
 }
 
 [[nodiscard]]
-auto open(const PublicParameters& public_params,
-    const Ciphertext& ciphertext,
+auto open(const PublicParameters& public_params, const Ciphertext& ciphertext,
     std::span<const PartialDecryptionShare> shares)
     -> std::expected<std::array<Byte, 32>, std::error_code>
 {
@@ -209,10 +208,7 @@ TEST_CASE_FIXTURE(TpkeTest, "TPKE.open_fails_with_invalid_share")
     shares.push_back(*s2);
 
     // 构造一个伪造份额
-    PartialDecryptionShare bad {
-        .player_id = 3,
-        .value = G1Point::generator()
-    };
+    PartialDecryptionShare bad { .player_id = 3, .value = G1Point::generator() };
     shares.push_back(bad);
 
     auto opened = open(key_set.public_params, ct, shares);
@@ -245,11 +241,9 @@ TEST_CASE_FIXTURE(TpkeTest, "TPKE.open_fails_with_duplicate_player_id")
     auto s = partial_open(key_set.private_shares[0], ct);
     REQUIRE(s.has_value());
 
-    std::vector<PartialDecryptionShare> shares {
-        *s,
+    std::vector<PartialDecryptionShare> shares { *s,
         *s, // duplicate
-        *s
-    };
+        *s };
 
     auto opened = open(key_set.public_params, ct, shares);
     CHECK_FALSE(opened.has_value());
