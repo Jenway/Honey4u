@@ -13,11 +13,20 @@ repos:
     hooks:
     -   id: clang-format
         args: ["-i"]
-
-# -   repo: https://github.com/pocc/pre-commit-hooks
-#     rev: v1.3.5
-#     hooks:
-#     -   id: clang-tidy
-#         args:
-#           - "-p=build"
-#           - "--checks=performance-*,readability-*,bugprone-*,modernize-*"
+    -   id: clang-tidy
+        args:
+          - "-p=build"
+          - "--checks=*,\
+            -altera-*,\
+            -android-*,\
+            -boost-use-*,\
+            -cert-err33-c,\
+            -fuchsia-*,\
+            -google-readability-braces-around-statements,\
+            -modernize-use-trailing-return-type,\
+            -readability-identifier-naming,\
+            -readability-identifier-length,\
+            -readability-braces-around-statements,\
+            -hicpp-braces-around-statements,\
+            -llvmlibc-*,\
+            -misc-non-private-member-*"
