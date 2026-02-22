@@ -52,6 +52,19 @@ int isal_rs_decode_into(
     size_t* payload_size);
 
 /**
+ * 解码，直接返回 isal_message_buffer（零拷贝优化）
+ * @param arena         内存 Arena，已由 isal_memory_arena_fill_shards 填充
+ * @param encode_matrix 编码矩阵（N*K 字节）
+ * @return 解码后的消息缓冲区，失败返回 NULL
+ *
+ * 此函数内部分配正确大小的 message buffer，解码完成后直接返回，
+ * 避免中间缓冲区的拷贝开销。调用者必须使用 isal_message_buffer_free() 释放。
+ */
+struct isal_message_buffer* isal_rs_decode_create(
+    const struct isal_memory_arena* arena,
+    const unsigned char* encode_matrix);
+
+/**
  * 释放对齐内存
  */
 void isal_aligned_free(void* ptr);

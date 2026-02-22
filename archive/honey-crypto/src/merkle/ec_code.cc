@@ -9,11 +9,16 @@ auto rs_encode(
     MessageBuffer& msg)
     -> std::expected<ShardBlock, std::error_code>
 {
+    if (!msg.c_buffer) {
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+    }
+
+    auto payload = msg.payload();
     auto* c_block = isal_rs_encode_create(
         ctx.memory_arena.get(),
         ctx.encode_g_tbls_data(),
-        msg.payload().data(),
-        msg.payload_size);
+        payload.data(),
+        payload.size());
 
     if (c_block == nullptr) {
         return std::unexpected(std::make_error_code(std::errc::operation_not_permitted));
@@ -22,11 +27,10 @@ auto rs_encode(
     return ShardBlock::from_isal_shard_block(c_block);
 }
 
-std::expected<void, std::error_code>
-rs_decode_into(
+std::expected<MessageBuffer, std::error_code>
+rs_decode(
     const RsContext& ctx,
-    std::span<const ShardView> shards,
-    MessageBuffer& out)
+    std::span<const ShardView> shards)
 {
     auto* arena = ctx.memory_arena.get();
 
@@ -36,22 +40,17 @@ rs_decode_into(
         return std::unexpected(std::make_error_code(std::errc::invalid_argument));
     }
 
-    out.storage.resize(static_cast<size_t>(arena->K) * arena->block_size);
-
-    size_t payload_size = 0;
-    const int status = isal_rs_decode_into(
-        arena, ctx.encode_matrix_data(), out.storage.data(), &payload_size);
-    if (status != 0) {
-        switch (status) {
-        case -2:
-            return std::unexpected(std::make_error_code(std::errc::operation_not_permitted));
-        default:
-            return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-        }
+    // 直接解码到 isal_message_buffer（零拷贝）
+    auto* c_buffer = isal_rs_decode_create(arena, ctx.encode_matrix_data());
+    if (c_buffer == nullptr) {
+        return std::unexpected(std::make_error_code(std::errc::operation_not_permitted));
     }
 
-    out.payload_size = payload_size;
-    return {};
+    // 包装为 C++ MessageBuffer
+    MessageBuffer result;
+    result.c_buffer.reset(c_buffer);
+
+    return result;
 }
 
 }; // namespace Honey::Crypto::Merkle

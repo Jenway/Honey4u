@@ -1,16 +1,66 @@
 #pragma once
+#include "crypto/merkle/isal/isal_message.h"
 #include "crypto/merkle/isal/isal_rs_codec.h"
 #include <cstddef>
 #include <memory>
 #include <span>
-#include <vector>
 
 namespace Honey::Crypto::Merkle {
 
-extern "C" {
-void* isal_pack_message(const void* data, size_t len, size_t* out_size);
-const void* isal_unpack_message(const void* packed_data, size_t packed_size, size_t* out_payload_size);
-}
+struct IsalMessageBufferDeleter {
+    void operator()(isal_message_buffer* p) const noexcept
+    {
+        if (p != nullptr) {
+            isal_message_buffer_free(p);
+        }
+    }
+};
+
+struct MessageBuffer {
+    std::unique_ptr<isal_message_buffer, IsalMessageBufferDeleter> c_buffer;
+
+    void assign(std::span<const std::byte> input)
+    {
+        auto* buffer = isal_message_buffer_create(input.data(), input.size());
+        c_buffer.reset(buffer);
+    }
+
+    [[nodiscard]] std::span<const std::byte> payload() const
+    {
+        if (!c_buffer) {
+            return {};
+        }
+
+        const void* ptr = isal_message_buffer_payload(c_buffer.get());
+        if (!ptr) {
+            return {};
+        }
+
+        return std::span<const std::byte> {
+            static_cast<const std::byte*>(ptr),
+            c_buffer->payload_size
+        };
+    }
+
+    [[nodiscard]] std::span<const std::byte> storage() const
+    {
+        if (!c_buffer) {
+            return {};
+        }
+
+        const void* ptr = isal_message_buffer_storage(c_buffer.get());
+        size_t size = isal_message_buffer_storage_size(c_buffer.get());
+
+        if (!ptr || size == 0) {
+            return {};
+        }
+
+        return std::span<const std::byte> {
+            static_cast<const std::byte*>(ptr),
+            size
+        };
+    }
+};
 
 struct IsalShardBlockDeleter {
     void operator()(isal_shard_block* p) const noexcept
@@ -18,42 +68,6 @@ struct IsalShardBlockDeleter {
         if (p != nullptr) {
             isal_shard_block_free(p);
         }
-    }
-};
-
-struct MessageBuffer {
-    std::vector<std::byte> storage;
-    size_t payload_size = 0;
-
-    void assign(std::span<const std::byte> input)
-    {
-        payload_size = input.size();
-        size_t total_size = 0;
-        void* packed = isal_pack_message(input.data(), input.size(), &total_size);
-
-        if (packed != nullptr) {
-            storage.resize(total_size);
-            std::memcpy(storage.data(), packed, total_size);
-            free(packed);
-        } else {
-            storage.clear();
-            payload_size = 0;
-        }
-    }
-
-    [[nodiscard]] std::span<const std::byte> payload() const
-    {
-        if (storage.size() < 4)
-            return {};
-
-        size_t size = 0;
-        const void* ptr = isal_unpack_message(storage.data(), storage.size(), &size);
-        if (ptr != nullptr && size == payload_size) {
-            return std::span<const std::byte> {
-                static_cast<const std::byte*>(ptr), size
-            };
-        }
-        return {};
     }
 };
 

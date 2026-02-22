@@ -62,10 +62,9 @@ auto rs_encode(
     MessageBuffer& msg)
     -> std::expected<ShardBlock, std::error_code>;
 
-auto rs_decode_into(
+auto rs_decode(
     const RsContext& ctx,
-    std::span<const ShardView> shards,
-    MessageBuffer& out)
-    -> std::expected<void, std::error_code>;
+    std::span<const ShardView> shards)
+    -> std::expected<MessageBuffer, std::error_code>;
 
 } // namespace Honey::Crypto::Merkle

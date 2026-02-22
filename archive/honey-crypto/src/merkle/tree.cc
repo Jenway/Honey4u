@@ -1,3 +1,4 @@
+#include "crypto/merkle/ec_code.hpp"
 #include "crypto/merkle/merkle_tree.hpp"
 #include <cstddef>
 #include <cstring>
@@ -20,8 +21,8 @@ build_and_prove(
         return std::unexpected(std::make_error_code(std::errc::io_error));
     }
 
-    const size_t N = static_cast<size_t>(shards.N);
-    const size_t P = static_cast<size_t>(ctx.c_ctx->P);
+    const auto N = static_cast<size_t>(shards.N);
+    const auto P = static_cast<size_t>(ctx.c_ctx->P);
     const unsigned char* nodes = ctx.c_ctx->nodes;
 
     MerkleResult result;
@@ -85,6 +86,77 @@ verify(
     }
 
     return {};
+}
+
+auto build_merkle_tree(
+    const RsContext& rs_ctx,
+    Context& merkle_ctx,
+    std::span<const std::byte> data)
+    -> std::expected<MerkleBuildResult, std::error_code>
+{
+    // Step 1: 创建消息缓冲区
+    MessageBuffer msg;
+    msg.assign(data);
+
+    // Step 2: 纠删码编码
+    auto shards_result = rs_encode(rs_ctx, msg);
+    if (!shards_result) {
+        return std::unexpected(shards_result.error());
+    }
+
+    // Step 3: 构建 Merkle 树
+    auto tree_result = build_and_prove(merkle_ctx, *shards_result);
+    if (!tree_result) {
+        return std::unexpected(tree_result.error());
+    }
+
+    // Step 4: 组合结果
+    return MerkleBuildResult {
+        .root = tree_result->root,
+        .shards = std::move(*shards_result),
+        .proofs = std::move(tree_result->proofs)
+    };
+}
+
+auto verify_and_decode(
+    const RsContext& rs_ctx,
+    Context& merkle_ctx,
+    std::span<const ShardWithProof> shards_with_proofs,
+    const Hash& expected_root)
+    -> std::expected<MessageBuffer, std::error_code>
+{
+    // 首先验证所有分片的 Merkle 证明
+    for (const auto& item : shards_with_proofs) {
+        const auto& shard_view = item.shard;
+        const auto& proof = item.proof;
+
+        // 将分片数据转换为 span<const std::byte>
+        auto shard_bytes = std::span<const std::byte> {
+            reinterpret_cast<const std::byte*>(shard_view.data),
+            shard_view.block_size
+        };
+
+        // 验证 Merkle 证明
+        auto verify_result = verify(
+            merkle_ctx,
+            shard_bytes,
+            proof,
+            expected_root);
+
+        if (!verify_result) {
+            return std::unexpected(verify_result.error());
+        }
+    }
+
+    // 所有验证通过后，提取 ShardView 进行解码
+    std::vector<ShardView> shard_views;
+    shard_views.reserve(shards_with_proofs.size());
+    for (const auto& item : shards_with_proofs) {
+        shard_views.push_back(item.shard);
+    }
+
+    // 调用 rs_decode 进行纠删码解码
+    return rs_decode(rs_ctx, std::span<const ShardView> { shard_views });
 }
 
 }; // namespace Honey::Crypto::Merkle

@@ -1,53 +1,89 @@
-#include "crypto/merkle/isal/isal_wrapper.h"
-#include <isa-l/erasure_code.h>
+#include "crypto/merkle/isal/isal_message.h"
 #include <stdlib.h>
 #include <string.h>
 
-void* isal_pack_message(const void* data, size_t len, size_t* out_size)
+struct isal_message_buffer* isal_message_buffer_create(const void* data, size_t len)
 {
     if (!data && len > 0) {
         return NULL;
     }
 
-    size_t total_size = 4 + len;
-    void* packed = malloc(total_size);
-    if (!packed) {
+    size_t total_size = sizeof(struct isal_message_buffer) + 4 + len;
+    struct isal_message_buffer* msg = malloc(total_size);
+    if (!msg) {
         return NULL;
     }
 
+    msg->payload_size = len;
+
     /* 写入长度前缀（Little Endian） */
     uint32_t len_le = (uint32_t)len;
-    memcpy(packed, &len_le, 4);
+    memcpy(msg->storage, &len_le, 4);
 
     /* 拷贝数据 */
     if (len > 0) {
-        memcpy((char*)packed + 4, data, len);
+        memcpy(msg->storage + 4, data, len);
     }
 
-    if (out_size) {
-        *out_size = total_size;
-    }
-
-    return packed;
+    return msg;
 }
 
-const void* isal_unpack_message(
+const void* isal_message_buffer_payload(const struct isal_message_buffer* msg)
+{
+    if (!msg) {
+        return NULL;
+    }
+    return msg->storage + 4;
+}
+
+const void* isal_message_buffer_storage(const struct isal_message_buffer* msg)
+{
+    if (!msg) {
+        return NULL;
+    }
+    return msg->storage;
+}
+
+size_t isal_message_buffer_storage_size(const struct isal_message_buffer* msg)
+{
+    if (!msg) {
+        return 0;
+    }
+    return 4 + msg->payload_size;
+}
+
+void isal_message_buffer_free(struct isal_message_buffer* msg)
+{
+    if (msg) {
+        free(msg);
+    }
+}
+
+struct isal_message_buffer* isal_message_buffer_from_packed(
     const void* packed_data,
-    size_t packed_size,
-    size_t* out_payload_size)
+    size_t packed_size)
 {
     if (!packed_data || packed_size < 4) {
         return NULL;
     }
 
     /* 读取长度前缀 */
-    uint32_t len = 0;
-    memcpy(&len, packed_data, 4);
+    uint32_t payload_len = 0;
+    memcpy(&payload_len, packed_data, 4);
 
-    if (out_payload_size) {
-        *out_payload_size = len;
+    /* 验证大小一致性 */
+    if (4 + payload_len != packed_size) {
+        return NULL;
     }
 
-    /* 返回 payload 指针 */
-    return (const char*)packed_data + 4;
+    size_t total_size = sizeof(struct isal_message_buffer) + packed_size;
+    struct isal_message_buffer* msg = malloc(total_size);
+    if (!msg) {
+        return NULL;
+    }
+
+    msg->payload_size = payload_len;
+    memcpy(msg->storage, packed_data, packed_size);
+
+    return msg;
 }

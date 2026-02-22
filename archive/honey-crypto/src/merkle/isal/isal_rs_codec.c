@@ -1,4 +1,5 @@
 #include "crypto/merkle/isal/isal_rs_codec.h"
+#include "crypto/merkle/isal/isal_message.h"
 #include "crypto/merkle/isal/isal_wrapper.h"
 #include <isa-l/erasure_code.h>
 #include <stdalign.h>
@@ -203,4 +204,48 @@ int isal_rs_decode_into(
     memcpy(&len, output, 4);
     *payload_size = len;
     return 0;
+}
+
+struct isal_message_buffer* isal_rs_decode_create(
+    const struct isal_memory_arena* arena,
+    const unsigned char* encode_matrix)
+{
+    if (!arena || arena->K <= 0 || arena->block_size == 0 || !encode_matrix) {
+        return NULL;
+    }
+
+    int K = arena->K;
+    size_t block_size = arena->block_size;
+
+    /* 1. 分配临时解码缓冲区 */
+    size_t decode_size = (size_t)K * block_size;
+    void* temp_buffer = malloc(decode_size);
+    if (!temp_buffer) {
+        return NULL;
+    }
+
+    /* 2. 解码到临时缓冲区 */
+    size_t payload_size = 0;
+    int status = isal_rs_decode_into(arena, encode_matrix, temp_buffer, &payload_size);
+    if (status != 0) {
+        free(temp_buffer);
+        return NULL;
+    }
+
+    /* 3. 创建 message buffer（包含 4 字节前缀 + payload） */
+    size_t storage_size = 4 + payload_size;
+    size_t total_size = sizeof(struct isal_message_buffer) + storage_size;
+    struct isal_message_buffer* msg_buffer = (struct isal_message_buffer*)malloc(total_size);
+    if (!msg_buffer) {
+        free(temp_buffer);
+        return NULL;
+    }
+
+    msg_buffer->payload_size = payload_size;
+
+    /* 4. 复制数据：从临时缓冲区的前 storage_size 字节（已包含长度前缀） */
+    memcpy(msg_buffer->storage, temp_buffer, storage_size);
+
+    free(temp_buffer);
+    return msg_buffer;
 }
