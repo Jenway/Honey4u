@@ -1,5 +1,9 @@
 #pragma once
 
+// isal_shard_view is defined in the public header.
+// Include it here so C code in this module can use the type.
+#include "crypto/merkle/isal_fwd.hpp"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -9,8 +13,6 @@ extern "C" {
 
 /**
  * RS 内存 Arena（复用临时缓冲区）
- * 用于避免在每次编码/解码时重复分配临时缓冲区
- * 因为 K 和 N 在运行期间不变，所以可以创建一个 arena 并复用
  */
 struct isal_memory_arena {
     int K;
@@ -32,37 +34,9 @@ struct isal_memory_arena {
     size_t block_size; /* 所有分片的统一大小（字节） */
 };
 
-/**
- * 分片视图
- */
-struct isal_shard_view {
-    int index;
-    const unsigned char* data;
-    size_t block_size;
-};
-
-/**
- * 创建内存 Arena（基于 K, N 参数预分配临时缓冲区）
- * @param K 数据分片数
- * @param N 总分片数
- * @return Arena 指针，失败返回 NULL
- *
- * 调用者必须使用 isal_memory_arena_free 释放
- */
 struct isal_memory_arena* isal_memory_arena_create(int K, int N);
-
-/**
- * 释放内存 Arena
- */
 void isal_memory_arena_free(struct isal_memory_arena* arena);
 
-/**
- * 将分片索引和数据指针写入 arena 缓冲区
- * @param arena 内存 Arena
- * @param shards 分片视图数组
- * @param count 传入的分片数，须等于 arena->K
- * @return 0 成功，-1 参数错误（含 count != K），-2 分片 block_size 不一致
- */
 int isal_memory_arena_fill_shards(
     struct isal_memory_arena* arena,
     const struct isal_shard_view* shards,

@@ -1,6 +1,6 @@
 #pragma once
-#include "crypto/merkle/isal/merkle_hash.h"
 #include "crypto/types.hpp"
+#include "isal_fwd.hpp"
 #include "struct.hpp"
 #include <cstddef>
 #include <expected>
@@ -8,6 +8,7 @@
 #include <span>
 #include <system_error>
 #include <vector>
+
 
 namespace Honey::Crypto::Merkle {
 
@@ -17,10 +18,7 @@ using Hash = Honey::Crypto::Hash256;
 struct RsContext;
 
 struct MerkleContextDeleter {
-    void operator()(merkle_context* p) const noexcept
-    {
-        merkle_context_free(p);
-    }
+    void operator()(merkle_context* p) const noexcept;
 };
 
 /**
@@ -30,16 +28,12 @@ struct MerkleContextDeleter {
 struct Context {
     std::unique_ptr<merkle_context, MerkleContextDeleter> c_ctx;
 
-    explicit Context(int N)
-        : c_ctx(merkle_context_create(N))
-    {
-    }
-
+    explicit Context(int N);
+    ~Context();
     Context(const Context&) = delete;
     Context& operator=(const Context&) = delete;
     Context(Context&&) noexcept = default;
     Context& operator=(Context&&) noexcept = default;
-    ~Context() = default;
 };
 struct MerkleProof {
     int leaf_index {};

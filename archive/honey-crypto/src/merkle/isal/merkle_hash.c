@@ -1,4 +1,4 @@
-#include "crypto/merkle/isal/merkle_hash.h"
+#include "merkle_hash.h"
 #include <openssl/evp.h>
 #include <stdlib.h>
 #include <string.h>

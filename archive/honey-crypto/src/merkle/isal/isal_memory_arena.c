@@ -1,4 +1,4 @@
-#include "crypto/merkle/isal/isal_memory_arena.h"
+#include "isal_memory_arena.h"
 #include <stdlib.h>
 
 struct isal_memory_arena* isal_memory_arena_create(int K, int N)

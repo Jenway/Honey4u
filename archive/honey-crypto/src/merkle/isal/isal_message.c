@@ -1,4 +1,4 @@
-#include "crypto/merkle/isal/isal_message.h"
+#include "isal_message.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -86,4 +86,9 @@ struct isal_message_buffer* isal_message_buffer_from_packed(
     memcpy(msg->storage, packed_data, packed_size);
 
     return msg;
+}
+
+size_t isal_message_buffer_payload_size(const struct isal_message_buffer* msg)
+{
+    return msg ? msg->payload_size : 0;
 }

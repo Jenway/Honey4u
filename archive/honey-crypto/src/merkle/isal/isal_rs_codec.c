@@ -1,6 +1,6 @@
-#include "crypto/merkle/isal/isal_rs_codec.h"
-#include "crypto/merkle/isal/isal_message.h"
-#include "crypto/merkle/isal/isal_wrapper.h"
+#include "isal_rs_codec.h"
+#include "isal_message.h"
+#include "isal_wrapper.h"
 #include <isa-l/erasure_code.h>
 #include <stdalign.h>
 #include <stdlib.h>

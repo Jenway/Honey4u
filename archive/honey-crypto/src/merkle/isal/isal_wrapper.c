@@ -1,4 +1,4 @@
-#include "crypto/merkle/isal/isal_wrapper.h"
+#include "isal_wrapper.h"
 #include <isa-l/erasure_code.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,4 +116,14 @@ void isal_rs_context_free(struct isal_rs_context* ctx)
         }
         free(ctx);
     }
+}
+
+const unsigned char* isal_rs_context_encode_matrix(const struct isal_rs_context* ctx)
+{
+    return ctx ? ctx->encode_matrix : NULL;
+}
+
+const unsigned char* isal_rs_context_encode_g_tbls(const struct isal_rs_context* ctx)
+{
+    return ctx ? ctx->encode_g_tbls : NULL;
 }

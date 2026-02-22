@@ -1,9 +1,22 @@
 #include "crypto/merkle/ec_code.hpp"
 #include "crypto/merkle/merkle_tree.hpp"
+#include "merkle/isal/merkle_hash.h"
 #include <cstddef>
 #include <cstring>
 
 namespace Honey::Crypto::Merkle {
+
+void MerkleContextDeleter::operator()(merkle_context* p) const noexcept
+{
+    merkle_context_free(p);
+}
+
+Context::Context(int N)
+    : c_ctx(merkle_context_create(N))
+{
+}
+
+Context::~Context() = default;
 
 std::expected<MerkleResult, std::error_code>
 build_and_prove(

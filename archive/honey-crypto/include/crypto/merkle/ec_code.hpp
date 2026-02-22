@@ -1,12 +1,7 @@
 #pragma once
 
-extern "C" {
-#include "crypto/merkle/isal/isal_memory_arena.h"
-#include "crypto/merkle/isal/isal_wrapper.h"
-}
-
+#include "isal_fwd.hpp"
 #include "struct.hpp"
-#include <array>
 #include <cstddef>
 #include <expected>
 #include <memory>
@@ -15,40 +10,29 @@ extern "C" {
 
 namespace Honey::Crypto::Merkle {
 
-constexpr size_t SHA256_BYTES = 32;
-using Hash = std::array<std::byte, SHA256_BYTES>;
-
 struct IsalMemoryArenaDeleter {
-    void operator()(isal_memory_arena* arena) const
-    {
-        if (arena != nullptr)
-            isal_memory_arena_free(arena);
-    }
+    void operator()(isal_memory_arena* arena) const noexcept;
 };
 
 struct IsalRsContextDeleter {
-    void operator()(isal_rs_context* ctx) const
-    {
-        if (ctx != nullptr)
-            isal_rs_context_free(ctx);
-    }
+    void operator()(isal_rs_context* ctx) const noexcept;
 };
 
 struct RsContext {
-    int K;
-    int N;
+    int K {};
+    int N {};
     std::unique_ptr<isal_rs_context, IsalRsContextDeleter> c_context;
     std::unique_ptr<isal_memory_arena, IsalMemoryArenaDeleter> memory_arena;
 
-    [[nodiscard]] const unsigned char* encode_matrix_data() const
-    {
-        return c_context ? c_context->encode_matrix : nullptr;
-    }
+    RsContext() noexcept = default;
+    ~RsContext();
+    RsContext(RsContext&&) noexcept = default;
+    RsContext& operator=(RsContext&&) noexcept = default;
+    RsContext(const RsContext&) = delete;
+    RsContext& operator=(const RsContext&) = delete;
 
-    [[nodiscard]] const unsigned char* encode_g_tbls_data() const
-    {
-        return c_context ? c_context->encode_g_tbls : nullptr;
-    }
+    [[nodiscard]] const unsigned char* encode_matrix_data() const;
+    [[nodiscard]] const unsigned char* encode_g_tbls_data() const;
 
     static std::expected<RsContext, std::error_code> create(int K, int N);
 

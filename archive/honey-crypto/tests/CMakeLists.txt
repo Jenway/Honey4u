@@ -1,4 +1,4 @@
-include(doctest)
+include("${doctest_DIR}/doctest.cmake")
 
 add_executable(honey_crypto_tests
     main.cc

@@ -1,5 +1,5 @@
 #include "crypto/merkle/ec_code.hpp"
-#include "crypto/merkle/isal/isal_rs_codec.h"
+#include "merkle/isal/isal_rs_codec.h"
 #include <cstddef>
 
 namespace Honey::Crypto::Merkle {

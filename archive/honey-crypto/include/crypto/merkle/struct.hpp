@@ -1,74 +1,36 @@
 #pragma once
-#include "crypto/merkle/isal/isal_message.h"
-#include "crypto/merkle/isal/isal_rs_codec.h"
+#include "isal_fwd.hpp"
 #include <cstddef>
 #include <memory>
 #include <span>
 
 namespace Honey::Crypto::Merkle {
 
+// --- MessageBuffer ---
+
 struct IsalMessageBufferDeleter {
-    void operator()(isal_message_buffer* p) const noexcept
-    {
-        if (p != nullptr) {
-            isal_message_buffer_free(p);
-        }
-    }
+    void operator()(isal_message_buffer* p) const noexcept;
 };
 
 struct MessageBuffer {
     std::unique_ptr<isal_message_buffer, IsalMessageBufferDeleter> c_buffer;
 
-    void assign(std::span<const std::byte> input)
-    {
-        auto* buffer = isal_message_buffer_create(input.data(), input.size());
-        c_buffer.reset(buffer);
-    }
+    MessageBuffer() noexcept = default;
+    ~MessageBuffer();
+    MessageBuffer(MessageBuffer&&) noexcept = default;
+    MessageBuffer& operator=(MessageBuffer&&) noexcept = default;
+    MessageBuffer(const MessageBuffer&) = delete;
+    MessageBuffer& operator=(const MessageBuffer&) = delete;
 
-    [[nodiscard]] std::span<const std::byte> payload() const
-    {
-        if (!c_buffer) {
-            return {};
-        }
-
-        const void* ptr = isal_message_buffer_payload(c_buffer.get());
-        if (!ptr) {
-            return {};
-        }
-
-        return std::span<const std::byte> {
-            static_cast<const std::byte*>(ptr),
-            c_buffer->payload_size
-        };
-    }
-
-    [[nodiscard]] std::span<const std::byte> storage() const
-    {
-        if (!c_buffer) {
-            return {};
-        }
-
-        const void* ptr = isal_message_buffer_storage(c_buffer.get());
-        size_t size = isal_message_buffer_storage_size(c_buffer.get());
-
-        if (!ptr || size == 0) {
-            return {};
-        }
-
-        return std::span<const std::byte> {
-            static_cast<const std::byte*>(ptr),
-            size
-        };
-    }
+    void assign(std::span<const std::byte> input);
+    [[nodiscard]] std::span<const std::byte> payload() const;
+    [[nodiscard]] std::span<const std::byte> storage() const;
 };
 
+// --- ShardBlock ---
+
 struct IsalShardBlockDeleter {
-    void operator()(isal_shard_block* p) const noexcept
-    {
-        if (p != nullptr) {
-            isal_shard_block_free(p);
-        }
-    }
+    void operator()(isal_shard_block* p) const noexcept;
 };
 
 struct ShardBlock {
@@ -77,47 +39,19 @@ struct ShardBlock {
     int K = 0;
     int N = 0;
 
-    static ShardBlock from_isal_shard_block(isal_shard_block* c_block)
-    {
-        ShardBlock block;
-        if (c_block == nullptr) {
-            return block;
-        }
+    ShardBlock() noexcept = default;
+    ~ShardBlock();
+    ShardBlock(ShardBlock&&) noexcept = default;
+    ShardBlock& operator=(ShardBlock&&) noexcept = default;
+    ShardBlock(const ShardBlock&) = delete;
+    ShardBlock& operator=(const ShardBlock&) = delete;
 
-        block.c_block.reset(c_block);
-        block.block_size = c_block->block_size;
-        block.K = c_block->K;
-        block.N = c_block->N;
+    static ShardBlock from_isal_shard_block(isal_shard_block* c_block);
 
-        return block;
-    }
-
-    // 预先封装一个总体的 span
-    std::span<unsigned char> full_span()
-    {
-        if (!c_block || (c_block->storage == nullptr)) {
-            return {};
-        }
-        return { static_cast<unsigned char*>(c_block->storage), static_cast<size_t>(N) * block_size };
-    }
-
-    std::span<const unsigned char> full_span() const
-    {
-        if (!c_block || (c_block->storage == nullptr)) {
-            return {};
-        }
-        return { static_cast<const unsigned char*>(c_block->storage), static_cast<size_t>(N) * block_size };
-    }
-
-    std::span<unsigned char> shard(int i)
-    {
-        return full_span().subspan(i * block_size, block_size);
-    }
-
-    [[nodiscard]] std::span<const unsigned char> shard(int i) const
-    {
-        return full_span().subspan(i * block_size, block_size);
-    }
+    std::span<unsigned char> full_span();
+    [[nodiscard]] std::span<const unsigned char> full_span() const;
+    std::span<unsigned char> shard(int i);
+    [[nodiscard]] std::span<const unsigned char> shard(int i) const;
 };
 
 using ShardView = isal_shard_view;
