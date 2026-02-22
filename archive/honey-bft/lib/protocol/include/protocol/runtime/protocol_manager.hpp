@@ -35,7 +35,7 @@ public:
      * @return RBC 输出流
      */
     auto create_rbc(int session_id, int instance_id, std::optional<std::vector<Byte>> input = std::nullopt)
-        -> BlockingQueueStream<std::vector<Byte>>&
+        -> Receiver<std::vector<Byte>>&
     {
         InstanceId id {
             .tag = ProtocolTag::Rbc,
@@ -59,7 +59,7 @@ public:
      * @return BA 决策结果流（输出 0 或 1）
      */
     auto create_ba(int session_id, int instance_id)
-        -> BlockingQueueStream<std::vector<Byte>>&
+        -> Receiver<std::vector<Byte>>&
     {
         InstanceId id {
             .tag = ProtocolTag::Ba,

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "protocol/concepts.hpp"
-#include "service/network/blocking_queue.hpp"
+#include "service/network/channel.hpp"
 #include "service/network/message_bus.hpp"
 #include <exec/async_scope.hpp>
 #include <exec/task.hpp>
@@ -13,9 +13,11 @@
 namespace Honey::BFT::Runtime {
 
 using Byte = std::byte;
-using Network::BlockingQueueStream;
+using Network::make_channel;
 using Network::MessageBus;
 using Network::ProtocolTag;
+using Network::Receiver;
+using Network::Sender;
 
 /**
  * @brief 协议实例唯一标识符
@@ -52,15 +54,15 @@ struct ProtocolOutput {
  * @brief 协议实例容器
  *
  * 每个实例是一个独立的 actor，有自己的：
- * - inbox: 接收消息的队列
- * - task: 运行协议逻辑的 coroutine
- * - output_stream: 输出结果的流
+ * - inbox_sender: 核心的消息接收入口（由 ProtocolRuntime 持有）
+ * - output_receiver: 输出结果流（返回给调用方）
+ * - Task 会被 async_scope 管理，这里不需要存储
  */
 struct ProtocolInstance {
     InstanceId id;
-    BlockingQueueStream<ProtocolMessage> inbox;
-    std::unique_ptr<BlockingQueueStream<std::vector<Byte>>> output_stream;
-    // Task 会被 async_scope 管理，这里不需要存储
+    Sender<ProtocolMessage> inbox_sender; // route_message 用此投递
+    Receiver<std::vector<Byte>> output_receiver; // 调用方通过此读取输出
+    // inbox 的 Receiver 却已移进协程，不再存储于此
 };
 
 /**
@@ -95,20 +97,23 @@ public:
      */
     template <typename Protocol, typename... Args>
     auto spawn_protocol(InstanceId instance_id, Args&&... args)
-        -> BlockingQueueStream<std::vector<Byte>>&
+        -> Receiver<std::vector<Byte>>&
     {
         // 创建实例
         auto& instance = instances_[instance_id];
         instance.id = instance_id;
-        instance.output_stream = std::make_unique<BlockingQueueStream<std::vector<Byte>>>();
 
-        auto& output_ref = *instance.output_stream;
+        auto [inbox_tx, inbox_rx] = make_channel<ProtocolMessage>();
+        auto [output_tx, output_rx] = make_channel<std::vector<Byte>>();
+        instance.inbox_sender = std::move(inbox_tx);
+        instance.output_receiver = std::move(output_rx);
+        auto& output_ref = instance.output_receiver;
 
         // 在 async_scope 中启动协议
         auto task = run_protocol_instance<Protocol>(
             instance_id,
-            instance.inbox,
-            output_ref,
+            std::move(inbox_rx),
+            std::move(output_tx),
             std::forward<Args>(args)...);
 
         scope_.spawn(std::move(task));
@@ -127,7 +132,7 @@ public:
     {
         auto it = instances_.find(instance_id);
         if (it != instances_.end()) {
-            it->second.inbox.push(ProtocolMessage {
+            it->second.inbox_sender.send(ProtocolMessage {
                 .sender_id = sender_id,
                 .payload = std::move(payload) });
         }
@@ -141,7 +146,7 @@ public:
     {
         auto it = instances_.find(instance_id);
         if (it != instances_.end()) {
-            it->second.inbox.close();
+            it->second.inbox_sender.close();
         }
     }
 
@@ -167,8 +172,8 @@ private:
     template <typename Protocol, typename... Args>
     auto run_protocol_instance(
         InstanceId instance_id,
-        BlockingQueueStream<ProtocolMessage>& inbox,
-        BlockingQueueStream<std::vector<Byte>>& output_stream,
+        Receiver<ProtocolMessage> inbox, // takes ownership
+        Sender<std::vector<Byte>> output_sender, // produces output
         Args&&... args) -> exec::task<void>
     {
         try {
@@ -176,8 +181,8 @@ private:
             // 暂时留空，后续实现
             co_return;
         } catch (...) {
-            // 错误处理
-            output_stream.close();
+            // 错误处理：关闭输出后下游 while-loop 会收到 nullopt 并退出
+            output_sender.close();
         }
     }
 
