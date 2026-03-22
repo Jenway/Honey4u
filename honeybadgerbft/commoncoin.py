@@ -6,8 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import honey_native
-
+from crypto import threshsig
 from honeybadgerbft.params import CommonParams
 
 logger = logging.getLogger(__name__)
@@ -27,8 +26,10 @@ class CoinParams(CommonParams):
     def __post_init__(self) -> None:
         """Validate parameters after initialization"""
         super().__post_init__()
-        assert self.PK.k == self.f + 1, f"PK.k={self.PK.k} must equal f+1={self.f + 1}"
-        assert self.PK.l == self.N, f"PK.l={self.PK.l} must equal N={self.N}"
+        assert self.PK.threshold == self.f + 1, (
+            f"PK.threshold={self.PK.threshold} must equal f+1={self.f + 1}"
+        )
+        assert self.PK.players == self.N, f"PK.players={self.PK.players} must equal N={self.N}"
 
 
 class CommonCoinFailureException(Exception):
@@ -59,8 +60,8 @@ async def shared_coin(
     pid = params.pid
     N = params.N
     f = params.f
+    PK = params.PK
     SK = params.SK
-    signer = honey_native.ThresholdSigner(pid + 1, SK.params_bin, SK.share_bin)
 
     received: dict = defaultdict(dict)
     outputQueue: dict = defaultdict(lambda: asyncio.Queue(1))
@@ -70,9 +71,8 @@ async def shared_coin(
             return
 
         sigs = dict(list(received[r].items())[: f + 1])
-        shares = [(idx + 1, sig_bytes) for idx, sig_bytes in sorted(sigs.items())]
         msg = str((sid, r)).encode()
-        sig_combined = signer.combine_shares(shares, msg)
+        sig_combined = threshsig.combine_shares(PK, sigs, msg)
         coin = hash(sig_combined)[0]
         outputQueue[r].put_nowait(coin % 2 if single_bit else coin)
 
@@ -93,7 +93,7 @@ async def shared_coin(
             # each share, knowing evidence available later
             try:
                 if i != pid:
-                    assert signer.verify_share(i + 1, raw_sig, msg)
+                    assert threshsig.verify_share(PK, raw_sig, i, msg)
             except AssertionError:
                 continue
 
@@ -110,7 +110,7 @@ async def shared_coin(
         :returns: a coin value (bit or full byte).
         """
         msg = str((sid, round)).encode()
-        sig = SK.sign(msg)
+        sig = threshsig.sign(SK, msg)
         await broadcast_queue.put(("COIN", round, sig))
         received[round][pid] = sig
         _try_output(round)

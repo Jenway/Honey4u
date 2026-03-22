@@ -50,6 +50,72 @@ def pke_encrypt(pk_bin: bytes, msg: bytes) -> bytes:
     """
     ...
 
+def pke_verify_ciphertext(pk_bin: bytes, ct_bin: bytes) -> bool:
+    """
+    Verify a serialized threshold PKE ciphertext.
+
+    Args:
+        pk_bin: Serialized public key (bytes)
+        ct_bin: Serialized ciphertext (bytes)
+
+    Returns:
+        True if ciphertext is valid under the key, False otherwise
+    """
+    ...
+
+def pke_partial_open(sk_bin: bytes, ct_bin: bytes) -> bytes:
+    """
+    Create a serialized decryption share for a ciphertext.
+
+    Args:
+        sk_bin: Serialized private key share (bytes)
+        ct_bin: Serialized ciphertext (bytes)
+
+    Returns:
+        Serialized decryption share (bytes)
+    """
+    ...
+
+def pke_open(pk_bin: bytes, ct_bin: bytes, shares_bin: list[bytes]) -> bytes:
+    """
+    Combine decryption shares and recover the plaintext.
+
+    Args:
+        pk_bin: Serialized public key (bytes)
+        ct_bin: Serialized ciphertext (bytes)
+        shares_bin: Serialized decryption shares (list[bytes])
+
+    Returns:
+        Decrypted plaintext bytes
+    """
+    ...
+
+def aes_encrypt(key: bytes, plaintext: bytes) -> bytes:
+    """
+    Encrypt data using AES-GCM.
+
+    Args:
+        key: Symmetric key bytes
+        plaintext: Plaintext bytes
+
+    Returns:
+        Ciphertext bytes with nonce and tag included
+    """
+    ...
+
+def aes_decrypt(key: bytes, ciphertext: bytes) -> bytes:
+    """
+    Decrypt data encrypted by aes_encrypt.
+
+    Args:
+        key: Symmetric key bytes
+        ciphertext: Ciphertext bytes
+
+    Returns:
+        Decrypted plaintext bytes
+    """
+    ...
+
 def save_sig_keys(output_dir: str, params_bin: bytes, shares_bin: list[bytes]) -> None:
     """
     Save threshold signature keys to disk.
