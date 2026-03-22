@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-honey-native = { path = "native/rust", editable = true }
+honey-native = { path = "native/rust" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["honeybadgerbft", "crypto"]
