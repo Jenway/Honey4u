@@ -1,19 +1,9 @@
-"""Threshold Public Key Encryption (TPKE).
-
-Thin wrappers around the Rust native module. This module exposes
-plain key-material dataclasses and module-level functions.
-"""
-
-from __future__ import annotations
+"""Threshold Public Key Encryption (TPKE)."""
 
 import sys
 from dataclasses import dataclass
 
-try:
-    import honey_native
-except Exception as err:
-    print(err)
-    exit(-1)
+import honey_native
 
 
 @dataclass
@@ -80,4 +70,5 @@ def decrypt(key: bytes, enc: bytes) -> bytes:
 
 
 # Backward compatibility for callers doing `from crypto.threshenc import tpke`.
+
 tpke = sys.modules[__name__]

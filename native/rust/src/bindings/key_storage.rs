@@ -2,14 +2,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::fs;
 use std::path::Path;
-use std::path::PathBuf;
 
 #[pyfunction]
-pub fn save_sig_keys(
-    output_dir: &str,
-    params_bin: &[u8],
-    shares_bin: Vec<Vec<u8>>,
-) -> PyResult<()> {
+fn save_sig_keys(output_dir: &str, params_bin: &[u8], shares_bin: Vec<Vec<u8>>) -> PyResult<()> {
     let path = Path::new(output_dir);
     if !path.exists() {
         fs::create_dir_all(path)
@@ -29,7 +24,7 @@ pub fn save_sig_keys(
 }
 
 #[pyfunction]
-pub fn save_pke_keys(
+fn save_pke_keys(
     output_dir: &str,
     params_bin: &[u8],
     mpk_bin: &[u8],
@@ -58,7 +53,7 @@ pub fn save_pke_keys(
 }
 
 #[pyfunction]
-pub fn load_sig_keys(key_dir: &str) -> PyResult<(Vec<u8>, Vec<Vec<u8>>)> {
+fn load_sig_keys(key_dir: &str) -> PyResult<(Vec<u8>, Vec<Vec<u8>>)> {
     let path = Path::new(key_dir);
 
     // Load params
@@ -92,7 +87,7 @@ pub fn load_sig_keys(key_dir: &str) -> PyResult<(Vec<u8>, Vec<Vec<u8>>)> {
 }
 
 #[pyfunction]
-pub fn load_pke_keys(key_dir: &str) -> PyResult<(Vec<u8>, Vec<u8>, Vec<Vec<u8>>)> {
+fn load_pke_keys(key_dir: &str) -> PyResult<(Vec<u8>, Vec<u8>, Vec<Vec<u8>>)> {
     let path = Path::new(key_dir);
 
     // Load params
@@ -129,4 +124,12 @@ pub fn load_pke_keys(key_dir: &str) -> PyResult<(Vec<u8>, Vec<u8>, Vec<Vec<u8>>)
     }
 
     Ok((params_bin, mpk_bin, shares_bin))
+}
+
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(save_sig_keys, m)?)?;
+    m.add_function(wrap_pyfunction!(save_pke_keys, m)?)?;
+    m.add_function(wrap_pyfunction!(load_sig_keys, m)?)?;
+    m.add_function(wrap_pyfunction!(load_pke_keys, m)?)?;
+    Ok(())
 }

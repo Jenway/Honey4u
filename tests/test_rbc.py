@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from honeybadgerbft.broadcast_mempool import BroadcastMempool
 from honeybadgerbft.params import CommonParams
 from honeybadgerbft.reliablebroadcast import reliablebroadcast
 
@@ -14,11 +15,15 @@ async def test_rbc_single_leader():
     f = 1
     leader = 0
     sid = "test:rbc:single"
+    round_no = 0
 
     # Create input/output queues for each node
     input_queues = [asyncio.Queue() for _ in range(N)]
     recv_queues = [asyncio.Queue() for _ in range(N)]
     send_queues = [asyncio.Queue() for _ in range(N)]
+
+    # Create shared mempool for all RBC instances
+    mempool = BroadcastMempool(max_size=100, expire_rounds=5)
 
     test_data = b"hello world"
 
@@ -35,6 +40,8 @@ async def test_rbc_single_leader():
                 input_queues[i],  # Only leader uses this
                 recv_queues[i],
                 send_queues,
+                mempool,
+                round_no,
             )
         )
         tasks.append(task)
@@ -61,15 +68,18 @@ async def test_rbc_single_leader():
 
     # Wait for RBC to complete with timeout
     try:
-        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
+        payload_ids = await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
 
-        # Leader should get original data
-        assert results[leader] == test_data
+        # All nodes should get the same payload_id
+        assert len(set(payload_ids)) == 1, "All nodes should have the same payload_id"
 
-        # All other nodes should get the same data
-        for i in range(N):
-            if i != leader:
-                assert results[i] == test_data
+        # Verify data in mempool
+        payload_id = payload_ids[0]
+        broadcast_data = mempool.get(payload_id)
+        assert broadcast_data is not None, "Payload should be in mempool"
+        assert broadcast_data.payload == test_data, "Payload data should match"
+        assert broadcast_data.round_no == round_no, "Round number should match"
+        assert broadcast_data.sender_id == leader, "Sender should be leader"
 
     finally:
         # Clean up routers
@@ -89,11 +99,15 @@ async def test_rbc_different_leaders():
 
     for leader in range(N):
         sid = f"test:rbc:leader{leader}"
+        round_no = 0
 
         # Create queues
         input_queues = [asyncio.Queue() for _ in range(N)]
         recv_queues = [asyncio.Queue() for _ in range(N)]
         send_queues = [asyncio.Queue() for _ in range(N)]
+
+        # Create shared mempool
+        mempool = BroadcastMempool(max_size=100, expire_rounds=5)
 
         test_data = f"data_from_leader_{leader}".encode()
         await input_queues[leader].put(test_data)
@@ -103,7 +117,9 @@ async def test_rbc_different_leaders():
         for i in range(N):
             params = CommonParams(sid=sid, pid=i, N=N, f=f, leader=leader)
             task = asyncio.create_task(
-                reliablebroadcast(params, input_queues[i], recv_queues[i], send_queues)
+                reliablebroadcast(
+                    params, input_queues[i], recv_queues[i], send_queues, mempool, round_no
+                )
             )
             tasks.append(task)
 
@@ -125,11 +141,16 @@ async def test_rbc_different_leaders():
             routers.append(router)
 
         try:
-            results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
+            payload_ids = await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
 
-            # All nodes should get same data from leader
-            for result in results:
-                assert result == test_data
+            # All nodes should get same payload_id from leader
+            assert len(set(payload_ids)) == 1, "All nodes should have the same payload_id"
+
+            # Verify data in mempool
+            payload_id = payload_ids[0]
+            broadcast_data = mempool.get(payload_id)
+            assert broadcast_data is not None, "Payload should be in mempool"
+            assert broadcast_data.payload == test_data, "Payload data should match"
 
         finally:
             for router in routers:
@@ -147,10 +168,14 @@ async def test_rbc_json_data():
     f = 1
     leader = 0
     sid = "test:rbc:json"
+    round_no = 0
 
     input_queues = [asyncio.Queue() for _ in range(N)]
     recv_queues = [asyncio.Queue() for _ in range(N)]
     send_queues = [asyncio.Queue() for _ in range(N)]
+
+    # Create shared mempool
+    mempool = BroadcastMempool(max_size=100, expire_rounds=5)
 
     # Test with JSON data
     test_obj = {"tx": ["tx1", "tx2", "tx3"], "round": 0}
@@ -162,7 +187,9 @@ async def test_rbc_json_data():
     for i in range(N):
         params = CommonParams(sid=sid, pid=i, N=N, f=f, leader=leader)
         task = asyncio.create_task(
-            reliablebroadcast(params, input_queues[i], recv_queues[i], send_queues)
+            reliablebroadcast(
+                params, input_queues[i], recv_queues[i], send_queues, mempool, round_no
+            )
         )
         tasks.append(task)
 
@@ -180,13 +207,19 @@ async def test_rbc_json_data():
     routers = [asyncio.create_task(msg_router(i)) for i in range(N)]
 
     try:
-        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
+        payload_ids = await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
 
-        # Verify all nodes got same JSON
-        for result in results:
-            assert result == test_data
-            received_obj = json.loads(result.decode())
-            assert received_obj == test_obj
+        # Verify all nodes got same payload_id
+        assert len(set(payload_ids)) == 1, "All nodes should have the same payload_id"
+
+        # Verify data in mempool
+        payload_id = payload_ids[0]
+        broadcast_data = mempool.get(payload_id)
+        assert broadcast_data is not None, "Payload should be in mempool"
+        assert broadcast_data.payload == test_data, "Payload data should match"
+
+        received_obj = json.loads(broadcast_data.payload.decode())
+        assert received_obj == test_obj, "JSON object should match"
 
     finally:
         for router in routers:
