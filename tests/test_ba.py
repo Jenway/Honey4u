@@ -1,227 +1,165 @@
-"""Integration tests for Binary Agreement protocol"""
+"""Integration tests for Binary Agreement protocol using real SharedCoin"""
 
 import asyncio
 
 import pytest
 
 from honeybadgerbft.binaryagreement import BAParams, binaryagreement
+from honeybadgerbft.commoncoin import CoinParams, SharedCoin
 
 
-class MockCoin:
-    """Mock coin function for testing BA"""
+@pytest.fixture
+def ba_network(signing_keys):
+    """
+    Creates a completely wired BA network with real SharedCoin instances.
+    Returns a factory function so tests can inject TaskGroup and inputs.
+    """
 
-    def __init__(self, values: dict = None):
-        """
-        :param values: dict mapping round -> coin value (0 or 1)
-                      If not provided, alternates between 0 and 1
-        """
-        self.values = values or {}
-        self.round_counter = {}
+    def _make(tg: asyncio.TaskGroup, inputs: list[int], N=4, f=1, sid="test_ba"):
+        # 依赖于 conftest.py (或本模块) 提供的真实门限签名密钥 fixture
+        pk, sks = signing_keys
 
-    async def __call__(self, round_num: int) -> int:
-        """Get coin value for a round"""
-        if round_num in self.values:
-            return self.values[round_num]
-        # Default: alternate between 0 and 1
-        return round_num % 2
+        # 1. BA 协议专属队列
+        input_qs = [asyncio.Queue(1) for _ in range(N)]
+        decide_qs = [asyncio.Queue(1) for _ in range(N)]
+        ba_recv_qs = [asyncio.Queue() for _ in range(N)]
+        ba_send_qs = [asyncio.Queue() for _ in range(N)]
+
+        # 2. Coin 协议专属队列
+        coin_recv_qs = [asyncio.Queue() for _ in range(N)]
+        coin_send_qs = [asyncio.Queue() for _ in range(N)]
+
+        # 注入初始值
+        for i, val in enumerate(inputs):
+            input_qs[i].put_nowait(val)
+
+        # 初始化真实的 SharedCoin
+        coins = [
+            SharedCoin(CoinParams(sid=sid, pid=i, N=N, f=f, leader=0, PK=pk, SK=sks[i]))
+            for i in range(N)
+        ]
+
+        # --- 路由器设计 ---
+
+        # BA 路由器: 处理点对点(P2P)的消息分发
+        async def ba_router(sender_id):
+            try:
+                while True:
+                    # BA 协议内部发送的格式是 (recipient, msg)
+                    recipient, msg = await ba_send_qs[sender_id].get()
+                    await ba_recv_qs[recipient].put((sender_id, msg))
+            except asyncio.CancelledError:
+                pass
+
+        # Coin 路由器: 处理硬币消息的全网广播(Broadcast)
+        async def coin_router(sender_id):
+            try:
+                while True:
+                    # Coin 协议发送的直接是 msg 载荷，需要广播给所有人
+                    msg = await coin_send_qs[sender_id].get()
+                    for recipient in range(N):
+                        await coin_recv_qs[recipient].put((sender_id, msg))
+            except asyncio.CancelledError:
+                pass
+
+        # 在 TaskGroup 中注册并启动所有的后台任务
+        routers = []
+        for i in range(N):
+            # 启动真实的硬币接收监听循环
+            coins[i].start(tg, coin_recv_qs[i])
+            # 启动双路路由
+            routers.append(tg.create_task(ba_router(i)))
+            routers.append(tg.create_task(coin_router(i)))
+
+        # 启动核心 BA 任务
+        ba_tasks = []
+        for i in range(N):
+            params = BAParams(sid=sid, pid=i, N=N, f=f, leader=0)
+            task = tg.create_task(
+                binaryagreement(
+                    params,
+                    coins[i],
+                    coin_send_qs[i],
+                    input_qs[i],
+                    decide_qs[i],
+                    ba_recv_qs[i],
+                    ba_send_qs[i],
+                )
+            )
+            ba_tasks.append(task)
+
+        return N, decide_qs, coins, routers, ba_tasks
+
+    return _make
 
 
 @pytest.mark.asyncio
-async def test_ba_agree_on_zero():
+async def test_ba_agree_on_zero(ba_network):
     """Test Binary Agreement when all nodes input 0"""
-    N = 4
-    f = 1
-    sid = "test:ba:zero"
-
-    # Create queues for each node
-    input_queues = [asyncio.Queue(1) for _ in range(N)]
-    decide_queues = [asyncio.Queue(1) for _ in range(N)]
-    recv_queues = [asyncio.Queue() for _ in range(N)]
-    send_queues = [asyncio.Queue() for _ in range(N)]
-
-    # All nodes input 0
-    for i in range(N):
-        await input_queues[i].put(0)
-
-    # Create mock coin for this test
-    coin = MockCoin({0: 0})  # Round 0 returns 0
-
-    # Create BA tasks
-    ba_tasks = []
-    for i in range(N):
-        params = BAParams(sid=sid, pid=i, N=N, f=f, leader=0)
-        task = asyncio.create_task(
-            binaryagreement(
-                params,
-                coin,  # Coin function
-                input_queues[i],
-                decide_queues[i],
-                recv_queues[i],
-                send_queues[i],
-            )
+    async with asyncio.TaskGroup() as tg:
+        N, decide_qs, coins, routers, ba_tasks = ba_network(
+            tg, inputs=[0, 0, 0, 0], sid="test_ba_zero"
         )
-        ba_tasks.append(task)
 
-    # Message router
-    async def msg_router(sender_idx: int):
-        while True:
-            try:
-                try:
-                    recipient, message = send_queues[sender_idx].get_nowait()
-                    await recv_queues[recipient].put((sender_idx, message))
-                except asyncio.QueueEmpty:
-                    await asyncio.sleep(0.001)
-            except asyncio.CancelledError:
-                break
-
-    routers = [asyncio.create_task(msg_router(i)) for i in range(N)]
-
-    try:
-        # Run BA with timeout
-        await asyncio.wait_for(asyncio.gather(*ba_tasks), timeout=10.0)
-
-        # All nodes should have decided 0
-        for i in range(N):
-            result = decide_queues[i].get_nowait()
-            assert result == 0, f"Node {i} decided {result}, expected 0"
-
-    finally:
-        for router in routers:
-            router.cancel()
-            try:
-                await router
-            except asyncio.CancelledError:
-                pass
+        try:
+            # 真实加密算法会有开销，给10秒的超时足以满足多次轮次的运算
+            results = await asyncio.wait_for(
+                asyncio.gather(*(dq.get() for dq in decide_qs)), timeout=10.0
+            )
+            assert all(r == 0 for r in results), f"Nodes disagreed or decided wrong: {results}"
+        finally:
+            # 极其关键：退出前取消所有无限循环的任务，防止 TaskGroup 卡死
+            for r in routers:
+                r.cancel()
+            for c in coins:
+                c.stop()
+            for t in ba_tasks:
+                t.cancel()
 
 
 @pytest.mark.asyncio
-async def test_ba_agree_on_one():
+async def test_ba_agree_on_one(ba_network):
     """Test Binary Agreement when all nodes input 1"""
-    N = 4
-    f = 1
-    sid = "test:ba:one"
-
-    input_queues = [asyncio.Queue(1) for _ in range(N)]
-    decide_queues = [asyncio.Queue(1) for _ in range(N)]
-    recv_queues = [asyncio.Queue() for _ in range(N)]
-    send_queues = [asyncio.Queue() for _ in range(N)]
-
-    # All nodes input 1
-    for i in range(N):
-        await input_queues[i].put(1)
-
-    coin = MockCoin({0: 1})  # Round 0 returns 1
-
-    ba_tasks = []
-    for i in range(N):
-        params = BAParams(sid=sid, pid=i, N=N, f=f, leader=0)
-        task = asyncio.create_task(
-            binaryagreement(
-                params,
-                coin,
-                input_queues[i],
-                decide_queues[i],
-                recv_queues[i],
-                send_queues[i],
-            )
+    async with asyncio.TaskGroup() as tg:
+        N, decide_qs, coins, routers, ba_tasks = ba_network(
+            tg, inputs=[1, 1, 1, 1], sid="test_ba_one"
         )
-        ba_tasks.append(task)
 
-    async def msg_router(sender_idx: int):
-        while True:
-            try:
-                try:
-                    recipient, message = send_queues[sender_idx].get_nowait()
-                    await recv_queues[recipient].put((sender_idx, message))
-                except asyncio.QueueEmpty:
-                    await asyncio.sleep(0.001)
-            except asyncio.CancelledError:
-                break
-
-    routers = [asyncio.create_task(msg_router(i)) for i in range(N)]
-
-    try:
-        await asyncio.wait_for(asyncio.gather(*ba_tasks), timeout=10.0)
-
-        for i in range(N):
-            result = decide_queues[i].get_nowait()
-            assert result == 1, f"Node {i} decided {result}, expected 1"
-
-    finally:
-        for router in routers:
-            router.cancel()
-            try:
-                await router
-            except asyncio.CancelledError:
-                pass
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*(dq.get() for dq in decide_qs)), timeout=10.0
+            )
+            assert all(r == 1 for r in results), f"Nodes disagreed or decided wrong: {results}"
+        finally:
+            for r in routers:
+                r.cancel()
+            for c in coins:
+                c.stop()
+            for t in ba_tasks:
+                t.cancel()
 
 
 @pytest.mark.asyncio
-async def test_ba_mixed_input():
+async def test_ba_mixed_input(ba_network):
     """Test Binary Agreement with mixed input (some 0s, some 1s)"""
-    N = 4
-    f = 1
-    sid = "test:ba:mixed"
-
-    input_queues = [asyncio.Queue(1) for _ in range(N)]
-    decide_queues = [asyncio.Queue(1) for _ in range(N)]
-    recv_queues = [asyncio.Queue() for _ in range(N)]
-    send_queues = [asyncio.Queue() for _ in range(N)]
-
-    # Some nodes input 0, others input 1
-    # With N=4, f=1: we need at least 3 nodes to have same input
-    # Let's give 3 nodes 0, 1 node 1
-    for i in range(3):
-        await input_queues[i].put(0)
-    await input_queues[3].put(1)
-
-    # Coin should be 0 to help consensus
-    coin = MockCoin({0: 0})
-
-    ba_tasks = []
-    for i in range(N):
-        params = BAParams(sid=sid, pid=i, N=N, f=f, leader=0)
-        task = asyncio.create_task(
-            binaryagreement(
-                params,
-                coin,
-                input_queues[i],
-                decide_queues[i],
-                recv_queues[i],
-                send_queues[i],
-            )
+    async with asyncio.TaskGroup() as tg:
+        # 3个0, 1个1。在 N=4, f=1 环境下由于有 2f+1=3 个相同的初始值，
+        # 会在内部强行达成一致，无论硬币投出什么。
+        N, decide_qs, coins, routers, ba_tasks = ba_network(
+            tg, inputs=[0, 0, 0, 1], sid="test_ba_mixed"
         )
-        ba_tasks.append(task)
 
-    async def msg_router(sender_idx: int):
-        while True:
-            try:
-                try:
-                    recipient, message = send_queues[sender_idx].get_nowait()
-                    await recv_queues[recipient].put((sender_idx, message))
-                except asyncio.QueueEmpty:
-                    await asyncio.sleep(0.001)
-            except asyncio.CancelledError:
-                break
-
-    routers = [asyncio.create_task(msg_router(i)) for i in range(N)]
-
-    try:
-        await asyncio.wait_for(asyncio.gather(*ba_tasks), timeout=10.0)
-
-        # All nodes should decide the same value
-        decisions = []
-        for i in range(N):
-            result = decide_queues[i].get_nowait()
-            decisions.append(result)
-
-        # All should be the same
-        assert all(d == decisions[0] for d in decisions), f"Nodes didn't agree: {decisions}"
-
-    finally:
-        for router in routers:
-            router.cancel()
-            try:
-                await router
-            except asyncio.CancelledError:
-                pass
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*(dq.get() for dq in decide_qs)), timeout=10.0
+            )
+            # 由于输入了不同的值，我们只要确保网络中的诚实节点**达成了一致的结果**即可
+            assert len(set(results)) == 1, f"Nodes disagreed: {results}"
+            assert results[0] in (0, 1), f"Unexpected value decided: {results[0]}"
+        finally:
+            for r in routers:
+                r.cancel()
+            for c in coins:
+                c.stop()
+            for t in ba_tasks:
+                t.cancel()
