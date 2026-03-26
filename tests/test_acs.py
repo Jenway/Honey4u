@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from honeybadgerbft.commonsubset import CSParams, commonsubset
+from honey.acs.bkr93 import CSParams, commonsubset
 
 
 @pytest.mark.asyncio
@@ -43,12 +43,9 @@ async def test_acs_partial_participation():
     aba_input_queues = [asyncio.Queue(1) for _ in range(N)]
     aba_output_queues = [asyncio.Queue() for _ in range(N)]
 
-    # Only N-f nodes provide RBC output
-    # (f nodes are faulty and don't broadcast)
     for i in range(N - f):
         await rbc_queues[i].put(f"data_from_node_{i}".encode())
 
-    # Simulate BA deciding first N-f instances and rejecting the rest.
     for j in range(N):
         await aba_output_queues[j].put(1 if j < N - f else 0)
 
@@ -75,10 +72,8 @@ async def test_acs_multiple_nodes_byzantine():
     aba_input_queues = [asyncio.Queue(1) for _ in range(N)]
     aba_output_queues = [asyncio.Queue() for _ in range(N)]
 
-    # Node 0 is honest
     await rbc_queues[0].put(b"honest_data")
 
-    # Other nodes provide data
     for i in range(1, N):
         await rbc_queues[i].put(f"data_from_node_{i}".encode())
 

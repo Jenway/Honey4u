@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from honeybadgerbft.commoncoin import CoinParams, SharedCoin
+from honey.subprotocols.common_coin import CoinParams, SharedCoin
 
 
 @pytest.fixture

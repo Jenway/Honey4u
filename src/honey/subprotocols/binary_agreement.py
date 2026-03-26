@@ -4,8 +4,10 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from honeybadgerbft.commoncoin import SharedCoin
-from honeybadgerbft.params import CommonParams
+from honey.subprotocols.common_coin import SharedCoin
+from honey.support.messages import BaAux, BaConf, BaEst
+from honey.support.params import CommonParams
+from honey.support.telemetry import METRICS
 
 
 def _canonical_conf_value(values: set[int]) -> tuple[int, ...]:
@@ -68,17 +70,21 @@ async def binaryagreement(
         try:
             while True:
                 sender, msg = await receive_queue.get()
-                tag, r, v = msg
-                if tag == "EST":
+                if isinstance(msg, BaEst):
+                    r = msg.epoch
+                    v = msg.value
                     if sender not in est_values[r][v]:
                         est_values[r][v].add(sender)
                     if len(est_values[r][v]) >= 2 * f + 1 and v not in bin_values[r]:
                         bin_values[r].add(v)
-                elif tag == "AUX":
+                elif isinstance(msg, BaAux):
+                    r = msg.epoch
+                    v = msg.value
                     if sender not in aux_values[r][v]:
                         aux_values[r][v].add(sender)
-                elif tag == "CONF":
-                    # handle_conf(sender, msg)
+                elif isinstance(msg, BaConf):
+                    r = msg.epoch
+                    v = msg.values
                     if sender not in conf_values[r][v]:
                         conf_values[r][v].add(sender)
                 else:
@@ -92,13 +98,13 @@ async def binaryagreement(
     async def est_phase(r: int, est: int) -> None:
         if not est_sent[r][est]:
             est_sent[r][est] = True
-            await broadcast(("EST", r, est))
+            await broadcast(BaEst(epoch=r, value=est))
 
         await wait_for_condition(lambda: bool(bin_values[r]))
 
     async def aux_phase(r: int) -> set[int]:
         w = next(iter(bin_values[r]))
-        await broadcast(("AUX", r, w))
+        await broadcast(BaAux(epoch=r, value=w))
 
         def aux_condition() -> bool:
             if 1 in bin_values[r] and len(aux_values[r][1]) >= N - f:
@@ -121,7 +127,7 @@ async def binaryagreement(
         conf_key = _canonical_conf_value(values)
         if not conf_sent[r][conf_key]:
             conf_sent[r][conf_key] = True
-            await broadcast(("CONF", r, conf_key))
+            await broadcast(BaConf(epoch=r, values=conf_key))
 
         def conf_condition() -> bool:
             if 1 in bin_values[r] and len(conf_values[r][(1,)]) >= N - f:
@@ -167,6 +173,7 @@ async def binaryagreement(
                         if already_decided is None:
                             already_decided = v
                             await decide_queue.put(v)
+                            METRICS.increment("ba.decision", node=pid, value=v)
                             logger_adapter.info(f"Decision reached: {v} at round {r}")
                         elif already_decided == v:
                             return
