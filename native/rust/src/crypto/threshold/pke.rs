@@ -8,8 +8,6 @@ use crate::crypto::bls::{
     fr::Fr, g1::G1, g2::G2, interpolate::interpolate_at_zero, pairing::verify_pairing_equality,
 };
 
-pub use super::keygen::generate_pke_keys as generate_keys;
-
 /// Encrypt a 32-byte message under the master public key.
 pub fn seal(mpk: &G1, msg: [u8; 32]) -> Ciphertext {
     let r = Fr::random();

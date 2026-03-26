@@ -4,23 +4,29 @@ use pyo3::prelude::*;
 use crate::crypto;
 
 #[pyfunction]
-fn aes_encrypt(key_bin: &[u8], plaintext: &[u8]) -> PyResult<Vec<u8>> {
+fn aes_encrypt(py: Python<'_>, key_bin: &[u8], plaintext: &[u8]) -> PyResult<Vec<u8>> {
     if key_bin.len() != 32 {
         return Err(PyValueError::new_err("AES key must be 32 bytes"));
     }
     let mut key = [0u8; 32];
     key.copy_from_slice(key_bin);
-    crypto::aes::encrypt(&key, plaintext).map_err(|e| PyValueError::new_err(e.to_string()))
+    let plaintext = plaintext.to_vec();
+    py.allow_threads(move || {
+        crypto::aes::encrypt(&key, &plaintext).map_err(|e| PyValueError::new_err(e.to_string()))
+    })
 }
 
 #[pyfunction]
-fn aes_decrypt(key_bin: &[u8], ciphertext: &[u8]) -> PyResult<Vec<u8>> {
+fn aes_decrypt(py: Python<'_>, key_bin: &[u8], ciphertext: &[u8]) -> PyResult<Vec<u8>> {
     if key_bin.len() != 32 {
         return Err(PyValueError::new_err("AES key must be 32 bytes"));
     }
     let mut key = [0u8; 32];
     key.copy_from_slice(key_bin);
-    crypto::aes::decrypt(&key, ciphertext).map_err(|e| PyValueError::new_err(e.to_string()))
+    let ciphertext = ciphertext.to_vec();
+    py.allow_threads(move || {
+        crypto::aes::decrypt(&key, &ciphertext).map_err(|e| PyValueError::new_err(e.to_string()))
+    })
 }
 
 // Binding definitions

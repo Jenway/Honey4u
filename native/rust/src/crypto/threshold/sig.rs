@@ -70,8 +70,6 @@ pub fn combine_with_verify(
     Ok(combined)
 }
 
-pub use super::keygen::generate_sig_keys as generate_keys;
-
 #[cfg(test)]
 mod tests {
     use super::super::keygen::{SigKeySet, generate_sig_keys};
