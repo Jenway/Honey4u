@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass
 
-from crypto import threshsig
-from honeybadgerbft.params import CommonParams
+from honey.crypto import sig
+from honey.support.messages import CoinShareMessage
+from honey.support.params import CommonParams
+from honey.support.telemetry import METRICS
 
 
 def sha256_hash(x: bytes) -> bytes:
@@ -13,8 +17,8 @@ def sha256_hash(x: bytes) -> bytes:
 
 @dataclass
 class CoinParams(CommonParams):
-    PK: threshsig.SigPublicMaterial
-    SK: threshsig.SigPrivateMaterial
+    PK: sig.PublicKey
+    SK: sig.PrivateShare
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -25,10 +29,6 @@ class CoinParams(CommonParams):
 
 
 class SharedCoin:
-    """
-    Shared coin protocol based on threshold signatures.
-    """
-
     def __init__(self, params: CoinParams, single_bit: bool = True) -> None:
         self.sid = params.sid
         self.pid = params.pid
@@ -42,7 +42,7 @@ class SharedCoin:
         self._output: dict[int, asyncio.Future] = {}
         self._purged_rounds: set[int] = set()
 
-        self.logger = logging.getLogger(f"honeybadgerbft.coin.node{self.pid}")
+        self.logger = logging.getLogger(f"honey.coin.node{self.pid}")
         self._bg_task: asyncio.Task | None = None
 
     def start(self, task_group: asyncio.TaskGroup, receive_queue: asyncio.Queue) -> None:
@@ -61,13 +61,13 @@ class SharedCoin:
         try:
             while True:
                 sender_id, payload = await receive_queue.get()
-                tag, round_id, raw_sig = payload
-
-                if tag != "COIN":
+                if not isinstance(payload, CoinShareMessage):
                     continue
+                round_id = payload.round_id
+                raw_sig = payload.signature
 
                 if round_id in self._purged_rounds:
-                    continue  # 直接忽略已完成轮次的迟到消息
+                    continue
 
                 if not (0 <= sender_id < self.N):
                     self.logger.warning(f"Invalid sender ID: {sender_id}")
@@ -77,57 +77,49 @@ class SharedCoin:
 
                 if sender_id != self.pid:
                     try:
-                        if not threshsig.verify_share(self.PK, raw_sig, sender_id, msg):
+                        if not self.PK.verify_share(sender_id, raw_sig, msg):
                             self.logger.warning(
                                 f"Invalid sig from {sender_id} for round {round_id}"
                             )
                             continue
-                    except Exception as e:
-                        self.logger.error(f"Crypto error from {sender_id}: {e}")
+                    except Exception as exc:
+                        self.logger.error(f"Crypto error from {sender_id}: {exc}")
                         continue
 
-                if round_id not in self._received:
-                    self._received[round_id] = {}
-                self._received[round_id][sender_id] = raw_sig
+                self._received.setdefault(round_id, {})[sender_id] = raw_sig
                 self._try_output(round_id)
 
         except asyncio.CancelledError:
-            # 捕获 TaskGroup 发出的 cancel 信号，静默退出循环
             pass
 
     def _try_output(self, round_id: int) -> None:
-        """检查是否集齐 f+1 个签名并尝试输出硬币"""
         fut = self._get_future(round_id)
-        # 如果 Future 已经被赋值（已完成本轮），或者分片不足，则跳过
         if fut.done() or len(self._received.get(round_id, {})) < self.f + 1:
             return
 
-        sigs = dict(list(self._received[round_id].items())[: self.f + 1])
         msg = f"{self.sid}:{round_id}".encode()
-
         try:
-            sig_combined = threshsig.combine_shares(self.PK, sigs, msg)
+            sig_combined = sig.combine_shares(
+                self.PK,
+                dict(list(self._received[round_id].items())[: self.f + 1]),
+                msg,
+            )
             coin = sha256_hash(sig_combined)[0]
-            coin_value = coin % 2 if self.single_bit else coin
-            fut.set_result(coin_value)  # 唤醒 get_coin 等待者
-        except Exception as e:
-            self.logger.error(f"Failed to combine shares for round {round_id}: {e}")
+            fut.set_result(coin % 2 if self.single_bit else coin)
+            METRICS.increment("coin.output", node=self.pid, round=round_id)
+        except Exception as exc:
+            self.logger.error(f"Failed to combine shares for round {round_id}: {exc}")
 
     async def get_coin(self, round_id: int, broadcast_queue: asyncio.Queue) -> int:
-        """对外接口：生成本节点分片并广播，等待凑齐返回共同硬币"""
         if round_id in self._purged_rounds:
             raise ValueError(f"Round {round_id} has already been purged.")
 
         msg = f"{self.sid}:{round_id}".encode()
-        sig = threshsig.sign(self.SK, msg)
+        sig_share = self.SK.sign(msg)
+        await broadcast_queue.put(CoinShareMessage(round_id=round_id, signature=sig_share))
 
-        await broadcast_queue.put(("COIN", round_id, sig))
-
-        if round_id not in self._received:
-            self._received[round_id] = {}
-        self._received[round_id][self.pid] = sig
+        self._received.setdefault(round_id, {})[self.pid] = sig_share
         self._try_output(round_id)
-
         return await self._get_future(round_id)
 
     def purge_round(self, round_id: int) -> None:

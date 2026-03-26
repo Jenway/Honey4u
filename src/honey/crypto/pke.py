@@ -44,3 +44,7 @@ def decrypt(key: bytes, enc: bytes) -> bytes:
     if len(key) != 32:
         raise ValueError("AES key must be 32 bytes")
     return honey_native.aes_decrypt(key, enc)
+
+
+def seal_encrypted_batch(pk: PublicKey, payload: bytes) -> bytes:
+    return honey_native.seal_encrypted_batch(pk, payload)
