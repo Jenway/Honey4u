@@ -3,3 +3,15 @@ __pycache__
 .vscode
 .pytest_cache
 .ruff_cache
+
+# reference
+refer/
+refer_dag/
+
+
+# benchmark stuffs
+perf*.txt
+bench*.svg
+bench*.json
+
+.tmp*

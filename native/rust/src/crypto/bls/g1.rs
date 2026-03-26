@@ -4,8 +4,8 @@
 use super::fr::Fr;
 use blst::blst_scalar;
 use blst::{
-    blst_hash_to_g1, blst_p1, blst_p1_add_or_double, blst_p1_affine, blst_p1_generator,
-    blst_p1_is_equal, blst_p1_mult, blst_p1_to_affine, blst_scalar_from_fr,
+    blst_hash_to_g1, blst_p1, blst_p1_affine, blst_p1_generator, blst_p1_is_equal, blst_p1_mult,
+    blst_p1_to_affine, blst_scalar_from_fr,
 };
 // ── G1 ──────────────────────────────────────────────────────────────────────
 
@@ -28,13 +28,6 @@ impl G1 {
             G1 {
                 inner: std::mem::zeroed(),
             }
-        }
-    }
-
-    #[inline]
-    pub fn add_assign(&mut self, other: &G1) {
-        unsafe {
-            blst_p1_add_or_double(&mut self.inner, &self.inner, &other.inner);
         }
     }
 

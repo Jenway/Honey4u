@@ -1,7 +1,7 @@
 use super::fr::Fr;
 use blst::{
-    blst_hash_to_g2, blst_p2, blst_p2_add_or_double, blst_p2_affine, blst_p2_generator,
-    blst_p2_is_equal, blst_p2_mult, blst_p2_to_affine, blst_scalar, blst_scalar_from_fr,
+    blst_hash_to_g2, blst_p2, blst_p2_affine, blst_p2_generator, blst_p2_is_equal, blst_p2_mult,
+    blst_p2_to_affine, blst_scalar, blst_scalar_from_fr,
 };
 /// BLS12-381 field/group wrappers
 ///
@@ -34,21 +34,6 @@ impl G2 {
             blst_p2_mult(&mut self.inner, &self.inner, scalar.b.as_ptr(), FR_BITS);
         }
         self
-    }
-
-    pub fn identity() -> Self {
-        unsafe {
-            G2 {
-                inner: std::mem::zeroed(),
-            }
-        }
-    }
-
-    #[inline]
-    pub fn add_assign(&mut self, other: &G2) {
-        unsafe {
-            blst_p2_add_or_double(&mut self.inner, &self.inner, &other.inner);
-        }
     }
 
     pub fn hash_to_g2(msg: &[u8], dst: &[u8]) -> Self {
