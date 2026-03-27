@@ -22,7 +22,13 @@ impl SigPublicKey {
         self.inner.threshold
     }
 
-    fn verify_share(&self, player_id: usize, sig_bytes: &[u8], msg: &[u8]) -> PyResult<bool> {
+    fn verify_share(
+        &self,
+        py: Python<'_>,
+        player_id: usize,
+        sig_bytes: &[u8],
+        msg: &[u8],
+    ) -> PyResult<bool> {
         let value = match g1_from_bytes(sig_bytes) {
             Ok(value) => value,
             Err(_) => return Ok(false),
@@ -31,10 +37,29 @@ impl SigPublicKey {
             player_id: player_id + 1,
             value,
         };
-        Ok(crypto::threshold::sig::verify_share(&self.inner, &partial_sig, msg).is_ok())
+        let msg = msg.to_vec();
+        py.allow_threads(move || {
+            Ok(crypto::threshold::sig::verify_share(&self.inner, &partial_sig, &msg).is_ok())
+        })
     }
 
-    fn combine_shares(&self, shares: Vec<(usize, Vec<u8>)>, msg: &[u8]) -> PyResult<Vec<u8>> {
+    fn verify_combined(&self, py: Python<'_>, sig_bytes: &[u8], msg: &[u8]) -> PyResult<bool> {
+        let sig = match g1_from_bytes(sig_bytes) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+        let msg = msg.to_vec();
+        py.allow_threads(move || {
+            Ok(crypto::threshold::sig::verify_combined(&self.inner, &sig, &msg).is_ok())
+        })
+    }
+
+    fn combine_shares(
+        &self,
+        py: Python<'_>,
+        shares: Vec<(usize, Vec<u8>)>,
+        msg: &[u8],
+    ) -> PyResult<Vec<u8>> {
         let mut partial_sigs = Vec::with_capacity(shares.len());
         for (player_id, sig_bytes) in shares {
             let value =
@@ -45,20 +70,27 @@ impl SigPublicKey {
             });
         }
 
-        match crypto::threshold::sig::combine_with_verify(&self.inner, msg, &partial_sigs) {
-            Ok(combined_sig) => Ok(g1_to_bytes(&combined_sig)),
-            Err(e) => Err(e.into()),
-        }
+        let msg = msg.to_vec();
+        py.allow_threads(move || {
+            match crypto::threshold::sig::combine_with_verify(&self.inner, &msg, &partial_sigs) {
+                Ok(combined_sig) => Ok(g1_to_bytes(&combined_sig)),
+                Err(e) => Err(e.into()),
+            }
+        })
     }
 
-    fn to_bytes(&self) -> PyResult<Vec<u8>> {
-        bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+    fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
+        py.allow_threads(move || {
+            bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+        })
     }
 
     #[staticmethod]
-    fn from_bytes(b: &[u8]) -> PyResult<Self> {
-        let inner: crypto::threshold::keygen::SigPublicParams =
-            bincode::deserialize(b).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
+        let payload = b.to_vec();
+        let inner: crypto::threshold::keygen::SigPublicParams = py.allow_threads(move || {
+            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))
+        })?;
         Ok(Self { inner })
     }
 }
@@ -76,27 +108,40 @@ impl SigPrivateShare {
         self.inner.player_id - 1
     }
 
-    fn sign(&self, msg: &[u8]) -> PyResult<Vec<u8>> {
-        let partial = crypto::threshold::sig::sign(&self.inner, msg);
-        Ok(g1_to_bytes(&partial.value))
+    fn sign(&self, py: Python<'_>, msg: &[u8]) -> PyResult<Vec<u8>> {
+        let msg = msg.to_vec();
+        py.allow_threads(move || {
+            let partial = crypto::threshold::sig::sign(&self.inner, &msg);
+            Ok(g1_to_bytes(&partial.value))
+        })
     }
 
-    fn to_bytes(&self) -> PyResult<Vec<u8>> {
-        bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+    fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
+        py.allow_threads(move || {
+            bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+        })
     }
 
     #[staticmethod]
-    fn from_bytes(b: &[u8]) -> PyResult<Self> {
-        let inner: crypto::threshold::keygen::SigPrivateKeyShare =
-            bincode::deserialize(b).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
+        let payload = b.to_vec();
+        let inner: crypto::threshold::keygen::SigPrivateKeyShare = py.allow_threads(move || {
+            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))
+        })?;
         Ok(Self { inner })
     }
 }
 
 #[pyfunction]
-fn sig_generate(players: usize, threshold: usize) -> PyResult<(SigPublicKey, Vec<SigPrivateShare>)> {
-    let keyset = crypto::threshold::keygen::generate_sig_keys(players, threshold)
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+fn sig_generate(
+    py: Python<'_>,
+    players: usize,
+    threshold: usize,
+) -> PyResult<(SigPublicKey, Vec<SigPrivateShare>)> {
+    let keyset = py.allow_threads(move || {
+        crypto::threshold::keygen::generate_sig_keys(players, threshold)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    })?;
 
     let public_key = SigPublicKey {
         inner: keyset.public_params,

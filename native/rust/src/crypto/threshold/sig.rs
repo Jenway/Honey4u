@@ -38,6 +38,14 @@ pub fn verify_share(
     Ok(())
 }
 
+/// Verify a combined threshold signature against the master verification key.
+pub fn verify_combined(params: &SigPublicParams, sig: &G1, msg: &[u8]) -> Result<(), CryptoError> {
+    if !core_verify_pk_in_g2(sig, &params.master_public_key, msg, DST_SIG) {
+        return Err(CryptoError::VerificationFailed);
+    }
+    Ok(())
+}
+
 /// Combine k partial signatures via Lagrange interpolation and verify the result.
 /// Returns the combined signature if verification succeeds.
 pub fn combine_with_verify(
@@ -64,9 +72,7 @@ pub fn combine_with_verify(
 
     let combined = interpolate_at_zero(&share_pairs)?;
 
-    if !core_verify_pk_in_g2(&combined, &params.master_public_key, msg, DST_SIG) {
-        return Err(CryptoError::VerificationFailed);
-    }
+    verify_combined(params, &combined, msg)?;
     Ok(combined)
 }
 
@@ -140,5 +146,17 @@ mod tests {
         let mut ps = sign(&f.ks.private_shares[0], &f.msg);
         ps.player_id = 999;
         assert!(verify_share(&f.ks.public_params, &ps, &f.msg).is_err());
+    }
+
+    #[test]
+    fn test_verify_combined() {
+        let f = Fixture::new(5, 3);
+        let partials: Vec<_> = (0..3)
+            .map(|i| sign(&f.ks.private_shares[i], &f.msg))
+            .collect();
+        let combined = combine_with_verify(&f.ks.public_params, &f.msg, &partials).unwrap();
+
+        verify_combined(&f.ks.public_params, &combined, &f.msg).unwrap();
+        assert!(verify_combined(&f.ks.public_params, &combined, b"WrongMessage").is_err());
     }
 }

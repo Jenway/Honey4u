@@ -25,6 +25,10 @@ def verify_share(pk: PublicKey, sig_bin: bytes, player_id: int, msg: bytes) -> b
     return bool(pk.verify_share(player_id, sig_bin, msg))
 
 
+def verify_combined(pk: PublicKey, sig_bin: bytes, msg: bytes) -> bool:
+    return bool(pk.verify_combined(sig_bin, msg))
+
+
 def verify_shares(pk: PublicKey, sigs: dict[int, bytes], msg: bytes) -> dict[int, bool]:
     return {
         player_id: bool(pk.verify_share(player_id, sig_bin, msg))

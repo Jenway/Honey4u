@@ -20,3 +20,13 @@ def decode(
     n: int,
 ) -> bytes:
     return honey_native.merkle_decode(available, root, k, n)
+
+
+def decode_from_dicts(
+    stripes: dict[int, bytes],
+    proofs: dict[int, bytes],
+    root: bytes,
+    k: int,
+    n: int,
+) -> bytes:
+    return honey_native.merkle_decode_dicts(stripes, proofs, root, k, n)

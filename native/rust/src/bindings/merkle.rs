@@ -1,5 +1,6 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::merkle;
@@ -29,14 +30,18 @@ impl MerkleProof {
         self.inner.siblings.iter().map(|s| s.to_vec()).collect()
     }
 
-    fn to_bytes(&self) -> PyResult<Vec<u8>> {
-        bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+    fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
+        py.allow_threads(move || {
+            bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+        })
     }
 
     #[staticmethod]
-    fn from_bytes(b: &[u8]) -> PyResult<Self> {
-        let inner: merkle::MerkleProof =
-            bincode::deserialize(b).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
+        let payload = b.to_vec();
+        let inner: merkle::MerkleProof = py.allow_threads(move || {
+            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))
+        })?;
         Ok(Self { inner })
     }
 }
@@ -71,19 +76,23 @@ impl EncodedShard {
         self.proof.clone()
     }
 
-    fn to_bytes(&self) -> PyResult<Vec<u8>> {
+    fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
         let wire = EncodedShardWire {
             index: self.index,
             data: self.data.clone(),
             proof: self.proof.inner.clone(),
         };
-        bincode::serialize(&wire).map_err(|e| PyValueError::new_err(e.to_string()))
+        py.allow_threads(move || {
+            bincode::serialize(&wire).map_err(|e| PyValueError::new_err(e.to_string()))
+        })
     }
 
     #[staticmethod]
-    fn from_bytes(b: &[u8]) -> PyResult<Self> {
-        let wire: EncodedShardWire =
-            bincode::deserialize(b).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
+        let payload = b.to_vec();
+        let wire: EncodedShardWire = py.allow_threads(move || {
+            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))
+        })?;
         Ok(Self {
             index: wire.index,
             data: wire.data,
@@ -158,38 +167,45 @@ impl MerkleResult {
         })
     }
 
-    fn to_bytes(&self) -> PyResult<Vec<u8>> {
-        bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+    fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
+        py.allow_threads(move || {
+            bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
+        })
     }
 
     #[staticmethod]
-    fn from_bytes(b: &[u8]) -> PyResult<Self> {
-        let inner: merkle::MerkleResult =
-            bincode::deserialize(b).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
+        let payload = b.to_vec();
+        let inner: merkle::MerkleResult = py.allow_threads(move || {
+            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))
+        })?;
         Ok(Self { inner })
     }
 }
 
 #[pyfunction]
-fn merkle_encode(data: &[u8], k: usize, n: usize) -> PyResult<MerkleResult> {
-    let inner = merkle::encode(data, k, n)?;
+fn merkle_encode(py: Python<'_>, data: &[u8], k: usize, n: usize) -> PyResult<MerkleResult> {
+    let payload = data.to_vec();
+    let inner = py.allow_threads(move || merkle::encode(&payload, k, n))?;
     Ok(MerkleResult { inner })
 }
 
 #[pyfunction]
-fn merkle_verify(shard: &[u8], proof: &MerkleProof, root: &[u8]) -> PyResult<bool> {
+fn merkle_verify(py: Python<'_>, shard: &[u8], proof: &MerkleProof, root: &[u8]) -> PyResult<bool> {
     if root.len() != 32 {
         return Err(PyValueError::new_err("Root must be 32 bytes"));
     }
 
     let mut root_arr = [0u8; 32];
     root_arr.copy_from_slice(root);
-
-    Ok(merkle::verify_shard(shard, &proof.inner, &root_arr))
+    let shard = shard.to_vec();
+    let proof = proof.inner.clone();
+    py.allow_threads(move || Ok(merkle::verify_shard(&shard, &proof, &root_arr)))
 }
 
 #[pyfunction]
 fn merkle_decode(
+    py: Python<'_>,
     available: Vec<EncodedShard>,
     root: &[u8],
     k: usize,
@@ -207,7 +223,45 @@ fn merkle_decode(
         inner.push((s.index, s.data, s.proof.inner));
     }
 
-    merkle::decode(&inner, &root_arr, k, n).map_err(|e| PyValueError::new_err(e.to_string()))
+    py.allow_threads(move || {
+        merkle::decode_owned(inner, &root_arr, k, n)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    })
+}
+
+#[pyfunction]
+fn merkle_decode_dicts(
+    py: Python<'_>,
+    stripes: &Bound<'_, PyDict>,
+    proofs: &Bound<'_, PyDict>,
+    root: &[u8],
+    k: usize,
+    n: usize,
+) -> PyResult<Vec<u8>> {
+    if root.len() != 32 {
+        return Err(PyValueError::new_err("Root must be 32 bytes"));
+    }
+
+    let mut root_arr = [0u8; 32];
+    root_arr.copy_from_slice(root);
+
+    let mut inner = Vec::with_capacity(stripes.len());
+    for (idx_any, shard_any) in stripes.iter() {
+        let idx = idx_any.extract::<usize>()?;
+        let shard = shard_any.extract::<Vec<u8>>()?;
+        let Some(proof_any) = proofs.get_item(idx)? else {
+            continue;
+        };
+        let proof_bytes = proof_any.extract::<Vec<u8>>()?;
+        let proof: merkle::MerkleProof =
+            bincode::deserialize(&proof_bytes).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        inner.push((idx, shard, proof));
+    }
+
+    py.allow_threads(move || {
+        merkle::decode_trusted_owned(inner, &root_arr, k, n)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    })
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -217,5 +271,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(merkle_encode, m)?)?;
     m.add_function(wrap_pyfunction!(merkle_verify, m)?)?;
     m.add_function(wrap_pyfunction!(merkle_decode, m)?)?;
+    m.add_function(wrap_pyfunction!(merkle_decode_dicts, m)?)?;
     Ok(())
 }

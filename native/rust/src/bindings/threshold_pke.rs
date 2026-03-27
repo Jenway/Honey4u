@@ -72,7 +72,11 @@ impl PkePublicKey {
             return Ok(false);
         }
 
-        Ok(crypto::threshold::pke::verify_share(&self.inner, &share, &ct))
+        Ok(crypto::threshold::pke::verify_share(
+            &self.inner,
+            &share,
+            &ct,
+        ))
     }
 
     fn combine_shares(
@@ -154,7 +158,10 @@ impl PkePrivateShare {
 }
 
 #[pyfunction]
-fn pke_generate(players: usize, threshold: usize) -> PyResult<(PkePublicKey, Vec<PkePrivateShare>)> {
+fn pke_generate(
+    players: usize,
+    threshold: usize,
+) -> PyResult<(PkePublicKey, Vec<PkePrivateShare>)> {
     let keyset = crypto::threshold::keygen::generate_pke_keys(players, threshold)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
@@ -177,10 +184,11 @@ fn seal_encrypted_batch(py: Python<'_>, pk: &PkePublicKey, payload: &[u8]) -> Py
     py.allow_threads(move || {
         let mut key = [0u8; 32];
         OsRng.fill_bytes(&mut key);
-        let ciphertext =
-            crypto::aes::encrypt(&key, &payload).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let encrypted_key = bincode::serialize(&crypto::threshold::pke::seal(&master_public_key, key))
+        let ciphertext = crypto::aes::encrypt(&key, &payload)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let encrypted_key =
+            bincode::serialize(&crypto::threshold::pke::seal(&master_public_key, key))
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
         bincode::serialize(&EncryptedBatchWire {
             encrypted_key,
             ciphertext,

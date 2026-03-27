@@ -96,6 +96,11 @@ class EncryptedBatch:
 
 
 def encode_tx(tx: object) -> bytes:
+    if isinstance(tx, str):
+        try:
+            return honey_native.encode_json_string(tx)
+        except ValueError as exc:
+            raise SerializationError("Transaction must be JSON serializable") from exc
     try:
         return json.dumps(tx, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
             "utf-8"
@@ -106,12 +111,14 @@ def encode_tx(tx: object) -> bytes:
 
 def decode_tx(raw: bytes) -> object:
     try:
-        return json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return honey_native.decode_tx_py(raw)
+    except ValueError as exc:
         raise SerializationError("Invalid transaction payload") from exc
 
 
 def tx_dedup_key(tx: object) -> str:
+    if isinstance(tx, str):
+        return f"s:{tx}"
     return encode_tx(tx).decode("utf-8")
 
 
@@ -125,6 +132,13 @@ def encode_tx_batch(items: list[bytes]) -> bytes:
 def decode_tx_batch(raw: bytes) -> list[bytes]:
     try:
         return honey_native.decode_tx_batch(raw)
+    except ValueError as exc:
+        raise SerializationError("Invalid transaction batch payload") from exc
+
+
+def merge_tx_batches(blocks: tuple[bytes, ...] | list[bytes]) -> list[object]:
+    try:
+        return cast(list[object], honey_native.merge_tx_batches_py(list(blocks)))
     except ValueError as exc:
         raise SerializationError("Invalid transaction batch payload") from exc
 

@@ -19,6 +19,8 @@ pub struct MerkleResult {
     pub proofs: Vec<MerkleProof>,
 }
 
+type ShardBundle = (usize, Vec<u8>, MerkleProof);
+
 // --- Hashing helpers ---
 
 fn hash_leaf(data: &[u8]) -> [u8; 32] {
@@ -48,6 +50,14 @@ fn next_pow2(n: usize) -> usize {
     p
 }
 
+fn reed_solomon(k: usize, n: usize) -> Result<ReedSolomon, CryptoError> {
+    if k < 1 || k > n || n < 1 {
+        return Err(CryptoError::InvalidArgument("k must be 1..=n".into()));
+    }
+
+    ReedSolomon::new(k, n - k).map_err(|e| CryptoError::ReedSolomonError(e.to_string()))
+}
+
 /// Build a Merkle tree over `leaf_hashes` (padded to next power of two).
 /// Returns a 1-indexed node array of size 2*P.
 fn build_tree(leaf_hashes: &[[u8; 32]]) -> Vec<[u8; 32]> {
@@ -73,15 +83,10 @@ fn build_tree(leaf_hashes: &[[u8; 32]]) -> Vec<[u8; 32]> {
 /// Encode `data` into `n` shards (k data, n-k parity) and build a Merkle tree.
 /// Uses PKCS#7 padding: the last byte indicates the number of padding bytes.
 pub fn encode(data: &[u8], k: usize, n: usize) -> Result<MerkleResult, CryptoError> {
-    if k < 1 || k > n || n < 1 {
-        return Err(CryptoError::InvalidArgument("k must be 1..=n".into()));
-    }
-    let parity = n - k;
-    let rs =
-        ReedSolomon::new(k, parity).map_err(|e| CryptoError::ReedSolomonError(e.to_string()))?;
+    let rs = reed_solomon(k, n)?;
 
-    // Pad data so it divides evenly into k shards using PKCS#7 padding
-    let shard_len = (data.len() + k - 1) / k;
+    // Reserve at least one padding byte so decode never mistakes a real tail byte for PKCS#7.
+    let shard_len = (data.len() + 1 + k - 1) / k;
     let mut padded = data.to_vec();
     let pad_len = shard_len * k - data.len();
     padded.resize(shard_len * k, pad_len as u8);
@@ -90,7 +95,7 @@ pub fn encode(data: &[u8], k: usize, n: usize) -> Result<MerkleResult, CryptoErr
     let mut shards: Vec<Vec<u8>> = (0..k)
         .map(|i| padded[i * shard_len..(i + 1) * shard_len].to_vec())
         .collect();
-    for _ in 0..parity {
+    for _ in 0..(n - k) {
         shards.push(vec![0u8; shard_len]);
     }
 
@@ -145,61 +150,14 @@ pub fn verify_shard(shard: &[u8], proof: &MerkleProof, root: &[u8; 32]) -> bool 
     acc == *root
 }
 
-/// Decode data from a subset of shards (with their indices) that pass Merkle verification.
-/// `available`: list of (shard_index, shard_data, proof).
-/// Removes PKCS#7 padding from the result.
-pub fn decode(
-    available: &[(usize, Vec<u8>, MerkleProof)],
-    root: &[u8; 32],
-    k: usize,
-    n: usize,
-) -> Result<Vec<u8>, CryptoError> {
-    // Verify all proofs
-    for (idx, shard, proof) in available {
-        if !verify_shard(shard, proof, root) {
-            return Err(CryptoError::VerificationFailed);
-        }
-        let _ = idx; // idx is in proof.leaf_index
-    }
-
-    if available.len() < k {
-        return Err(CryptoError::InsufficientShares {
-            need: k,
-            got: available.len(),
-        });
-    }
-
-    let parity = n - k;
-    let rs =
-        ReedSolomon::new(k, parity).map_err(|e| CryptoError::ReedSolomonError(e.to_string()))?;
-
-    // Determine shard length from available shards
-    let shard_len = available.first().map(|(_, s, _)| s.len()).unwrap_or(0);
-
-    // Build shard array with None for missing shards
-    let mut shards: Vec<Option<Vec<u8>>> = vec![None; n];
-    for (idx, shard, _) in available {
-        shards[*idx] = Some(shard.clone());
-    }
-
-    rs.reconstruct(&mut shards)
-        .map_err(|e| CryptoError::ReedSolomonError(e.to_string()))?;
-
-    // Concatenate the k data shards
-    let mut out = Vec::with_capacity(k * shard_len);
-    for i in 0..k {
-        out.extend_from_slice(shards[i].as_ref().unwrap());
-    }
-
-    // Remove PKCS#7 padding
+fn trim_padding(mut out: Vec<u8>, shard_len: usize) -> Vec<u8> {
     if !out.is_empty() {
         let pad_len = out[out.len() - 1] as usize;
         if pad_len > 0 && pad_len <= shard_len {
-            // Verify all padding bytes are correct
             let data_len = out.len() - pad_len;
             let mut valid_padding = true;
-            for i in data_len..out.len() {
-                if out[i] != pad_len as u8 {
+            for byte in &out[data_len..] {
+                if *byte != pad_len as u8 {
                     valid_padding = false;
                     break;
                 }
@@ -209,8 +167,79 @@ pub fn decode(
             }
         }
     }
+    out
+}
 
-    Ok(out)
+fn decode_impl(
+    available: Vec<ShardBundle>,
+    root: &[u8; 32],
+    k: usize,
+    n: usize,
+    verify: bool,
+) -> Result<Vec<u8>, CryptoError> {
+    if verify {
+        for (_idx, shard, proof) in &available {
+            if !verify_shard(shard, proof, root) {
+                return Err(CryptoError::VerificationFailed);
+            }
+        }
+    }
+
+    if available.len() < k {
+        return Err(CryptoError::InsufficientShares {
+            need: k,
+            got: available.len(),
+        });
+    }
+
+    let rs = reed_solomon(k, n)?;
+    let shard_len = available.first().map(|(_, s, _)| s.len()).unwrap_or(0);
+
+    let mut shards: Vec<Option<Vec<u8>>> = vec![None; n];
+    for (idx, shard, _) in available {
+        shards[idx] = Some(shard);
+    }
+
+    rs.reconstruct_data(&mut shards)
+        .map_err(|e| CryptoError::ReedSolomonError(e.to_string()))?;
+
+    let mut out = Vec::with_capacity(k * shard_len);
+    for shard in shards.iter().take(k) {
+        out.extend_from_slice(shard.as_ref().unwrap());
+    }
+
+    Ok(trim_padding(out, shard_len))
+}
+
+/// Decode data from a subset of shards (with their indices) that pass Merkle verification.
+/// `available`: list of (shard_index, shard_data, proof).
+/// Removes PKCS#7 padding from the result.
+#[allow(dead_code)]
+pub fn decode(
+    available: &[(usize, Vec<u8>, MerkleProof)],
+    root: &[u8; 32],
+    k: usize,
+    n: usize,
+) -> Result<Vec<u8>, CryptoError> {
+    decode_impl(available.to_vec(), root, k, n, true)
+}
+
+pub fn decode_owned(
+    available: Vec<ShardBundle>,
+    root: &[u8; 32],
+    k: usize,
+    n: usize,
+) -> Result<Vec<u8>, CryptoError> {
+    decode_impl(available, root, k, n, true)
+}
+
+pub fn decode_trusted_owned(
+    available: Vec<ShardBundle>,
+    root: &[u8; 32],
+    k: usize,
+    n: usize,
+) -> Result<Vec<u8>, CryptoError> {
+    decode_impl(available, root, k, n, false)
 }
 
 #[cfg(test)]
@@ -226,12 +255,10 @@ mod tests {
         assert_eq!(result.proofs.len(), n);
         assert_eq!(result.shards.len(), n);
 
-        // Use all k data shards
         let available: Vec<_> = (0..n)
             .map(|i| (i, result.shards[i].clone(), result.proofs[i].clone()))
             .collect();
         let decoded = decode(&available, &result.root, k, n).unwrap();
-        // decoded may be padded; original data should be prefix
         assert!(decoded.starts_with(data));
     }
 
@@ -270,7 +297,6 @@ mod tests {
         let n = 6;
         let result = encode(data, k, n).unwrap();
 
-        // Use only shards 0, 2, 4 (non-contiguous)
         let available = vec![
             (0, result.shards[0].clone(), result.proofs[0].clone()),
             (2, result.shards[2].clone(), result.proofs[2].clone()),
@@ -294,5 +320,37 @@ mod tests {
             (1, result.shards[1].clone(), result.proofs[1].clone()),
         ];
         assert!(decode(&available, &result.root, k, n).is_err());
+    }
+
+    #[test]
+    fn test_roundtrip_when_payload_len_is_divisible_by_k() {
+        let data = vec![0xAB; 364];
+        let k = 4;
+        let n = 10;
+        let result = encode(&data, k, n).unwrap();
+
+        let available: Vec<_> = (0..k)
+            .map(|i| (i, result.shards[i].clone(), result.proofs[i].clone()))
+            .collect();
+        let decoded = decode(&available, &result.root, k, n).unwrap();
+
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_decode_trusted_owned_matches_verified_decode() {
+        let data = b"trusted-path";
+        let k = 4;
+        let n = 10;
+        let result = encode(data, k, n).unwrap();
+
+        let available: Vec<_> = (0..k)
+            .map(|i| (i, result.shards[i].clone(), result.proofs[i].clone()))
+            .collect();
+        let trusted = decode_trusted_owned(available.clone(), &result.root, k, n).unwrap();
+        let verified = decode_owned(available, &result.root, k, n).unwrap();
+
+        assert_eq!(trusted, verified);
+        assert_eq!(trusted, data);
     }
 }
