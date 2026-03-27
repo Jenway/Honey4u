@@ -2,9 +2,11 @@ use crate::crypto;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use crate::archive::api as archive_api;
+use crate::archive::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
 use crate::crypto::threshold::utils::{g1_from_bytes, g1_to_bytes};
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct SigPublicKey {
     inner: crypto::threshold::keygen::SigPublicParams,
@@ -38,7 +40,7 @@ impl SigPublicKey {
             value,
         };
         let msg = msg.to_vec();
-        py.allow_threads(move || {
+        py.detach(move || {
             Ok(crypto::threshold::sig::verify_share(&self.inner, &partial_sig, &msg).is_ok())
         })
     }
@@ -49,7 +51,7 @@ impl SigPublicKey {
             Err(_) => return Ok(false),
         };
         let msg = msg.to_vec();
-        py.allow_threads(move || {
+        py.detach(move || {
             Ok(crypto::threshold::sig::verify_combined(&self.inner, &sig, &msg).is_ok())
         })
     }
@@ -71,7 +73,7 @@ impl SigPublicKey {
         }
 
         let msg = msg.to_vec();
-        py.allow_threads(move || {
+        py.detach(move || {
             match crypto::threshold::sig::combine_with_verify(&self.inner, &msg, &partial_sigs) {
                 Ok(combined_sig) => Ok(g1_to_bytes(&combined_sig)),
                 Err(e) => Err(e.into()),
@@ -80,22 +82,22 @@ impl SigPublicKey {
     }
 
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
-        py.allow_threads(move || {
-            bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
-        })
+        let wire = SigPublicParamsWire::from_runtime(&self.inner);
+        py.detach(move || archive_api::encode(&wire))
     }
 
     #[staticmethod]
     fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
         let payload = b.to_vec();
-        let inner: crypto::threshold::keygen::SigPublicParams = py.allow_threads(move || {
-            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))
-        })?;
+        let wire: SigPublicParamsWire = py.detach(move || archive_api::decode(&payload))?;
+        let inner = wire
+            .into_runtime()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self { inner })
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct SigPrivateShare {
     inner: crypto::threshold::keygen::SigPrivateKeyShare,
@@ -110,24 +112,24 @@ impl SigPrivateShare {
 
     fn sign(&self, py: Python<'_>, msg: &[u8]) -> PyResult<Vec<u8>> {
         let msg = msg.to_vec();
-        py.allow_threads(move || {
+        py.detach(move || {
             let partial = crypto::threshold::sig::sign(&self.inner, &msg);
             Ok(g1_to_bytes(&partial.value))
         })
     }
 
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
-        py.allow_threads(move || {
-            bincode::serialize(&self.inner).map_err(|e| PyValueError::new_err(e.to_string()))
-        })
+        let wire = SigPrivateKeyShareWire::from_runtime(&self.inner);
+        py.detach(move || archive_api::encode(&wire))
     }
 
     #[staticmethod]
     fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
         let payload = b.to_vec();
-        let inner: crypto::threshold::keygen::SigPrivateKeyShare = py.allow_threads(move || {
-            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))
-        })?;
+        let wire: SigPrivateKeyShareWire = py.detach(move || archive_api::decode(&payload))?;
+        let inner = wire
+            .into_runtime()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self { inner })
     }
 }
@@ -138,7 +140,7 @@ fn sig_generate(
     players: usize,
     threshold: usize,
 ) -> PyResult<(SigPublicKey, Vec<SigPrivateShare>)> {
-    let keyset = py.allow_threads(move || {
+    let keyset = py.detach(move || {
         crypto::threshold::keygen::generate_sig_keys(players, threshold)
             .map_err(|e| PyValueError::new_err(e.to_string()))
     })?;

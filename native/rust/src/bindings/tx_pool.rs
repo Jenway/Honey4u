@@ -1,17 +1,14 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
-use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
+
+use crate::archive::api as archive_api;
+use crate::archive::wire::TxBatchWire;
 
 struct TxEntry {
     tx_id: String,
     payload: Vec<u8>,
-}
-
-#[derive(Serialize)]
-struct TxBatchWireRef<'a> {
-    items: Vec<&'a [u8]>,
 }
 
 #[pyclass]
@@ -64,20 +61,17 @@ impl TxPool {
             self.inflight.insert(tx_id, entry.payload);
         }
 
-        let payload_refs: Vec<&[u8]> = selected
+        let items: Vec<Vec<u8>> = selected
             .iter()
             .map(|tx_id| {
                 self.inflight
                     .get(tx_id)
                     .expect("selected tx must exist in inflight")
-                    .as_slice()
+                    .clone()
             })
             .collect();
 
-        let payload = bincode::serialize(&TxBatchWireRef {
-            items: payload_refs,
-        })
-        .map_err(|e| e.to_string())?;
+        let payload = archive_api::encode(&TxBatchWire { items }).map_err(|e| e.to_string())?;
 
         Ok((selected, payload))
     }
@@ -124,13 +118,13 @@ impl TxPool {
 
     fn push(&mut self, py: Python<'_>, tx_id: String, payload: &[u8]) -> PyResult<()> {
         let payload = payload.to_vec();
-        py.allow_threads(move || self.push_inner(tx_id, payload))
+        py.detach(move || self.push_inner(tx_id, payload))
             .map_err(PyValueError::new_err)
     }
 
     fn push_json_str(&mut self, py: Python<'_>, tx_id: String, value: &str) -> PyResult<()> {
         let value = value.to_owned();
-        py.allow_threads(move || {
+        py.detach(move || {
             let payload =
                 Self::encode_json_string_bytes(&value).map_err(|_| "invalid tx string")?;
             self.push_inner(tx_id, payload)
@@ -144,17 +138,17 @@ impl TxPool {
         max_items: usize,
         max_bytes: usize,
     ) -> PyResult<(Vec<String>, Vec<u8>)> {
-        py.allow_threads(move || self.pop_batch_inner(max_items, max_bytes))
+        py.detach(move || self.pop_batch_inner(max_items, max_bytes))
             .map_err(PyValueError::new_err)
     }
 
     fn requeue(&mut self, py: Python<'_>, tx_ids: Vec<String>) -> PyResult<()> {
-        py.allow_threads(move || self.requeue_inner(tx_ids))
+        py.detach(move || self.requeue_inner(tx_ids))
             .map_err(PyValueError::new_err)
     }
 
     fn drop_inflight(&mut self, py: Python<'_>, tx_ids: Vec<String>) -> PyResult<()> {
-        py.allow_threads(move || self.drop_inflight_inner(tx_ids))
+        py.detach(move || self.drop_inflight_inner(tx_ids))
             .map_err(PyValueError::new_err)
     }
 }
@@ -162,7 +156,7 @@ impl TxPool {
 #[pyfunction]
 fn encode_json_string(py: Python<'_>, value: &str) -> PyResult<Vec<u8>> {
     let value = value.to_owned();
-    py.allow_threads(move || TxPool::encode_json_string_bytes(&value))
+    py.detach(move || TxPool::encode_json_string_bytes(&value))
         .map_err(PyValueError::new_err)
 }
 

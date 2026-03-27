@@ -1,174 +1,21 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyModule, PyString, PyTuple};
-use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
 use std::convert::TryFrom;
 
-#[derive(Serialize, Deserialize)]
-struct EncryptedBatchWire {
-    encrypted_key: Vec<u8>,
-    ciphertext: Vec<u8>,
-}
-
-#[derive(Serialize, Deserialize)]
-enum ChannelWire {
-    AcsCoin,
-    AcsRbc,
-    AcsAba,
-    DumboPrbc,
-    DumboProof,
-    DumboMvba,
-    DumboPool,
-    Tpke,
-}
-
-#[derive(Serialize, Deserialize)]
-enum MessageWire {
-    RbcVal {
-        roothash: Vec<u8>,
-        proof: Vec<u8>,
-        stripe: Vec<u8>,
-        stripe_index: u32,
-    },
-    RbcEcho {
-        roothash: Vec<u8>,
-        proof: Vec<u8>,
-        stripe: Vec<u8>,
-        stripe_index: u32,
-    },
-    RbcReady {
-        roothash: Vec<u8>,
-    },
-    BaEst {
-        epoch: u32,
-        value: u32,
-    },
-    BaAux {
-        epoch: u32,
-        value: u32,
-    },
-    BaConf {
-        epoch: u32,
-        values: Vec<u32>,
-    },
-    CoinShareMessage {
-        round_id: u32,
-        signature: Vec<u8>,
-    },
-    PrbcVal {
-        leader: u32,
-        roothash: Vec<u8>,
-        proof: Vec<u8>,
-        stripe: Vec<u8>,
-        stripe_index: u32,
-    },
-    PrbcEcho {
-        leader: u32,
-        roothash: Vec<u8>,
-        proof: Vec<u8>,
-        stripe: Vec<u8>,
-        stripe_index: u32,
-    },
-    PrbcReady {
-        leader: u32,
-        roothash: Vec<u8>,
-        signature: Vec<u8>,
-    },
-    DumboProofDiffuse {
-        leader: u32,
-        proof: PrbcProofWire,
-    },
-    PdStore {
-        leader: u32,
-        roothash: Vec<u8>,
-        stripe: Vec<u8>,
-        merkle_proof: Vec<u8>,
-    },
-    PdStored {
-        leader: u32,
-        roothash: Vec<u8>,
-        share: Vec<u8>,
-    },
-    PdLock {
-        leader: u32,
-        proof: ThresholdShareProofWire,
-    },
-    PdLocked {
-        leader: u32,
-        roothash: Vec<u8>,
-        share: Vec<u8>,
-    },
-    PdDone {
-        leader: u32,
-        proof: ThresholdShareProofWire,
-    },
-    MvbaRcPrepare {
-        mvba_round: u32,
-        leader: u32,
-        proof: Option<ThresholdShareProofWire>,
-    },
-    MvbaRcLock {
-        mvba_round: u32,
-        leader: u32,
-        proof: ThresholdShareProofWire,
-    },
-    MvbaRcStore {
-        mvba_round: u32,
-        leader: u32,
-        store: PdStoreRecordWire,
-    },
-    MvbaAbaMessage {
-        mvba_round: u32,
-        payload: Box<MessageWire>,
-    },
-    MvbaElectionCoinShare {
-        coin_round: u32,
-        signature: Vec<u8>,
-    },
-    MvbaAbaCoinShare {
-        mvba_round: u32,
-        coin_round: u32,
-        signature: Vec<u8>,
-    },
-    PoolFetchRequest {
-        item_id: String,
-        origin_round: u32,
-        origin_sender: u32,
-        roothash: Vec<u8>,
-    },
-    PoolFetchResponse {
-        item_id: String,
-        payload: Vec<u8>,
-    },
-    TpkeShareBundle {
-        shares: Vec<Option<Vec<u8>>>,
-    },
-    RawPayload {
-        data: Vec<u8>,
-    },
-}
-
-#[derive(Serialize, Deserialize)]
-struct ProtocolEnvelopeWire {
-    sender: u32,
-    round_id: u32,
-    channel: ChannelWire,
-    instance_id: Option<u32>,
-    message: MessageWire,
-}
-
-#[derive(Serialize, Deserialize)]
-struct TxBatchWire {
-    items: Vec<Vec<u8>>,
-}
+use crate::archive::api as archive_api;
+use crate::archive::wire::{
+    AbaPayloadWire, ChannelWire, EncryptedBatchWire, MessageWire, PdStoreRecordWire, PrbcProofWire,
+    ProtocolEnvelopeWire, ThresholdShareProofWire, TxBatchWire,
+};
 
 fn parse_tx_json(raw: &[u8]) -> PyResult<JsonValue> {
     serde_json::from_slice(raw).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-fn json_value_to_py(py: Python<'_>, value: JsonValue) -> PyResult<PyObject> {
+fn json_value_to_py(py: Python<'_>, value: JsonValue) -> PyResult<Py<PyAny>> {
     match value {
         JsonValue::Null => Ok(py.None()),
         JsonValue::Bool(value) => Ok(value.into_pyobject(py)?.to_owned().into_any().unbind()),
@@ -206,8 +53,7 @@ fn merge_tx_batches_inner(blocks: Vec<Vec<u8>>) -> PyResult<Vec<JsonValue>> {
     let mut seen = HashSet::new();
 
     for payload in blocks {
-        let wire: TxBatchWire =
-            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let wire: TxBatchWire = archive_api::decode(&payload)?;
 
         for raw_tx in wire.items {
             if !seen.insert(raw_tx.clone()) {
@@ -218,26 +64,6 @@ fn merge_tx_batches_inner(blocks: Vec<Vec<u8>>) -> PyResult<Vec<JsonValue>> {
     }
 
     Ok(ordered_results)
-}
-
-#[derive(Serialize, Deserialize)]
-struct PrbcProofWire {
-    roothash: Vec<u8>,
-    sigmas: Vec<(u32, Vec<u8>)>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ThresholdShareProofWire {
-    roothash: Vec<u8>,
-    signature: Vec<u8>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct PdStoreRecordWire {
-    roothash: Vec<u8>,
-    stripe_owner: u32,
-    stripe: Vec<u8>,
-    merkle_proof: Vec<u8>,
 }
 
 fn to_u32(value: usize, name: &str) -> PyResult<u32> {
@@ -286,7 +112,7 @@ fn build_prbc_proof_object(
     py: Python<'_>,
     prbc_mod: &Bound<'_, PyModule>,
     proof: PrbcProofWire,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let sigmas = proof
         .sigmas
         .into_iter()
@@ -312,7 +138,7 @@ fn build_threshold_share_proof_object(
     py: Python<'_>,
     mvba_mod: &Bound<'_, PyModule>,
     proof: ThresholdShareProofWire,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     Ok(mvba_mod
         .getattr("ThresholdShareProof")?
         .call1((
@@ -338,7 +164,7 @@ fn build_pd_store_record_object(
     py: Python<'_>,
     mvba_mod: &Bound<'_, PyModule>,
     store: PdStoreRecordWire,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     Ok(mvba_mod
         .getattr("PdStoreRecord")?
         .call1((
@@ -350,15 +176,43 @@ fn build_pd_store_record_object(
         .unbind())
 }
 
-fn extract_ba_payload_wire(py: Python<'_>, message: &Bound<'_, PyAny>) -> PyResult<MessageWire> {
+fn extract_ba_payload_wire(py: Python<'_>, message: &Bound<'_, PyAny>) -> PyResult<AbaPayloadWire> {
     let payload = extract_message_wire(py, message)?;
     match payload {
-        MessageWire::BaEst { .. } | MessageWire::BaAux { .. } | MessageWire::BaConf { .. } => {
-            Ok(payload)
-        }
+        MessageWire::BaEst { epoch, value } => Ok(AbaPayloadWire::BaEst { epoch, value }),
+        MessageWire::BaAux { epoch, value } => Ok(AbaPayloadWire::BaAux { epoch, value }),
+        MessageWire::BaConf { epoch, values } => Ok(AbaPayloadWire::BaConf { epoch, values }),
         _ => Err(PyValueError::new_err(
             "MvbaAbaMessage.payload must be BaEst, BaAux, or BaConf",
         )),
+    }
+}
+
+fn build_aba_payload_object(
+    py: Python<'_>,
+    messages_mod: &Bound<'_, PyModule>,
+    payload: AbaPayloadWire,
+) -> PyResult<Py<PyAny>> {
+    match payload {
+        AbaPayloadWire::BaEst { epoch, value } => Ok(messages_mod
+            .getattr("BaEst")?
+            .call1((epoch as usize, value as usize))?
+            .unbind()),
+        AbaPayloadWire::BaAux { epoch, value } => Ok(messages_mod
+            .getattr("BaAux")?
+            .call1((epoch as usize, value as usize))?
+            .unbind()),
+        AbaPayloadWire::BaConf { epoch, values } => {
+            let values = values
+                .into_iter()
+                .map(|value| value as usize)
+                .collect::<Vec<_>>();
+            let values_tuple = PyTuple::new(py, values)?;
+            Ok(messages_mod
+                .getattr("BaConf")?
+                .call1((epoch as usize, values_tuple))?
+                .unbind())
+        }
     }
 }
 
@@ -474,7 +328,7 @@ fn extract_message_wire(py: Python<'_>, message: &Bound<'_, PyAny>) -> PyResult<
         }),
         "MvbaAbaMessage" => Ok(MessageWire::MvbaAbaMessage {
             mvba_round: to_u32(message.getattr("mvba_round")?.extract()?, "mvba_round")?,
-            payload: Box::new(extract_ba_payload_wire(py, &message.getattr("payload")?)?),
+            payload: extract_ba_payload_wire(py, &message.getattr("payload")?)?,
         }),
         "MvbaElectionCoinShare" => Ok(MessageWire::MvbaElectionCoinShare {
             coin_round: to_u32(message.getattr("coin_round")?.extract()?, "coin_round")?,
@@ -512,7 +366,7 @@ fn build_message_object(
     py: Python<'_>,
     messages_mod: &Bound<'_, PyModule>,
     wire: MessageWire,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let prbc_mod = PyModule::import(py, "honey.subprotocols.provable_reliable_broadcast")?;
     let dumbo_acs_mod = PyModule::import(py, "honey.acs.dumbo_acs")?;
     let mvba_mod = PyModule::import(py, "honey.subprotocols.dumbo_mvba")?;
@@ -725,7 +579,7 @@ fn build_message_object(
             .getattr("MvbaAbaMessage")?
             .call1((
                 mvba_round as usize,
-                build_message_object(py, messages_mod, *payload)?,
+                build_aba_payload_object(py, messages_mod, payload)?,
             ))?
             .unbind()),
         MessageWire::MvbaElectionCoinShare {
@@ -794,21 +648,19 @@ fn encode_encrypted_batch(
 ) -> PyResult<Vec<u8>> {
     let encrypted_key = encrypted_key.to_vec();
     let ciphertext = ciphertext.to_vec();
-    py.allow_threads(move || {
-        bincode::serialize(&EncryptedBatchWire {
+    py.detach(move || {
+        archive_api::encode(&EncryptedBatchWire {
             encrypted_key,
             ciphertext,
         })
-        .map_err(|e| PyValueError::new_err(e.to_string()))
     })
 }
 
 #[pyfunction]
 fn decode_encrypted_batch(py: Python<'_>, payload: &[u8]) -> PyResult<(Vec<u8>, Vec<u8>)> {
     let payload = payload.to_vec();
-    py.allow_threads(move || {
-        let wire: EncryptedBatchWire =
-            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    py.detach(move || {
+        let wire: EncryptedBatchWire = archive_api::decode(&payload)?;
         Ok((wire.encrypted_key, wire.ciphertext))
     })
 }
@@ -817,21 +669,18 @@ fn decode_encrypted_batch(py: Python<'_>, payload: &[u8]) -> PyResult<(Vec<u8>, 
 fn encode_encrypted_batch_py(py: Python<'_>, batch: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     let encrypted_key = batch.getattr("encrypted_key")?.extract::<Vec<u8>>()?;
     let ciphertext = batch.getattr("ciphertext")?.extract::<Vec<u8>>()?;
-    py.allow_threads(move || {
-        bincode::serialize(&EncryptedBatchWire {
+    py.detach(move || {
+        archive_api::encode(&EncryptedBatchWire {
             encrypted_key,
             ciphertext,
         })
-        .map_err(|e| PyValueError::new_err(e.to_string()))
     })
 }
 
 #[pyfunction]
-fn decode_encrypted_batch_py(py: Python<'_>, payload: &[u8]) -> PyResult<PyObject> {
+fn decode_encrypted_batch_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAny>> {
     let payload = payload.to_vec();
-    let wire: EncryptedBatchWire = py.allow_threads(move || {
-        bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))
-    })?;
+    let wire: EncryptedBatchWire = py.detach(move || archive_api::decode(&payload))?;
     let messages_mod = PyModule::import(py, "honey.support.messages")?;
     Ok(messages_mod
         .getattr("EncryptedBatch")?
@@ -844,31 +693,28 @@ fn decode_encrypted_batch_py(py: Python<'_>, payload: &[u8]) -> PyResult<PyObjec
 
 #[pyfunction]
 fn encode_tx_batch(py: Python<'_>, items: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
-    py.allow_threads(move || {
-        bincode::serialize(&TxBatchWire { items }).map_err(|e| PyValueError::new_err(e.to_string()))
-    })
+    py.detach(move || archive_api::encode(&TxBatchWire { items }))
 }
 
 #[pyfunction]
 fn decode_tx_batch(py: Python<'_>, payload: &[u8]) -> PyResult<Vec<Vec<u8>>> {
     let payload = payload.to_vec();
-    py.allow_threads(move || {
-        let wire: TxBatchWire =
-            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    py.detach(move || {
+        let wire: TxBatchWire = archive_api::decode(&payload)?;
         Ok(wire.items)
     })
 }
 
 #[pyfunction]
-fn decode_tx_py(py: Python<'_>, payload: &[u8]) -> PyResult<PyObject> {
+fn decode_tx_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAny>> {
     let payload = payload.to_vec();
-    let value = py.allow_threads(move || parse_tx_json(&payload))?;
+    let value = py.detach(move || parse_tx_json(&payload))?;
     json_value_to_py(py, value)
 }
 
 #[pyfunction]
-fn merge_tx_batches_py(py: Python<'_>, blocks: Vec<Vec<u8>>) -> PyResult<PyObject> {
-    let merged = py.allow_threads(move || merge_tx_batches_inner(blocks))?;
+fn merge_tx_batches_py(py: Python<'_>, blocks: Vec<Vec<u8>>) -> PyResult<Py<PyAny>> {
+    let merged = py.detach(move || merge_tx_batches_inner(blocks))?;
     let mut py_items = Vec::with_capacity(merged.len());
     for item in merged {
         py_items.push(json_value_to_py(py, item)?);
@@ -1002,8 +848,8 @@ fn encode_protocol_envelope(
             _ => return Err(PyValueError::new_err("invalid message tag")),
         },
     };
-    py.allow_threads(move || {
-        bincode::serialize(&wire).map_err(|e| PyValueError::new_err(e.to_string()))
+    py.detach(move || {
+        archive_api::encode(&wire)
     })
 }
 
@@ -1032,8 +878,8 @@ fn encode_protocol_envelope_py(
         },
         message: extract_message_wire(py, &message)?,
     };
-    py.allow_threads(move || {
-        bincode::serialize(&wire).map_err(|e| PyValueError::new_err(e.to_string()))
+    py.detach(move || {
+        archive_api::encode(&wire)
     })
 }
 
@@ -1051,9 +897,8 @@ fn decode_protocol_envelope(
     Vec<usize>,
 )> {
     let payload = payload.to_vec();
-    py.allow_threads(move || {
-        let wire: ProtocolEnvelopeWire =
-            bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    py.detach(move || {
+        let wire: ProtocolEnvelopeWire = archive_api::decode(&payload)?;
         let (message_type, byte_fields, int_fields) = match wire.message {
             MessageWire::RbcVal {
                 roothash,
@@ -1127,11 +972,9 @@ fn decode_protocol_envelope(
 }
 
 #[pyfunction]
-fn decode_protocol_envelope_py(py: Python<'_>, payload: &[u8]) -> PyResult<(usize, PyObject)> {
+fn decode_protocol_envelope_py(py: Python<'_>, payload: &[u8]) -> PyResult<(usize, Py<PyAny>)> {
     let payload = payload.to_vec();
-    let wire: ProtocolEnvelopeWire = py.allow_threads(move || {
-        bincode::deserialize(&payload).map_err(|e| PyValueError::new_err(e.to_string()))
-    })?;
+    let wire: ProtocolEnvelopeWire = py.detach(move || archive_api::decode(&payload))?;
     let messages_mod = PyModule::import(py, "honey.support.messages")?;
     let message = build_message_object(py, &messages_mod, wire.message)?;
     let channel = messages_mod
