@@ -26,7 +26,7 @@ pub fn decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, CryptoError> {
     }
     let (nonce_bytes, ct) = data.split_at(12);
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| CryptoError::AesError)?;
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let nonce = Nonce::from_slice(nonce_bytes.try_into().expect("nonce must be 12 bytes"));
     cipher.decrypt(nonce, ct).map_err(|_| CryptoError::AesError)
 }
 
