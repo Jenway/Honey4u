@@ -20,14 +20,14 @@ import honey_native
 
 from honey.consensus.dumbo.core import DumboBFT
 from honey.consensus.honeybadger.core import HoneyBadgerBFT
+from honey.network.crypto_material import build_dumbo_materials, build_materials
+from honey.network.deterministic_simulator import DeterministicNetworkSimulator
+from honey.network.local_socket_transport import start_local_socket_transport
+from honey.network.transport import QueueTransport
 from honey.support.logging_ext import setup_logging
 from honey.support.messages import ProtocolEnvelope
 from honey.support.params import CommonParams, CryptoParams, HBConfig
 from honey.support.telemetry import METRICS, log_event, timed_metric
-from network.crypto_material import build_dumbo_materials, build_materials
-from network.deterministic_simulator import DeterministicNetworkSimulator
-from network.local_socket_transport import start_local_socket_transport
-from network.transport import QueueTransport
 
 _TIMED_METRIC_NAMES = (
     "hb.round.seconds",
@@ -627,7 +627,9 @@ async def _node_main_socket(
     rust_tx_pool_max_bytes: int,
 ) -> MultiprocessNodeResult:
     METRICS.reset()
-    logger = logging.LoggerAdapter(logging.getLogger("network.hbbft_runner"), extra={"node": pid})
+    logger = logging.LoggerAdapter(
+        logging.getLogger("honey.network.hbbft_runner"), extra={"node": pid}
+    )
     inbound_messages: Queue = Queue()
     outbound_messages: Queue = Queue()
     stop_event = threading.Event()
@@ -797,7 +799,9 @@ def _node_worker(
     import traceback
 
     _configure_logging(log_level)
-    logger = logging.LoggerAdapter(logging.getLogger("network.hbbft_runner"), extra={"node": pid})
+    logger = logging.LoggerAdapter(
+        logging.getLogger("honey.network.hbbft_runner"), extra={"node": pid}
+    )
     profile, profile_path = _maybe_start_worker_profile(pid, "hb")
     try:
         log_event(logger, logging.DEBUG, "node_worker_start", sid=sid)
@@ -1076,7 +1080,9 @@ async def _dumbo_node_main_socket(
     rust_tx_pool_max_bytes: int,
 ) -> MultiprocessNodeResult:
     METRICS.reset()
-    logger = logging.LoggerAdapter(logging.getLogger("network.hbbft_runner"), extra={"node": pid})
+    logger = logging.LoggerAdapter(
+        logging.getLogger("honey.network.hbbft_runner"), extra={"node": pid}
+    )
     inbound_messages: Queue = Queue()
     outbound_messages: Queue = Queue()
     stop_event = threading.Event()
@@ -1250,7 +1256,9 @@ def _dumbo_node_worker(
     import traceback
 
     _configure_logging(log_level)
-    logger = logging.LoggerAdapter(logging.getLogger("network.hbbft_runner"), extra={"node": pid})
+    logger = logging.LoggerAdapter(
+        logging.getLogger("honey.network.hbbft_runner"), extra={"node": pid}
+    )
     profile, profile_path = _maybe_start_worker_profile(pid, "dumbo")
     try:
         log_event(logger, logging.DEBUG, "node_worker_start", sid=sid)

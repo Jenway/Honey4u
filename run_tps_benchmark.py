@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any
 
-from network.hbbft_runner import (
+from honey.network.hbbft_runner import (
     benchmark_local_dumbo_nodes_multiprocess,
     benchmark_local_honeybadger_nodes_multiprocess,
 )

@@ -15,6 +15,7 @@ from honey.runtime.router import (
 from honey.subprotocols.binary_agreement import BAParams, binaryagreement
 from honey.subprotocols.common_coin import CoinParams, SharedCoin
 from honey.subprotocols.reliable_broadcast import BroadcastParams, reliablebroadcast
+from honey.support.exceptions import ProtocolInvariantError
 from honey.support.messages import Channel, ProtocolMessage
 from honey.support.params import CommonParams, CryptoParams
 
@@ -36,9 +37,14 @@ async def commonsubset(
     n = params.N
     state = bkr93_core.new_state(n, params.f)
 
-    assert len(rbc_queues) == n
-    assert len(aba_input_queues) == n
-    assert len(aba_output_queues) == n
+    if len(rbc_queues) != n:
+        raise ProtocolInvariantError(f"expected {n} RBC queues, got {len(rbc_queues)}")
+    if len(aba_input_queues) != n:
+        raise ProtocolInvariantError(f"expected {n} ABA input queues, got {len(aba_input_queues)}")
+    if len(aba_output_queues) != n:
+        raise ProtocolInvariantError(
+            f"expected {n} ABA output queues, got {len(aba_output_queues)}"
+        )
 
     def apply_effects(effects: list[bkr93_core.ProvideAbaInput]) -> None:
         for effect in effects:
@@ -65,7 +71,8 @@ async def commonsubset(
 
         await asyncio.gather(*aba_tasks)
 
-        assert bkr93_core.count_ones(state) >= n - params.f
+        if bkr93_core.count_ones(state) < n - params.f:
+            raise ProtocolInvariantError("BKR93 completed ABA without enough positive decisions")
 
         for index in range(n):
             if state.aba_outcomes[index] == 1:

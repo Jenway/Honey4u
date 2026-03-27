@@ -9,7 +9,11 @@ use crate::crypto::merkle;
 fn merkle_proof_to_wire(proof: &merkle::MerkleProof) -> MerkleProofWire {
     MerkleProofWire {
         leaf_index: proof.leaf_index,
-        siblings: proof.siblings.iter().map(|sibling| sibling.to_vec()).collect(),
+        siblings: proof
+            .siblings
+            .iter()
+            .map(|sibling| sibling.to_vec())
+            .collect(),
     }
 }
 

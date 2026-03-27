@@ -7,6 +7,7 @@ This module stores broadcast outputs across rounds. It serves two roles:
 
 import hashlib
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,8 +47,8 @@ class BroadcastMempool:
         self,
         payload: bytes,
         roothash: bytes,
-        shards: list[bytes | None],
-        proofs: list[bytes | None],
+        shards: Sequence[bytes | None],
+        proofs: Sequence[bytes | None],
         round_no: int,
         sender_id: int,
         timestamp: float,
@@ -61,8 +62,8 @@ class BroadcastMempool:
         broadcast_data = BroadcastData(
             payload=payload,
             roothash=roothash,
-            shards=shards,
-            proofs=proofs,
+            shards=list(shards),
+            proofs=list(proofs),
             round_no=round_no,
             sender_id=sender_id,
             timestamp=timestamp,

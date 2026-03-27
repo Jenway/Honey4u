@@ -18,9 +18,23 @@ repos:
 
   - repo: local
     hooks:
-      - id: cargo-check
-        name: cargo check (native/rust)
-        entry: cargo check --manifest-path native/rust/Cargo.toml --all-targets
+      - id: ty-check
+        name: ty check
+        entry: uv run ty check
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|src/.*\.py|tests/.*\.py)$
+
+      - id: cargo-fmt-check
+        name: cargo fmt --check (native/rust)
+        entry: cargo fmt --manifest-path native/rust/Cargo.toml --all --check
+        language: system
+        pass_filenames: false
+        files: ^native/rust/(Cargo\.toml|Cargo\.lock|src/.*\.rs)$
+
+      - id: cargo-clippy
+        name: cargo clippy (native/rust)
+        entry: cargo clippy --manifest-path native/rust/Cargo.toml --all-targets -- -D warnings
         language: system
         pass_filenames: false
         files: ^native/rust/(Cargo\.toml|Cargo\.lock|src/.*\.rs)$

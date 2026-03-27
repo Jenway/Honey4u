@@ -13,9 +13,9 @@ from typing import Any
 from honey.acs.bkr93 import CSParams, run_bkr93_acs
 from honey.acs.dumbo_acs import DumboACSParams, dumbo_acs
 from honey.data.broadcast_mempool import BroadcastMempool
+from honey.network.crypto_material import build_dumbo_materials, build_materials
+from honey.network.transport import QueueTransport
 from honey.runtime.router import RoundProtocolRouter
-from network.crypto_material import build_dumbo_materials, build_materials
-from network.transport import QueueTransport
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,7 @@ import honey_native
 from honey.acs.bkr93 import CSParams, run_bkr93_acs
 from honey.consensus.honeybadger.block import honeybadger_block
 from honey.data.broadcast_mempool import BroadcastMempool
+from honey.network.transport import Transport
 from honey.runtime.node_mailbox import NodeMailboxRouter
 from honey.runtime.router import AbaRecv, CoinRecv, RbcRecv, RoundProtocolRouter, TpkeRecv
 from honey.support.exceptions import ProtocolInvariantError, RoutingError, SerializationError
@@ -25,7 +26,6 @@ from honey.support.messages import (
 from honey.support.params import CommonParams, CryptoParams, HBConfig
 from honey.support.results import Failure, Result, Success, failure, success
 from honey.support.telemetry import METRICS, log_event, timed_metric
-from network.transport import Transport
 
 
 @dataclass
@@ -65,10 +65,7 @@ class HoneyBadgerBFT:
         self.crypto = crypto_params
         self.transport = transport
         self.config = config or HBConfig()
-        self.logger = logging.LoggerAdapter(
-            logging.getLogger("honey.hb"),
-            extra={"node": common_params.pid},
-        )
+        self.logger = self._build_logger(common_params.pid)
         self.mailboxes = NodeMailboxRouter(self.transport, self.logger)
         self.round = 0
         self.transaction_buffer = deque()
@@ -87,6 +84,9 @@ class HoneyBadgerBFT:
         self.origin_tx_latencies: list[float] = []
         self.origin_tx_latencies_by_round: list[tuple[float, ...]] = []
         self._tracked_submission_times_ns: dict[str, deque[int]] = {}
+
+    def _build_logger(self, pid: int) -> logging.LoggerAdapter:
+        return logging.LoggerAdapter(logging.getLogger("honey.hb"), extra={"node": pid})
 
     def submit_tx(
         self,
