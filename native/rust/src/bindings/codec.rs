@@ -848,9 +848,7 @@ fn encode_protocol_envelope(
             _ => return Err(PyValueError::new_err("invalid message tag")),
         },
     };
-    py.detach(move || {
-        archive_api::encode(&wire)
-    })
+    py.detach(move || archive_api::encode(&wire))
 }
 
 #[pyfunction]
@@ -878,9 +876,7 @@ fn encode_protocol_envelope_py(
         },
         message: extract_message_wire(py, &message)?,
     };
-    py.detach(move || {
-        archive_api::encode(&wire)
-    })
+    py.detach(move || archive_api::encode(&wire))
 }
 
 #[pyfunction]

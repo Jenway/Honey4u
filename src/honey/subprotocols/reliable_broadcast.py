@@ -8,6 +8,7 @@ import honey_native
 
 from honey.crypto.merkle import decode, encode
 from honey.data.broadcast_mempool import BroadcastMempool
+from honey.support.exceptions import ProtocolInvariantError
 from honey.support.messages import RbcEcho, RbcReady, RbcVal
 from honey.support.params import CommonParams
 from honey.support.telemetry import METRICS, timed_metric
@@ -64,7 +65,8 @@ async def reliablebroadcast(
 
     if pid == leader:
         m = await input_queue.get()
-        assert isinstance(m, (str, bytes))
+        if not isinstance(m, (str, bytes)):
+            raise ProtocolInvariantError(f"RBC input must be bytes or str, got {type(m).__name__}")
         if isinstance(m, str):
             m = m.encode()
         with timed_metric("rbc.encode.seconds", node=pid, leader=leader):
@@ -150,8 +152,8 @@ async def reliablebroadcast(
                 logger.warning("Invalid VAL shard index", extra={"node": pid, "sender": sender})
                 continue
             try:
-                is_valid = honey_native.merkle_verify(stripe, proof, roothash)
-                assert is_valid, "Merkle proof verification failed"
+                if not honey_native.merkle_verify(stripe, proof, roothash):
+                    raise ProtocolInvariantError("Merkle proof verification failed")
             except Exception as e:
                 logger.warning(f"Failed to validate VAL message: {e}", extra={"node": pid})
                 continue
@@ -182,8 +184,8 @@ async def reliablebroadcast(
                 logger.warning("Invalid ECHO shard index", extra={"node": pid, "sender": sender})
                 continue
             try:
-                is_valid = honey_native.merkle_verify(stripe, proof, roothash)
-                assert is_valid, "Merkle proof verification failed"
+                if not honey_native.merkle_verify(stripe, proof, roothash):
+                    raise ProtocolInvariantError("Merkle proof verification failed")
             except Exception as e:
                 logger.warning(f"Failed to validate ECHO message: {e}", extra={"node": pid})
                 continue

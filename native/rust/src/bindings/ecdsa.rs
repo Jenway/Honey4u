@@ -1,7 +1,7 @@
 use crate::crypto;
+use k256::elliptic_curve::rand_core::OsRng;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use k256::elliptic_curve::rand_core::OsRng;
 
 fn copy_fixed<const N: usize>(value: &[u8], label: &str) -> PyResult<[u8; N]> {
     value

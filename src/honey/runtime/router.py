@@ -5,9 +5,9 @@ import logging
 import sys
 import traceback
 
+from honey.network.transport import InboundEnvelope, Transport
 from honey.support.exceptions import UnknownTagError
 from honey.support.messages import Channel, ProtocolEnvelope, ProtocolMessage
-from network.transport import InboundEnvelope, Transport
 
 CoinRecv = tuple[int, ProtocolMessage]
 AbaRecv = tuple[int, ProtocolMessage]

@@ -135,7 +135,10 @@ impl CiphertextWire {
     pub(crate) fn into_runtime(self) -> Result<Ciphertext, String> {
         let mut v = [0u8; 32];
         if self.v.len() != v.len() {
-            return Err(format!("expected 32 bytes for ciphertext mask, got {}", self.v.len()));
+            return Err(format!(
+                "expected 32 bytes for ciphertext mask, got {}",
+                self.v.len()
+            ));
         }
         v.copy_from_slice(&self.v);
 

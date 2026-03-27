@@ -21,8 +21,7 @@ where
 pub(crate) fn decode<T>(payload: &[u8]) -> PyResult<T>
 where
     T: Archive,
-    for<'a> <T as Archive>::Archived:
-        rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, Error>>
+    for<'a> <T as Archive>::Archived: rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, Error>>
         + Deserialize<T, rkyv::api::high::HighDeserializer<Error>>,
 {
     rkyv::from_bytes::<T, Error>(payload).map_err(|e| PyValueError::new_err(e.to_string()))

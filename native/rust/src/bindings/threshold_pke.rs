@@ -202,7 +202,8 @@ fn seal_encrypted_batch(py: Python<'_>, pk: &PkePublicKey, payload: &[u8]) -> Py
         rng.fill(&mut key);
         let ciphertext = crypto::aes::encrypt(&key, &payload)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let encrypted_key = encode_ciphertext(&crypto::threshold::pke::seal(&master_public_key, key))?;
+        let encrypted_key =
+            encode_ciphertext(&crypto::threshold::pke::seal(&master_public_key, key))?;
         archive_api::encode(&EncryptedBatchWire {
             encrypted_key,
             ciphertext,

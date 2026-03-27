@@ -17,6 +17,7 @@ from honey.data.pool_reuse import (
     PoolReference,
     decode_acs_payload,
 )
+from honey.network.transport import Transport
 from honey.runtime.router import DumboPoolRecv, DumboRecv, RoundProtocolRouter, TpkeRecv
 from honey.subprotocols.dumbo_mvba import (
     MvbaAbaCoinShare,
@@ -51,7 +52,6 @@ from honey.support.messages import (
 )
 from honey.support.params import HBConfig
 from honey.support.results import Result, success
-from network.transport import Transport
 
 DUMBO_PRBC_MESSAGES = (PrbcVal, PrbcEcho, PrbcReady)
 DUMBO_MVBA_MESSAGES = (
@@ -102,9 +102,9 @@ class DumboBFT(HoneyBadgerBFT):
             raise ValueError("DumboBFT requires proof_sig_pk/proof_sig_sk in CryptoParams")
         if not self.crypto.ecdsa_pks or self.crypto.ecdsa_sk is None:
             raise ValueError("DumboBFT requires ECDSA material in CryptoParams")
-        self.logger = logging.LoggerAdapter(
-            logging.getLogger("honey.dumbo"), extra={"node": common_params.pid}
-        )
+
+    def _build_logger(self, pid: int) -> logging.LoggerAdapter:
+        return logging.LoggerAdapter(logging.getLogger("honey.dumbo"), extra={"node": pid})
 
     def _pool_reuse_enabled(self) -> bool:
         return self.config.enable_broadcast_pool_reuse

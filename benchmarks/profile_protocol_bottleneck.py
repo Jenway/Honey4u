@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from network.hbbft_runner import (  # noqa: E402
+from honey.network.hbbft_runner import (  # noqa: E402
     MultiprocessNodeResult,
     benchmark_local_dumbo_nodes_multiprocess,
     benchmark_local_honeybadger_nodes_multiprocess,

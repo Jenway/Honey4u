@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from honey.support.logging_ext import setup_logging
-from network.hbbft_runner import (
+from honey.network.hbbft_runner import (
     run_local_honeybadger_nodes_multiprocess,
     run_local_honeybadger_nodes_single_process,
 )
+from honey.support.logging_ext import setup_logging
 
 setup_logging("DEBUG")
 

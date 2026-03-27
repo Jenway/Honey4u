@@ -146,18 +146,9 @@ pub(crate) enum MessageWire {
 
 #[derive(Archive, Serialize, Deserialize)]
 pub(crate) enum AbaPayloadWire {
-    BaEst {
-        epoch: u32,
-        value: u32,
-    },
-    BaAux {
-        epoch: u32,
-        value: u32,
-    },
-    BaConf {
-        epoch: u32,
-        values: Vec<u32>,
-    },
+    BaEst { epoch: u32, value: u32 },
+    BaAux { epoch: u32, value: u32 },
+    BaConf { epoch: u32, values: Vec<u32> },
 }
 
 #[derive(Archive, Serialize, Deserialize)]

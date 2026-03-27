@@ -16,11 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from honey.support.telemetry import METRICS
-from network.hbbft_runner import (
+from honey.network.hbbft_runner import (
     benchmark_local_honeybadger_nodes_multiprocess,
     run_local_honeybadger_nodes_deterministic,
 )
+from honey.support.telemetry import METRICS
 
 
 def _summarize_multiprocess(results: list[Any], outer_elapsed: float) -> dict[str, Any]:

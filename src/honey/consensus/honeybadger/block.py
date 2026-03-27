@@ -183,7 +183,10 @@ def _build_batch_states(
     acs_batches: tuple[bytes | None, ...] | tuple[bytes, ...],
 ) -> tuple[list[BatchDecryptionState], list[bytes]]:
     selected_batches = [raw_batch for raw_batch in acs_batches if raw_batch is not None]
-    assert len(selected_batches) >= N - f
+    if len(selected_batches) < N - f:
+        raise ProtocolInvariantError(
+            f"expected at least {N - f} ACS batches, got {len(selected_batches)}"
+        )
 
     batch_states: list[BatchDecryptionState] = []
     my_shares: list[bytes] = []

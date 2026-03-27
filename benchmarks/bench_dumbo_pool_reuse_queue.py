@@ -9,8 +9,8 @@ from pathlib import Path
 
 from honey.consensus.dumbo.core import DumboBFT
 from honey.crypto import ecdsa, pke, sig
+from honey.network.transport import QueueTransport
 from honey.support.params import CommonParams, CryptoParams, HBConfig
-from network.transport import QueueTransport
 
 
 @dataclass(frozen=True)

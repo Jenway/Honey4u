@@ -18,8 +18,8 @@ for path in (str(REPO_ROOT), str(SRC_ROOT)):
 
 from honey.consensus.dumbo.core import DumboBFT  # noqa: E402
 from honey.crypto import ecdsa, pke, sig  # noqa: E402
+from honey.network.transport import QueueTransport  # noqa: E402
 from honey.support.params import CommonParams, CryptoParams, HBConfig  # noqa: E402
-from network.transport import QueueTransport  # noqa: E402
 
 
 @dataclass(frozen=True)
