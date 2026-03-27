@@ -6,6 +6,8 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+import honey_native
+
 from honey.acs.bkr93 import CSParams, run_bkr93_acs
 from honey.consensus.honeybadger.block import honeybadger_block
 from honey.data.broadcast_mempool import BroadcastMempool
@@ -15,10 +17,9 @@ from honey.support.exceptions import ProtocolInvariantError, RoutingError, Seria
 from honey.support.messages import (
     Channel,
     ProtocolMessage,
-    decode_tx,
-    decode_tx_batch,
     encode_tx,
     encode_tx_batch,
+    merge_tx_batches,
     tx_dedup_key,
 )
 from honey.support.params import CommonParams, CryptoParams, HBConfig
@@ -45,6 +46,13 @@ class RoundContext:
     tasks: list[asyncio.Task[Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class PendingRoundBatch:
+    txs: tuple[Any, ...]
+    proposal_payload: bytes
+    tx_ids: tuple[str, ...] = ()
+
+
 class HoneyBadgerBFT:
     def __init__(
         self,
@@ -64,15 +72,21 @@ class HoneyBadgerBFT:
         self.mailboxes = NodeMailboxRouter(self.transport, self.logger)
         self.round = 0
         self.transaction_buffer = deque()
+        self._rust_tx_pool = honey_native.TxPool() if self.config.use_rust_tx_pool else None
+        self._tx_objects_by_id: dict[str, Any] = {}
+        self._next_tx_seq = 0
+        self._active_batch: PendingRoundBatch | None = None
         self.mempool = BroadcastMempool(max_size=1000, expire_rounds=self.config.pool_expire_rounds)
         self.K = self.config.max_rounds
         self.txcnt = 0
+        self.round_build_latencies: list[float] = []
         self.round_latencies: list[float] = []
+        self.round_wall_latencies: list[float] = []
         self.round_proposed_counts: list[int] = []
         self.round_delivered_counts: list[int] = []
         self.origin_tx_latencies: list[float] = []
         self.origin_tx_latencies_by_round: list[tuple[float, ...]] = []
-        self._tracked_submission_times_ns: dict[str, int] = {}
+        self._tracked_submission_times_ns: dict[str, deque[int]] = {}
 
     def submit_tx(
         self,
@@ -81,11 +95,68 @@ class HoneyBadgerBFT:
         track_latency: bool = False,
         submitted_at_ns: int | None = None,
     ) -> None:
-        self.transaction_buffer.append(tx)
+        self._submit_tx_encoded(
+            tx=tx,
+            payload=encode_tx(tx),
+            dedup_key=self._tx_dedup_key(tx),
+            track_latency=track_latency,
+            submitted_at_ns=submitted_at_ns,
+        )
+
+    def submit_tx_json_str(
+        self,
+        tx: str,
+        *,
+        track_latency: bool = False,
+        submitted_at_ns: int | None = None,
+    ) -> None:
+        if self._rust_tx_pool is not None:
+            tx_id = self._allocate_tx_id()
+            self._rust_tx_pool.push_json_str(tx_id, tx)
+            self._tx_objects_by_id[tx_id] = tx
+        else:
+            self.transaction_buffer.append(tx)
+
         if track_latency:
-            self._tracked_submission_times_ns[self._tx_dedup_key(tx)] = (
-                submitted_at_ns if submitted_at_ns is not None else time.time_ns()
-            )
+            tracked = self._tracked_submission_times_ns.setdefault(f"s:{tx}", deque())
+            tracked.append(submitted_at_ns if submitted_at_ns is not None else time.time_ns())
+
+    def submit_tx_bytes(
+        self,
+        payload: bytes,
+        *,
+        tx: Any,
+        dedup_key: str | None = None,
+        track_latency: bool = False,
+        submitted_at_ns: int | None = None,
+    ) -> None:
+        self._submit_tx_encoded(
+            tx=tx,
+            payload=payload,
+            dedup_key=dedup_key or self._tx_dedup_key(tx),
+            track_latency=track_latency,
+            submitted_at_ns=submitted_at_ns,
+        )
+
+    def _submit_tx_encoded(
+        self,
+        *,
+        tx: Any,
+        payload: bytes,
+        dedup_key: str,
+        track_latency: bool,
+        submitted_at_ns: int | None,
+    ) -> None:
+        if self._rust_tx_pool is not None:
+            tx_id = self._allocate_tx_id()
+            self._rust_tx_pool.push(tx_id, payload)
+            self._tx_objects_by_id[tx_id] = tx
+        else:
+            self.transaction_buffer.append(tx)
+
+        if track_latency:
+            tracked = self._tracked_submission_times_ns.setdefault(dedup_key, deque())
+            tracked.append(submitted_at_ns if submitted_at_ns is not None else time.time_ns())
 
     async def run(self) -> None:
         mailbox_task = asyncio.create_task(self.mailboxes.run())
@@ -102,28 +173,32 @@ class HoneyBadgerBFT:
                 round_id = self.round
                 self.mailboxes.inbox(round_id)
 
-                tx_to_send = []
-                for _ in range(self.config.batch_size):
-                    if self.transaction_buffer:
-                        tx_to_send.append(self.transaction_buffer.popleft())
-                if not tx_to_send:
+                round_wall_start = time.perf_counter()
+                round_build_start = round_wall_start
+                batch = self._build_round_batch()
+                self.round_build_latencies.append(time.perf_counter() - round_build_start)
+                if batch is None:
+                    self.round_build_latencies.pop()
                     await asyncio.sleep(0.1)
                     continue
 
+                self._active_batch = batch
                 METRICS.increment("hb.round.started", node=self.common.pid)
                 log_event(
                     self.logger,
                     logging.DEBUG,
                     "round_start",
                     round=round_id,
-                    batch_size=len(tx_to_send),
+                    batch_size=len(batch.txs),
                 )
                 round_start = time.perf_counter()
                 with timed_metric("hb.round.seconds", node=self.common.pid, round=round_id):
-                    round_result = await self._run_round(round_id, tx_to_send)
+                    round_result = await self._run_round(round_id, list(batch.txs))
                 self.round_latencies.append(time.perf_counter() - round_start)
+                self.round_wall_latencies.append(time.perf_counter() - round_wall_start)
 
-                self._apply_round_result(round_id, tx_to_send, round_result)
+                self._apply_round_result(round_id, batch, round_result)
+                self._active_batch = None
                 self._finish_round(round_id)
                 self.round += 1
                 if self.round >= self.K:
@@ -145,8 +220,9 @@ class HoneyBadgerBFT:
         )
 
     def _apply_round_result(
-        self, round_id: int, tx_to_send: list[Any], round_result: Result[list[Any]]
+        self, round_id: int, batch: PendingRoundBatch, round_result: Result[list[Any]]
     ) -> None:
+        tx_to_send = list(batch.txs)
         self.round_proposed_counts.append(len(tx_to_send))
 
         if isinstance(round_result, Success):
@@ -163,9 +239,10 @@ class HoneyBadgerBFT:
                 extra={"round": round_id, "tx_count": tx_cnt},
             )
 
-            for tx in tx_to_send:
-                if tx not in new_tx:
-                    self.transaction_buffer.appendleft(tx)
+            retry_txs, retry_ids, delivered_ids = self._partition_batch_by_delivery(batch, new_tx)
+            self._release_round_batch(
+                batch, retry_txs=retry_txs, retry_ids=retry_ids, delivered_ids=delivered_ids
+            )
             return
 
         self.round_delivered_counts.append(0)
@@ -182,8 +259,8 @@ class HoneyBadgerBFT:
             )
         else:
             self.logger.warning("Round failed", extra={"round": round_id})
-        for tx in reversed(tx_to_send):
-            self.transaction_buffer.appendleft(tx)
+
+        self._release_round_batch(batch, retry_txs=list(batch.txs), retry_ids=list(batch.tx_ids))
 
     def _finish_round(self, round_id: int) -> None:
         self.mailboxes.close_round(round_id)
@@ -193,9 +270,12 @@ class HoneyBadgerBFT:
         round_latencies: list[float] = []
         for tx in delivered_txs:
             tx_key = self._tx_dedup_key(tx)
-            submitted_at_ns = self._tracked_submission_times_ns.pop(tx_key, None)
-            if submitted_at_ns is None:
+            submission_times = self._tracked_submission_times_ns.get(tx_key)
+            if not submission_times:
                 continue
+            submitted_at_ns = submission_times.popleft()
+            if not submission_times:
+                self._tracked_submission_times_ns.pop(tx_key, None)
             latency = max(0.0, (delivered_at_ns - submitted_at_ns) / 1_000_000_000)
             self.origin_tx_latencies.append(latency)
             round_latencies.append(latency)
@@ -207,21 +287,7 @@ class HoneyBadgerBFT:
 
     @classmethod
     def _merge_block_batches(cls, block: tuple[bytes, ...]) -> list[Any]:
-        ordered_results: list[Any] = []
-        seen: set[str] = set()
-
-        for batch in block:
-            decoded_batch = decode_tx_batch(batch)
-
-            for raw_tx in decoded_batch:
-                tx = decode_tx(raw_tx)
-                tx_key = raw_tx.hex()
-                if tx_key in seen:
-                    continue
-                seen.add(tx_key)
-                ordered_results.append(tx)
-
-        return ordered_results
+        return merge_tx_batches(block)
 
     async def _run_round(self, round_id: int, tx_to_send: list[Any]) -> Result[list[Any]]:
         try:
@@ -263,7 +329,7 @@ class HoneyBadgerBFT:
                 )
 
                 propose_queue: asyncio.Queue[bytes] = asyncio.Queue(1)
-                propose_queue.put_nowait(encode_tx_batch([encode_tx(tx) for tx in tx_to_send]))
+                propose_queue.put_nowait(self._proposal_payload_for_active_batch(tx_to_send))
                 block_task = spawn(
                     honeybadger_block(
                         ctx.pid,
@@ -284,12 +350,117 @@ class HoneyBadgerBFT:
                 self._cancel_round_tasks(ctx.tasks, keep={block_task})
 
             self.mempool.cleanup(round_id)
-            return success(self._merge_block_batches(block))
+            merged = await asyncio.to_thread(self._merge_block_batches, block)
+            return success(merged)
         except TimeoutError:
             return self._round_failure("TIMEOUT", round_id, f"Round {round_id} exceeded timeout")
         except Exception as exc:
             code, message, details = self._classify_round_exception(round_id, exc)
             return self._round_failure(code, round_id, message, details)
+
+    def _allocate_tx_id(self) -> str:
+        tx_id = f"{self.common.pid}:{self._next_tx_seq}"
+        self._next_tx_seq += 1
+        return tx_id
+
+    def _build_python_round_batch(self) -> PendingRoundBatch | None:
+        tx_to_send: list[Any] = []
+        for _ in range(self.config.batch_size):
+            if not self.transaction_buffer:
+                break
+            tx_to_send.append(self.transaction_buffer.popleft())
+
+        if not tx_to_send:
+            return None
+
+        return PendingRoundBatch(
+            txs=tuple(tx_to_send),
+            proposal_payload=encode_tx_batch([encode_tx(tx) for tx in tx_to_send]),
+        )
+
+    def _build_rust_round_batch(self) -> PendingRoundBatch | None:
+        if self._rust_tx_pool is None:
+            return None
+
+        tx_ids, proposal_payload = self._rust_tx_pool.pop_batch(
+            self.config.batch_size,
+            self.config.rust_tx_pool_max_bytes,
+        )
+        if not tx_ids:
+            return None
+
+        txs: list[Any] = []
+        for tx_id in tx_ids:
+            tx = self._tx_objects_by_id.get(tx_id)
+            if tx is None:
+                raise ProtocolInvariantError(f"missing local tx object for tx_id={tx_id}")
+            txs.append(tx)
+
+        return PendingRoundBatch(
+            txs=tuple(txs),
+            proposal_payload=proposal_payload,
+            tx_ids=tuple(tx_ids),
+        )
+
+    def _build_round_batch(self) -> PendingRoundBatch | None:
+        if self._rust_tx_pool is not None:
+            return self._build_rust_round_batch()
+        return self._build_python_round_batch()
+
+    def _proposal_payload_for_active_batch(self, tx_to_send: list[Any]) -> bytes:
+        if self._active_batch is not None:
+            return self._active_batch.proposal_payload
+        return encode_tx_batch([encode_tx(tx) for tx in tx_to_send])
+
+    def _partition_batch_by_delivery(
+        self,
+        batch: PendingRoundBatch,
+        delivered_txs: list[Any],
+    ) -> tuple[list[Any], list[str], list[str]]:
+        delivered_counts: dict[str, int] = {}
+        for tx in delivered_txs:
+            tx_key = self._tx_dedup_key(tx)
+            delivered_counts[tx_key] = delivered_counts.get(tx_key, 0) + 1
+
+        retry_txs: list[Any] = []
+        retry_ids: list[str] = []
+        delivered_ids: list[str] = []
+        for idx, tx in enumerate(batch.txs):
+            tx_key = self._tx_dedup_key(tx)
+            remaining = delivered_counts.get(tx_key, 0)
+            if remaining > 0:
+                delivered_counts[tx_key] = remaining - 1
+                if batch.tx_ids:
+                    delivered_ids.append(batch.tx_ids[idx])
+                continue
+
+            retry_txs.append(tx)
+            if batch.tx_ids:
+                retry_ids.append(batch.tx_ids[idx])
+
+        return retry_txs, retry_ids, delivered_ids
+
+    def _release_round_batch(
+        self,
+        batch: PendingRoundBatch,
+        *,
+        retry_txs: list[Any],
+        retry_ids: list[str],
+        delivered_ids: list[str] | None = None,
+    ) -> None:
+        if batch.tx_ids:
+            if self._rust_tx_pool is None:
+                raise ProtocolInvariantError("round batch has tx_ids but rust tx pool is disabled")
+            if delivered_ids:
+                self._rust_tx_pool.drop_inflight(delivered_ids)
+                for tx_id in delivered_ids:
+                    self._tx_objects_by_id.pop(tx_id, None)
+            if retry_ids:
+                self._rust_tx_pool.requeue(retry_ids)
+            return
+
+        for tx in reversed(retry_txs):
+            self.transaction_buffer.appendleft(tx)
 
     def _build_round_context(self, round_id: int) -> RoundContext:
         tpke_recv: asyncio.Queue[TpkeRecv] = asyncio.Queue()
@@ -400,9 +571,16 @@ class HoneyBadgerBFT:
         message: str,
         details: dict[str, Any] | None = None,
     ) -> Result[list[Any]]:
-        extra = {"round": round_id, "error_code": code, "details": details or {}}
+        details = details or {}
+        extra = {"round": round_id, "error_code": code, "details": details}
         if code == "TIMEOUT":
             self.logger.warning("Round timeout", extra=extra)
         else:
-            self.logger.error(message, extra=extra)
+            detail_suffix = ""
+            if details:
+                exception_type = details.get("exception_type")
+                error = details.get("error")
+                if exception_type or error:
+                    detail_suffix = f" [{exception_type}: {error}]"
+            self.logger.error(f"{message}{detail_suffix}", extra=extra)
         return failure(code, message, details)

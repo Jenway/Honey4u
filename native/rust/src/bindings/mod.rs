@@ -8,6 +8,7 @@ mod key_storage;
 mod merkle;
 mod threshold_pke;
 mod threshold_sig;
+mod tx_pool;
 
 pub fn register_all(m: &Bound<'_, PyModule>) -> PyResult<()> {
     merkle::register(m)?;
@@ -17,5 +18,6 @@ pub fn register_all(m: &Bound<'_, PyModule>) -> PyResult<()> {
     aes::register(m)?;
     key_storage::register(m)?;
     codec::register(m)?;
+    tx_pool::register(m)?;
     Ok(())
 }
