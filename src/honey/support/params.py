@@ -26,10 +26,10 @@ class CommonParams:
 class CryptoParams:
     """Cryptographic key material for HoneyBadgerBFT"""
 
-    sig_pk: Any  # Signature public key (threshold signature PK)
-    sig_sk: Any  # Signature secret key (threshold signature SK)
-    enc_pk: Any  # Encryption public key (threshold encryption PK)
-    enc_sk: Any  # Encryption secret key (threshold encryption SK)
+    sig_pk: Any
+    sig_sk: Any
+    enc_pk: Any
+    enc_sk: Any
     ecdsa_pks: list[bytes] = field(default_factory=list)
     ecdsa_sk: bytes | None = None
     proof_sig_pk: Any | None = None
@@ -61,11 +61,13 @@ class CryptoParams:
 class HBConfig:
     """Runtime configuration parameters for HoneyBadgerBFT"""
 
-    batch_size: int = 1  # Batch size for transactions per round
-    max_rounds: int = 3  # Maximum number of rounds to run
-    round_timeout: float = 10.0  # Single round timeout in seconds
-    enable_profiling: bool = False  # Enable performance profiling
-    log_level: str = "INFO"  # Logging level: DEBUG, INFO, WARNING, ERROR
+    batch_size: int = 1
+    use_rust_tx_pool: bool = False
+    rust_tx_pool_max_bytes: int = 0
+    max_rounds: int = 3
+    round_timeout: float = 10.0
+    enable_profiling: bool = False
+    log_level: str = "INFO"
     enable_broadcast_pool_reuse: bool = False
     enable_pool_reference_proposals: bool = False
     enable_pool_fetch_fallback: bool = False
