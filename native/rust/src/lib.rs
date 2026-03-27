@@ -1,3 +1,4 @@
+mod archive;
 mod bindings;
 mod crypto;
 use pyo3::prelude::*;

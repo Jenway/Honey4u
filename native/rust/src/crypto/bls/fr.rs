@@ -6,7 +6,7 @@
 use blst::{
     blst_fr, blst_fr_from_scalar, blst_fr_from_uint64, blst_scalar, blst_scalar_from_be_bytes,
 };
-use rand::RngCore;
+use rand::RngExt;
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
@@ -40,10 +40,10 @@ impl Fr {
     }
 
     pub fn random() -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         loop {
             let mut bytes = [0u8; 32];
-            rng.fill_bytes(&mut bytes);
+            rng.fill(&mut bytes);
             unsafe {
                 let mut scalar = std::mem::zeroed::<blst_scalar>();
                 // blst_scalar_from_be_bytes returns true if value is in range [0, r)

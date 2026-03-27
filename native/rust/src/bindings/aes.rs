@@ -11,7 +11,7 @@ fn aes_encrypt(py: Python<'_>, key_bin: &[u8], plaintext: &[u8]) -> PyResult<Vec
     let mut key = [0u8; 32];
     key.copy_from_slice(key_bin);
     let plaintext = plaintext.to_vec();
-    py.allow_threads(move || {
+    py.detach(move || {
         crypto::aes::encrypt(&key, &plaintext).map_err(|e| PyValueError::new_err(e.to_string()))
     })
 }
@@ -24,7 +24,7 @@ fn aes_decrypt(py: Python<'_>, key_bin: &[u8], ciphertext: &[u8]) -> PyResult<Ve
     let mut key = [0u8; 32];
     key.copy_from_slice(key_bin);
     let ciphertext = ciphertext.to_vec();
-    py.allow_threads(move || {
+    py.detach(move || {
         crypto::aes::decrypt(&key, &ciphertext).map_err(|e| PyValueError::new_err(e.to_string()))
     })
 }
