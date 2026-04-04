@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import logging
+from dataclasses import dataclass
+from typing import Any, cast
 
+import honey_native
 import pytest
 
 from honey.consensus.dumbo.core import DumboBFT
 from honey.network.transport import QueueTransport
 from honey.runtime.node_mailbox import NodeMailboxRouter
 from honey.support.params import CommonParams, CryptoParams, HBConfig
+
+node_embed = importlib.import_module("honey.node_embed")
 
 
 def test_runtime_modules_live_under_honey_namespace() -> None:
@@ -93,3 +99,109 @@ def test_node_mailbox_router_bounds_closed_round_state() -> None:
     router.close_round(1)
     assert router.stats()["active_rounds"] == 0
     assert router.peak_round_inbox_sizes == {}
+
+
+@dataclass
+class _DummyTransport:
+    async def send(self, recipient: int, envelope: object) -> None:
+        del recipient, envelope
+
+    async def recv(self) -> tuple[int, object]:
+        return (0, object())
+
+
+def test_plan_hb_node_rejects_transport_without_recv() -> None:
+    class SendOnlyTransport:
+        async def send(self, recipient: int, envelope: object) -> None:
+            del recipient, envelope
+
+    with pytest.raises(ValueError, match="transport_handle must define callable recv"):
+        node_embed.plan_hb_node(
+            common={"sid": "s", "pid": 0, "N": 4, "f": 1, "leader": 0},
+            crypto=None,
+            transport_handle=SendOnlyTransport(),
+            commit_sink=object(),
+            config={"max_rounds": 1},
+        )
+
+
+def test_plan_dumbo_node_builds_protocol_specific_plan() -> None:
+    plan = node_embed.plan_dumbo_node(
+        common={"sid": "s", "pid": 0, "N": 4, "f": 1, "leader": 0},
+        crypto=None,
+        transport_handle=_DummyTransport(),
+        commit_sink=object(),
+        config={"max_rounds": 2},
+    )
+
+    assert plan.protocol == "dumbo"
+    assert plan.max_rounds == 2
+    assert plan.transport_handle_type == "_DummyTransport"
+
+
+@pytest.mark.asyncio
+async def test_run_hb_node_emits_commits_via_commit_sink(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeLedger:
+        def append_block(
+            self,
+            *,
+            round_id: int,
+            block_payload: bytes,
+            tx_count: int,
+            delivered_at_ns: int,
+        ) -> object:
+            del delivered_at_ns
+            return {
+                "round_id": round_id,
+                "block_payload": block_payload,
+                "tx_count": tx_count,
+            }
+
+    class FakeHBNode:
+        def __init__(
+            self,
+            common_params: CommonParams,
+            crypto_params: Any,
+            transport: _DummyTransport,
+            config: HBConfig | None = None,
+        ) -> None:
+            del common_params, crypto_params, transport, config
+            self._ledger = FakeLedger()
+
+        async def run(self) -> None:
+            self._ledger.append_block(
+                round_id=0,
+                block_payload=b"block-0",
+                tx_count=2,
+                delivered_at_ns=123,
+            )
+
+    class FakeSink:
+        def __init__(self) -> None:
+            self.records: list[tuple[int, bytes, int]] = []
+
+        def commit(self, *, round_id: int, payload: bytes, tx_count: int) -> None:
+            self.records.append((round_id, payload, tx_count))
+
+    monkeypatch.setattr(node_embed, "HoneyBadgerBFT", FakeHBNode)
+    sink = FakeSink()
+    await node_embed.run_hb_node(
+        common={"sid": "s", "pid": 0, "N": 4, "f": 1, "leader": 0},
+        crypto=cast(Any, object()),
+        transport_handle=_DummyTransport(),
+        commit_sink=sink,
+        config={"max_rounds": 1},
+    )
+
+    assert sink.records == [(0, b"block-0", 2)]
+
+
+def test_embedded_transport_handle_exposes_wakeup_seq() -> None:
+    if "EmbeddedTransportHandle" not in honey_native.__dict__:
+        pytest.skip("EmbeddedTransportHandle export not available in current built extension")
+    transport_cls = cast(Any, honey_native.__dict__["EmbeddedTransportHandle"])
+    transport = transport_cls(0, [("127.0.0.1", 35301)])
+    try:
+        assert isinstance(transport.wakeup_seq(), int)
+    finally:
+        transport.close()

@@ -34,7 +34,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--rounds", type=int, default=4)
     parser.add_argument("--round-timeout", type=float, default=360.0)
     parser.add_argument("--global-timeout", type=float, default=14400.0)
-    parser.add_argument("--tx-input", choices=("python_json", "json_str", "bytes"), default="bytes")
+    parser.add_argument("--tx-input", choices=("json_str", "bytes"), default="bytes")
+    parser.add_argument("--transport-backend", choices=("tcp", "quic"), default="tcp")
     parser.add_argument("--transactions-per-node", type=int, default=None)
     parser.add_argument("--log-level", default="ERROR")
     parser.add_argument("--output", type=Path, default=None)
@@ -66,6 +67,19 @@ def _queue_peaks(results: list[MultiprocessNodeResult]) -> dict[str, dict[str, f
     summary: dict[str, dict[str, float | int]] = {}
     for metric in metrics:
         values = [getattr(result.queue_peaks, metric) for result in results]
+        summary[metric] = {
+            "min": min(values, default=0),
+            "mean": (sum(values) / len(values)) if values else 0.0,
+            "max": max(values, default=0),
+        }
+    return summary
+
+
+def _transport_stats(results: list[MultiprocessNodeResult]) -> dict[str, dict[str, float | int]]:
+    metrics = ("sent_frames", "recv_frames", "connect_retries", "send_retries")
+    summary: dict[str, dict[str, float | int]] = {}
+    for metric in metrics:
+        values = [getattr(result.transport_stats, metric) for result in results]
         summary[metric] = {
             "min": min(values, default=0),
             "mean": (sum(values) / len(values)) if values else 0.0,
@@ -114,6 +128,7 @@ def _run_profile(args: argparse.Namespace) -> dict[str, Any]:
         global_timeout=args.global_timeout,
         transactions_per_node=transactions_per_node,
         tx_input=args.tx_input,
+        transport_backend=args.transport_backend,
         log_level=args.log_level,
     )
     outer_elapsed = time.perf_counter() - start
@@ -128,12 +143,14 @@ def _run_profile(args: argparse.Namespace) -> dict[str, Any]:
             "round_timeout": args.round_timeout,
             "global_timeout": args.global_timeout,
             "tx_input": args.tx_input,
+            "transport_backend": args.transport_backend,
             "transactions_per_node": transactions_per_node,
         },
         "elapsed_seconds": outer_elapsed,
         "delivered_transactions_min": min((result.delivered for result in results), default=0),
         "completed_rounds_min": min((result.rounds for result in results), default=0),
         "queue_peaks": _queue_peaks(results),
+        "transport_stats": _transport_stats(results),
         "timings": timings,
         "time_breakdown": _time_breakdown(timings),
     }

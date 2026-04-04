@@ -10,7 +10,11 @@ from typing import Any
 
 from honey.network.hbbft_runner import (
     benchmark_local_dumbo_nodes_multiprocess,
+    benchmark_local_dumbo_nodes_rust_hosted,
+    benchmark_local_dumbo_nodes_single_process,
     benchmark_local_honeybadger_nodes_multiprocess,
+    benchmark_local_honeybadger_nodes_rust_hosted,
+    benchmark_local_honeybadger_nodes_single_process,
 )
 
 
@@ -46,6 +50,7 @@ class BenchmarkSummary:
     faulty: int
     batch_size: int
     tx_input: str
+    transport_backend: str
     max_rounds: int
     warmup_rounds: int
     transactions_per_node: int
@@ -77,6 +82,11 @@ class BenchmarkSummary:
     measured_wall_round_latency: LatencyStats
     subprotocol_timings: dict[str, TimingStats]
     queue_backlog: dict[str, PeakStats]
+    node_runtime: str = "bridge"
+    all_nodes_agree: bool = True
+    consensus_chain_digest: str | None = None
+    diverged_pids: tuple[int, ...] = ()
+    ledger_root: str | None = None
 
 
 _QUEUE_PEAK_FIELDS = (
@@ -135,9 +145,23 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tx-input",
         type=str,
-        choices=("python_json", "json_str", "bytes"),
-        default="python_json",
+        choices=("json_str", "bytes"),
+        default="json_str",
         help="how benchmark workers submit dummy transactions into the local node",
+    )
+    parser.add_argument(
+        "--transport-backend",
+        type=str,
+        choices=("tcp", "quic"),
+        default="tcp",
+        help="which real socket transport backend to use for multiprocess runs",
+    )
+    parser.add_argument(
+        "--node-runtime",
+        type=str,
+        choices=("bridge", "embedded", "python", "rust"),
+        default="rust",
+        help="node runtime mode: python (queue), rust (native), or explicit bridge/embedded",
     )
     parser.add_argument(
         "--round-timeout", type=float, default=20.0, help="per-round timeout seconds"
@@ -166,11 +190,6 @@ def _parse_args() -> argparse.Namespace:
         help="grace period for collecting Dumbo carry-over PRBC outputs",
     )
     parser.add_argument(
-        "--use-rust-tx-pool",
-        action="store_true",
-        help="use the Rust-owned local tx pool for HoneyBadger",
-    )
-    parser.add_argument(
         "--rust-tx-pool-max-bytes",
         type=int,
         default=0,
@@ -178,6 +197,17 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-json", type=str, default=None, help="write JSON output to this path"
+    )
+    parser.add_argument(
+        "--ledger-dir",
+        type=str,
+        default=None,
+        help="persist each node's decided blocks as SQLite ledgers under this directory",
+    )
+    parser.add_argument(
+        "--fail-on-divergence",
+        action="store_true",
+        help="exit with an error if node chain digests diverge",
     )
     parser.add_argument(
         "--output-svg", type=str, default=None, help="write SVG plot to this path in sweep mode"
@@ -275,6 +305,24 @@ def _build_queue_backlog_stats(results: list[Any]) -> dict[str, PeakStats]:
     }
 
 
+def _build_consistency_summary(results: list[Any]) -> tuple[bool, str | None, tuple[int, ...]]:
+    if not results:
+        return True, None, ()
+
+    groups: dict[str | None, list[int]] = {}
+    for result in results:
+        groups.setdefault(result.chain_digest, []).append(result.pid)
+
+    if len(groups) == 1:
+        return True, results[0].chain_digest, ()
+
+    reference_digest, _ = max(groups.items(), key=lambda item: len(item[1]))
+    diverged_pids = tuple(
+        sorted(pid for digest, pids in groups.items() if digest != reference_digest for pid in pids)
+    )
+    return False, None, diverged_pids
+
+
 def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSummary:
     faulty = args.faulty if args.faulty is not None else (args.nodes - 1) // 3
     transactions_per_node = (
@@ -285,11 +333,30 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
     sid = f"{args.sid}:{args.nodes}:{batch_size}:{args.rounds}:{int(time.time())}"
     warmup_rounds = max(0, min(args.warmup_rounds, args.rounds))
 
-    benchmark_fn = (
-        benchmark_local_dumbo_nodes_multiprocess
-        if args.protocol == "dumbo"
-        else benchmark_local_honeybadger_nodes_multiprocess
-    )
+    runtime_alias = {
+        "python": "bridge",
+        "rust": "rust",
+    }
+    effective_runtime = runtime_alias.get(args.node_runtime, args.node_runtime)
+    use_single_process = args.node_runtime == "python"
+    use_rust_hosted = args.node_runtime == "rust"
+
+    if args.protocol == "dumbo":
+        benchmark_fn = (
+            benchmark_local_dumbo_nodes_single_process
+            if use_single_process
+            else benchmark_local_dumbo_nodes_rust_hosted
+            if use_rust_hosted
+            else benchmark_local_dumbo_nodes_multiprocess
+        )
+    else:
+        benchmark_fn = (
+            benchmark_local_honeybadger_nodes_single_process
+            if use_single_process
+            else benchmark_local_honeybadger_nodes_rust_hosted
+            if use_rust_hosted
+            else benchmark_local_honeybadger_nodes_multiprocess
+        )
 
     start = time.perf_counter()
     benchmark_kwargs = {
@@ -302,8 +369,16 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
         "global_timeout": args.global_timeout,
         "transactions_per_node": transactions_per_node,
         "tx_input": args.tx_input,
+        "transport_backend": args.transport_backend,
+        "node_runtime": effective_runtime,
         "log_level": args.log_level,
+        "ledger_dir": getattr(args, "ledger_dir", None),
     }
+    if use_single_process:
+        benchmark_kwargs.pop("global_timeout")
+        benchmark_kwargs.pop("node_runtime")
+    if use_rust_hosted:
+        benchmark_kwargs.pop("node_runtime")
     if args.protocol == "dumbo":
         benchmark_kwargs.update(
             enable_broadcast_pool_reuse=args.enable_pool_reuse,
@@ -312,12 +387,10 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
             pool_grace_ms=args.pool_grace_ms,
         )
     else:
-        benchmark_kwargs.update(
-            use_rust_tx_pool=args.use_rust_tx_pool,
-            rust_tx_pool_max_bytes=args.rust_tx_pool_max_bytes,
-        )
+        benchmark_kwargs.update(rust_tx_pool_max_bytes=args.rust_tx_pool_max_bytes)
     results = benchmark_fn(**benchmark_kwargs)
     elapsed_seconds = time.perf_counter() - start
+    all_nodes_agree, consensus_chain_digest, diverged_pids = _build_consistency_summary(results)
 
     delivered_counts = [result.delivered for result in results]
     round_counts = [result.rounds for result in results]
@@ -374,6 +447,8 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
         faulty=faulty,
         batch_size=batch_size,
         tx_input=args.tx_input,
+        transport_backend=args.transport_backend,
+        node_runtime=args.node_runtime,
         max_rounds=args.rounds,
         warmup_rounds=warmup_rounds,
         transactions_per_node=transactions_per_node,
@@ -442,6 +517,10 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
         ),
         subprotocol_timings=_build_timing_stats(results),
         queue_backlog=_build_queue_backlog_stats(results),
+        all_nodes_agree=all_nodes_agree,
+        consensus_chain_digest=consensus_chain_digest,
+        diverged_pids=diverged_pids,
+        ledger_root=getattr(args, "ledger_dir", None),
     )
 
 
@@ -570,6 +649,8 @@ def _build_sweep_payload(
             "global_timeout_seconds": args.global_timeout,
             "log_level": args.log_level,
             "tx_input": args.tx_input,
+            "transport_backend": args.transport_backend,
+            "node_runtime": args.node_runtime,
             "x_axis": "batch_size",
         },
         "points": [asdict(summary) for summary in summaries],
@@ -618,7 +699,16 @@ def _run_single_mode(args: argparse.Namespace) -> dict[str, Any]:
         f"wall_elapsed={summary.measured_wall_elapsed_seconds:.3f}s "
         f"wall_tps={summary.measured_wall_tps:.2f}"
     )
+    print(
+        "Consistency: "
+        f"agree={'yes' if summary.all_nodes_agree else 'no'} "
+        f"chain_digest={summary.consensus_chain_digest or 'n/a'}"
+    )
+    if summary.ledger_root:
+        print(f"Ledger root: {summary.ledger_root}")
     print(json.dumps(payload, indent=2, sort_keys=True))
+    if args.fail_on_divergence and not summary.all_nodes_agree:
+        raise RuntimeError(f"Node chain digests diverged: {summary.diverged_pids}")
     return payload
 
 
@@ -628,6 +718,10 @@ def _run_sweep_mode(args: argparse.Namespace) -> dict[str, Any]:
     for batch_size in batch_values:
         summary = _build_summary(args, batch_size=batch_size)
         summaries.append(summary)
+        if args.fail_on_divergence and not summary.all_nodes_agree:
+            raise RuntimeError(
+                f"Node chain digests diverged for batch={batch_size}: {summary.diverged_pids}"
+            )
         if not args.json:
             print(
                 f"batch={summary.batch_size} protocol_tps={summary.measured_protocol_tps:.2f} "
