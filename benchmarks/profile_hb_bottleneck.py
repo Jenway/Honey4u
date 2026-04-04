@@ -51,6 +51,12 @@ def _summarize_multiprocess(results: list[Any], outer_elapsed: float) -> dict[st
             "transport_outbound": [result.queue_peaks.transport_outbound for result in results],
             "mailbox_round_inbox": [result.queue_peaks.mailbox_round_inbox for result in results],
         },
+        "transport_stats": {
+            "sent_frames": [result.transport_stats.sent_frames for result in results],
+            "recv_frames": [result.transport_stats.recv_frames for result in results],
+            "connect_retries": [result.transport_stats.connect_retries for result in results],
+            "send_retries": [result.transport_stats.send_retries for result in results],
+        },
         "timings": {
             name: {"count": count, "total": total, "max": max_value}
             for name, (count, total, max_value) in timings.items()
@@ -74,7 +80,6 @@ async def _run_deterministic(args: argparse.Namespace) -> dict[str, Any]:
         transactions_per_node=args.transactions_per_node,
         tx_input=args.tx_input,
         log_level=args.log_level,
-        use_rust_tx_pool=args.use_rust_tx_pool,
         rust_tx_pool_max_bytes=args.rust_tx_pool_max_bytes,
     )
     outer_elapsed = time.perf_counter() - start
@@ -103,14 +108,12 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--rounds", type=int, default=4)
     parser.add_argument("--transactions-per-node", type=int)
-    parser.add_argument(
-        "--tx-input", choices=("python_json", "json_str", "bytes"), default="json_str"
-    )
+    parser.add_argument("--tx-input", choices=("json_str", "bytes"), default="json_str")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--round-timeout", type=float, default=20.0)
     parser.add_argument("--global-timeout", type=float, default=180.0)
     parser.add_argument("--log-level", default="ERROR")
-    parser.add_argument("--use-rust-tx-pool", action="store_true")
+    parser.add_argument("--transport-backend", choices=("tcp", "quic"), default="tcp")
     parser.add_argument("--rust-tx-pool-max-bytes", type=int, default=0)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -128,8 +131,8 @@ def main() -> None:
         global_timeout=args.global_timeout,
         transactions_per_node=args.transactions_per_node,
         tx_input=args.tx_input,
+        transport_backend=args.transport_backend,
         log_level=args.log_level,
-        use_rust_tx_pool=args.use_rust_tx_pool,
         rust_tx_pool_max_bytes=args.rust_tx_pool_max_bytes,
     )
     multiprocess_summary = _summarize_multiprocess(multiprocess, time.perf_counter() - start)
@@ -144,7 +147,7 @@ def main() -> None:
             "rounds": args.rounds,
             "transactions_per_node": args.transactions_per_node,
             "tx_input": args.tx_input,
-            "use_rust_tx_pool": args.use_rust_tx_pool,
+            "transport_backend": args.transport_backend,
             "rust_tx_pool_max_bytes": args.rust_tx_pool_max_bytes,
         },
         "multiprocess_socket": multiprocess_summary,

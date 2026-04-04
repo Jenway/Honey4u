@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+from types import SimpleNamespace
 
 from run_tps_benchmark import (
     BenchmarkSummary,
     LatencyStats,
     PeakStats,
     TimingStats,
+    _build_consistency_summary,
     _build_svg_line_chart,
     _build_sweep_payload,
 )
@@ -31,6 +33,7 @@ def _summary(batch_size: int, measured_tps: float, measured_ratio: float) -> Ben
         faulty=3,
         batch_size=batch_size,
         tx_input="json_str",
+        transport_backend="tcp",
         max_rounds=4,
         warmup_rounds=1,
         transactions_per_node=batch_size * 4,
@@ -70,6 +73,7 @@ def _summary(batch_size: int, measured_tps: float, measured_ratio: float) -> Ben
         queue_backlog={
             "raw_inbound_messages": PeakStats(mean=20.0, p95=30.0, max=batch_size * 2),
         },
+        node_runtime="bridge",
     )
 
 
@@ -84,6 +88,8 @@ def test_sweep_payload_includes_benchmark_points() -> None:
         log_level="ERROR",
         sid="bench:local:hb",
         tx_input="json_str",
+        transport_backend="tcp",
+        node_runtime="bridge",
     )
 
     summaries = [
@@ -95,9 +101,13 @@ def test_sweep_payload_includes_benchmark_points() -> None:
     assert payload["meta"]["x_axis"] == "batch_size"
     assert payload["meta"]["num_nodes"] == 10
     assert payload["meta"]["tx_input"] == "json_str"
+    assert payload["meta"]["transport_backend"] == "tcp"
+    assert payload["meta"]["node_runtime"] == "bridge"
     assert len(payload["points"]) == 2
     assert payload["points"][0]["batch_size"] == 128
     assert payload["points"][0]["tx_input"] == "json_str"
+    assert payload["points"][0]["transport_backend"] == "tcp"
+    assert payload["points"][0]["node_runtime"] == "bridge"
     assert payload["points"][1]["measured_tps"] == 1800.0
     assert payload["points"][1]["measured_protocol_tps"] == 1800.0
     assert payload["points"][1]["measured_delivery_ratio"] == 0.8
@@ -132,3 +142,17 @@ def test_svg_line_chart_renders_expected_labels() -> None:
     assert ">128<" in svg
     assert ">256<" in svg
     assert "Batch size per node per round" in svg
+
+
+def test_build_consistency_summary_flags_divergence() -> None:
+    agree, digest, diverged = _build_consistency_summary(
+        [
+            SimpleNamespace(pid=0, chain_digest="abc"),
+            SimpleNamespace(pid=1, chain_digest="abc"),
+            SimpleNamespace(pid=2, chain_digest="xyz"),
+        ]
+    )
+
+    assert agree is False
+    assert digest is None
+    assert diverged == (2,)

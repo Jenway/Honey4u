@@ -1,3 +1,6 @@
+import sqlite3
+from pathlib import Path
+
 from honey.network.hbbft_runner import (
     benchmark_local_dumbo_nodes_multiprocess,
     benchmark_local_honeybadger_nodes_multiprocess,
@@ -57,6 +60,29 @@ def test_local_honeybadger_benchmark_returns_delivery_and_latency_stats() -> Non
     )
     assert all(result.queue_peaks.raw_inbound_messages >= 0 for result in results)
     assert all(result.queue_peaks.transport_inbound >= 0 for result in results)
+    assert all(result.transport_stats.sent_frames > 0 for result in results)
+    assert all(result.transport_stats.recv_frames > 0 for result in results)
+
+
+def test_local_honeybadger_nodes_multiprocess_embedded_runtime_single_round() -> None:
+    results = benchmark_local_honeybadger_nodes_multiprocess(
+        sid="test:local:embedded:hb",
+        num_nodes=4,
+        faulty=1,
+        batch_size=1,
+        max_rounds=1,
+        round_timeout=5.0,
+        global_timeout=30.0,
+        transactions_per_node=1,
+        node_runtime="embedded",
+        log_level="ERROR",
+    )
+
+    assert len(results) == 4
+    assert all(result.rounds == 1 for result in results)
+    assert len({result.chain_digest for result in results}) == 1
+    assert all(result.transport_stats.sent_frames > 0 for result in results)
+    assert all(result.transport_stats.recv_frames > 0 for result in results)
 
 
 def test_local_dumbo_nodes_multiprocess_single_round() -> None:
@@ -110,3 +136,54 @@ def test_local_dumbo_benchmark_returns_delivery_and_latency_stats() -> None:
     )
     assert all(result.queue_peaks.raw_inbound_messages >= 0 for result in results)
     assert all(result.queue_peaks.transport_inbound >= 0 for result in results)
+    assert all(result.transport_stats.sent_frames > 0 for result in results)
+    assert all(result.transport_stats.recv_frames > 0 for result in results)
+
+
+def test_local_dumbo_nodes_multiprocess_embedded_runtime_single_round() -> None:
+    results = benchmark_local_dumbo_nodes_multiprocess(
+        sid="test:local:embedded:dumbo",
+        num_nodes=4,
+        faulty=1,
+        batch_size=1,
+        max_rounds=1,
+        round_timeout=8.0,
+        global_timeout=40.0,
+        transactions_per_node=1,
+        node_runtime="embedded",
+        log_level="ERROR",
+    )
+
+    assert len(results) == 4
+    assert all(result.rounds == 1 for result in results)
+    assert len({result.chain_digest for result in results}) == 1
+    assert all(result.transport_stats.sent_frames > 0 for result in results)
+    assert all(result.transport_stats.recv_frames > 0 for result in results)
+
+
+def test_local_honeybadger_benchmark_persists_consistent_ledgers(tmp_path: Path) -> None:
+    ledger_dir = tmp_path / "ledger"
+    results = benchmark_local_honeybadger_nodes_multiprocess(
+        sid="test:local:ledger",
+        num_nodes=4,
+        faulty=1,
+        batch_size=1,
+        max_rounds=1,
+        round_timeout=5.0,
+        global_timeout=30.0,
+        transactions_per_node=1,
+        log_level="ERROR",
+        ledger_dir=str(ledger_dir),
+    )
+
+    assert len({result.chain_digest for result in results}) == 1
+    assert all(result.ledger_path is not None for result in results)
+
+    for result in results:
+        path = Path(result.ledger_path or "")
+        assert path.is_file()
+        with sqlite3.connect(path) as conn:
+            row = conn.execute(
+                "SELECT round_id, chain_digest, tx_count FROM blocks ORDER BY round_id"
+            ).fetchone()
+        assert row == (0, result.chain_digest, result.round_delivered_counts[0])

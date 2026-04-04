@@ -20,7 +20,7 @@ honey-native = { workspace = true }
 packages = ["src/honey"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.ty.environment]
 root = ["src"]
