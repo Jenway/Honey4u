@@ -6,9 +6,12 @@ import json
 import pytest
 
 from honey.consensus.dumbo.core import DumboBFT
+from honey.consensus.honeybadger.core import CommittedBlock
 from honey.crypto import ecdsa, pke, sig
 from honey.network.transport import QueueTransport
+from honey.support.messages import decode_block, encode_tx
 from honey.support.params import CommonParams, CryptoParams, HBConfig
+from honey.support.results import Success
 
 
 class RecordingDumbo(DumboBFT):
@@ -16,10 +19,10 @@ class RecordingDumbo(DumboBFT):
         super().__init__(*args, **kwargs)
         self.delivered_blocks: list[list[object]] = []
 
-    def _apply_round_result(self, round_id, tx_to_send, round_result):
-        super()._apply_round_result(round_id, tx_to_send, round_result)
-        if getattr(round_result, "value", None) is not None:
-            self.delivered_blocks.append(list(round_result.value))
+    def _apply_round_result(self, round_id, batch, round_result):
+        super()._apply_round_result(round_id, batch, round_result)
+        if isinstance(round_result, Success) and isinstance(round_result.value, CommittedBlock):
+            self.delivered_blocks.append(decode_block(round_result.value.payload))
 
 
 @pytest.mark.asyncio
@@ -50,7 +53,7 @@ async def test_dumbo_run_single_round_queue_transport() -> None:
         )
         config = HBConfig(batch_size=1, max_rounds=1, round_timeout=20.0, log_level="ERROR")
         node = RecordingDumbo(common, crypto, transports[pid], config=config)
-        node.submit_tx({"node": pid, "tx": 0})
+        node.submit_tx_bytes(encode_tx({"node": pid, "tx": 0}))
         nodes.append(node)
 
     async def router() -> None:
@@ -123,7 +126,7 @@ async def test_dumbo_pool_reuse_caches_and_consumes_carryover_entries() -> None:
         )
         node = RecordingDumbo(common, crypto, transports[pid], config=config)
         for tx_index in range(6):
-            node.submit_tx({"node": pid, "tx": tx_index})
+            node.submit_tx_bytes(encode_tx({"node": pid, "tx": tx_index}))
         nodes.append(node)
 
     async def router() -> None:

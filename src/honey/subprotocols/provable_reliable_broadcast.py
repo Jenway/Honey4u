@@ -147,20 +147,9 @@ def validate_prbc_proof(
     threshold = num_nodes - faulty
     if len(ecdsa_pks) != num_nodes:
         return False
-    if len(proof.sigmas) < threshold:
-        return False
 
     digest = _prbc_ready_digest(sid, proof.roothash)
-    seen: set[int] = set()
-    valid = 0
-    for sender, signature in proof.sigmas:
-        if sender < 0 or sender >= num_nodes or sender in seen:
-            return False
-        seen.add(sender)
-        if not ecdsa.verify(ecdsa_pks[sender], digest, signature):
-            return False
-        valid += 1
-    return valid >= threshold
+    return ecdsa.verify_threshold_sigs_strict(ecdsa_pks, digest, proof.sigmas, threshold)
 
 
 async def _broadcast(num_nodes: int, send: SendFn, message: object) -> None:

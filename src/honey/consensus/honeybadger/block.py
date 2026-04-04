@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from honey.crypto import pke
@@ -14,7 +14,7 @@ from honey.data.pool_reuse import (
     encode_bundle_acs_payload,
 )
 from honey.support.exceptions import ProtocolInvariantError
-from honey.support.messages import EncryptedBatch, TpkeShareBundle
+from honey.support.messages import TpkeShareBundle
 from honey.support.telemetry import METRICS, timed_metric
 
 logger = logging.getLogger(__name__)
@@ -31,13 +31,6 @@ class LocalProposal:
 @dataclass(frozen=True)
 class EncryptedProposal:
     acs_payload: bytes
-
-
-@dataclass
-class BatchDecryptionState:
-    batch: EncryptedBatch
-    shares: dict[int, bytes] = field(default_factory=dict)
-    plaintext: bytes | None = None
 
 
 async def honeybadger_block(
@@ -73,14 +66,14 @@ async def honeybadger_block(
             resolve_pool_reference=resolve_pool_reference,
         )
 
-    batch_states, my_shares = _build_batch_states(pid, N, f, SK, acs_batches)
+    decryptor, my_shares = _build_batch_decryptor(pid, N, f, PK, SK, acs_batches)
     await tpke_bcast_queue.put(TpkeShareBundle(shares=tuple(my_shares)))
 
-    while not _try_finish_decryptions(pid, f, PK, batch_states, logger):
+    while not decryptor.is_complete():
         sender_id, bundle = await tpke_recv_queue.get()
-        _record_share_bundle(pid, PK, sender_id, bundle, batch_states, logger)
+        _record_share_bundle(pid, decryptor, sender_id, bundle, logger)
 
-    return tuple(state.plaintext for state in batch_states if state.plaintext is not None)
+    return tuple(plaintext for plaintext in decryptor.plaintexts() if plaintext is not None)
 
 
 async def _read_local_proposal(propose_queue: asyncio.Queue) -> LocalProposal:
@@ -175,68 +168,31 @@ async def _expand_acs_payload(
     return resolved
 
 
-def _build_batch_states(
+def _build_batch_decryptor(
     pid: int,
     N: int,
     f: int,
+    PK,
     SK,
     acs_batches: tuple[bytes | None, ...] | tuple[bytes, ...],
-) -> tuple[list[BatchDecryptionState], list[bytes]]:
+) -> tuple[pke.BatchDecryptor, list[bytes]]:
     selected_batches = [raw_batch for raw_batch in acs_batches if raw_batch is not None]
     if len(selected_batches) < N - f:
         raise ProtocolInvariantError(
             f"expected at least {N - f} ACS batches, got {len(selected_batches)}"
         )
 
-    batch_states: list[BatchDecryptionState] = []
-    my_shares: list[bytes] = []
-    for raw_batch in selected_batches:
-        batch = EncryptedBatch.from_bytes(raw_batch)
-        with timed_metric("tpke.partial_open.seconds", node=pid):
-            my_share = SK.decrypt_share(batch.encrypted_key)
-        batch_states.append(BatchDecryptionState(batch=batch))
-        my_shares.append(my_share)
-
-    return batch_states, my_shares
-
-
-def _try_finish_decryptions(
-    pid: int,
-    f: int,
-    PK,
-    batch_states: list[BatchDecryptionState],
-    logger=None,
-) -> bool:
-    for idx, state in enumerate(batch_states):
-        if state.plaintext is not None:
-            continue
-
-        if len(state.shares) < f + 1:
-            return False
-
-        ordered_shares = [share for _, share in sorted(state.shares.items())]
-        try:
-            with timed_metric("tpke.combine.seconds", node=pid, batch=idx):
-                opened_key = PK.combine_shares(state.batch.encrypted_key, ordered_shares)
-                state.plaintext = pke.decrypt(opened_key, state.batch.ciphertext)
-        except Exception as exc:
-            if logger is not None:
-                logger.warning(
-                    f"Failed to combine TPKE shares for batch {idx}: {exc}",
-                    extra={"node": pid},
-                )
-            METRICS.increment("tpke.combine.retry", node=pid, batch=idx)
-            return False
-
-    return all(state.plaintext is not None for state in batch_states)
+    decryptor = pke.BatchDecryptor(PK, selected_batches)
+    with timed_metric("tpke.partial_open.seconds", node=pid):
+        my_shares = decryptor.local_shares(SK)
+    return decryptor, my_shares
 
 
 def _record_share_bundle(
     pid: int,
-    PK,
+    decryptor: pke.BatchDecryptor,
     sender_id: int,
     bundle: Any,
-    batch_states: list[BatchDecryptionState],
     logger=None,
 ) -> None:
     if not isinstance(bundle, TpkeShareBundle):
@@ -247,7 +203,7 @@ def _record_share_bundle(
             )
         return
 
-    if len(bundle.shares) != len(batch_states):
+    if len(bundle.shares) != decryptor.batch_count():
         if logger is not None:
             logger.warning(
                 f"Invalid TPKE share bundle length from {sender_id}",
@@ -255,12 +211,10 @@ def _record_share_bundle(
             )
         return
 
-    for idx, state in enumerate(batch_states):
-        share = bundle.shares[idx]
-        if sender_id in state.shares:
-            continue
-        if share is None:
-            continue
-        if not PK.verify_share(sender_id, state.batch.encrypted_key, share):
-            continue
-        state.shares[sender_id] = share
+    with timed_metric("tpke.combine.seconds", node=pid):
+        decrypted = decryptor.ingest_bundle(sender_id, list(bundle.shares))
+
+    if not decrypted:
+        return
+
+    METRICS.increment("tpke.batch.decrypted", len(decrypted), node=pid)

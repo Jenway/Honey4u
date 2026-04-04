@@ -12,6 +12,7 @@ from honey.support.telemetry import METRICS
 def test_sig_api_supports_batch_helpers(signing_keys) -> None:
     pk, sks = signing_keys
     msg = b"batch-sign-msg"
+    wrong_msg = b"wrong-msg"
 
     sig_a = sks[0].sign(msg)
     sig_b = sks[1].sign(msg)
@@ -19,6 +20,10 @@ def test_sig_api_supports_batch_helpers(signing_keys) -> None:
 
     assert sig_a == repeated
     assert sig.verify_shares(pk, {0: sig_a}, msg) == {0: True}
+    assert sig.verify_shares_for_messages(
+        pk,
+        [(0, sig_a, msg), (1, sig_b, msg), (0, sig_a, wrong_msg)],
+    ) == [True, True, False]
     combined = sig.combine_shares(pk, {0: sig_a, 1: sig_b}, msg)
     assert sig.verify_combined(pk, combined, msg) is True
     assert sig.verify_combined(pk, combined, b"wrong-msg") is False

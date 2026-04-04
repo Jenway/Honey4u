@@ -36,6 +36,13 @@ def verify_shares(pk: PublicKey, sigs: dict[int, bytes], msg: bytes) -> dict[int
     }
 
 
+def verify_shares_for_messages(
+    pk: PublicKey,
+    shares: list[tuple[int, bytes, bytes]],
+) -> list[bool]:
+    return list(pk.verify_share_batch(shares))
+
+
 def combine_shares(pk: PublicKey, sigs: dict[int, bytes], msg: bytes) -> bytes:
     return pk.combine_shares(list(sigs.items()), msg)
 

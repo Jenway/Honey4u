@@ -48,7 +48,7 @@ fn json_value_to_py(py: Python<'_>, value: JsonValue) -> PyResult<Py<PyAny>> {
     }
 }
 
-fn merge_tx_batches_inner(blocks: Vec<Vec<u8>>) -> PyResult<Vec<JsonValue>> {
+fn merge_tx_batches_bytes_inner(blocks: Vec<Vec<u8>>) -> PyResult<Vec<Vec<u8>>> {
     let mut ordered_results = Vec::new();
     let mut seen = HashSet::new();
 
@@ -59,11 +59,18 @@ fn merge_tx_batches_inner(blocks: Vec<Vec<u8>>) -> PyResult<Vec<JsonValue>> {
             if !seen.insert(raw_tx.clone()) {
                 continue;
             }
-            ordered_results.push(parse_tx_json(&raw_tx)?);
+            ordered_results.push(raw_tx);
         }
     }
 
     Ok(ordered_results)
+}
+
+fn merge_tx_batches_inner(blocks: Vec<Vec<u8>>) -> PyResult<Vec<JsonValue>> {
+    merge_tx_batches_bytes_inner(blocks)?
+        .into_iter()
+        .map(|raw_tx| parse_tx_json(&raw_tx))
+        .collect()
 }
 
 fn to_u32(value: usize, name: &str) -> PyResult<u32> {
@@ -722,6 +729,14 @@ fn merge_tx_batches_py(py: Python<'_>, blocks: Vec<Vec<u8>>) -> PyResult<Py<PyAn
     Ok(PyList::new(py, py_items)?.into_any().unbind())
 }
 
+#[pyfunction]
+fn merge_tx_batches_bytes(py: Python<'_>, blocks: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
+    py.detach(move || {
+        let items = merge_tx_batches_bytes_inner(blocks)?;
+        archive_api::encode(&TxBatchWire { items })
+    })
+}
+
 #[pyfunction(signature = (sender, round_id, channel, instance_id, message_type, byte_fields, int_fields))]
 fn encode_protocol_envelope(
     py: Python<'_>,
@@ -993,6 +1008,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode_tx_batch, m)?)?;
     m.add_function(wrap_pyfunction!(decode_tx_batch, m)?)?;
     m.add_function(wrap_pyfunction!(decode_tx_py, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_tx_batches_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(merge_tx_batches_py, m)?)?;
     m.add_function(wrap_pyfunction!(encode_protocol_envelope, m)?)?;
     m.add_function(wrap_pyfunction!(encode_protocol_envelope_py, m)?)?;

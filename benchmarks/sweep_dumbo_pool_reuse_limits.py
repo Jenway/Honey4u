@@ -99,7 +99,7 @@ async def _run_once(
         )
         node = RecordingDumbo(common, crypto, transports[pid], config=config)
         for tx_index in range(tx_per_node):
-            node.submit_tx(
+            node.submit_tx_json_str(
                 f"Dummy TX node-{pid}-tx-{tx_index}",
                 track_latency=True,
                 submitted_at_ns=time.time_ns(),

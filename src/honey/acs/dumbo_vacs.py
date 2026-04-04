@@ -6,6 +6,7 @@ import pickle
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from honey.crypto import sig
 from honey.subprotocols.dumbo_mvba import MVBAParams, dumbo_mvba
 from honey.support.exceptions import ProtocolInvariantError
 from honey.support.telemetry import METRICS
@@ -58,7 +59,7 @@ def _build_mvba_predicate(params: VACSParams, predicate: VacsPredicate) -> Calla
         except Exception:
             return False
 
-        valid = 0
+        candidates: list[tuple[int, bytes, bytes]] = []
         for index, entry in enumerate(entries):
             if entry is None:
                 continue
@@ -67,13 +68,9 @@ def _build_mvba_predicate(params: VACSParams, predicate: VacsPredicate) -> Calla
                 continue
             if not predicate(index, value):
                 continue
-            if not params.proof_pk.verify_share(
-                sender_id,
-                share,
-                _diffuse_digest(params.sid, value),
-            ):
-                continue
-            valid += 1
+            candidates.append((sender_id, share, _diffuse_digest(params.sid, value)))
+
+        valid = sum(sig.verify_shares_for_messages(params.proof_pk, candidates))
         return valid >= params.N - params.f
 
     return _predicate
@@ -94,7 +91,7 @@ async def validated_common_subset(
 
     diffuse_recv: asyncio.Queue[tuple[int, VacsDiffuse]] = asyncio.Queue()
     mvba_recv: asyncio.Queue[tuple[int, object]] = asyncio.Queue()
-    mvba_input: asyncio.Queue[bytes] = asyncio.Queue(1)
+    mvba_input: asyncio.Queue[bytes | str] = asyncio.Queue(1)
     mvba_output: asyncio.Queue[bytes] = asyncio.Queue(1)
 
     async def recv_dispatcher() -> None:

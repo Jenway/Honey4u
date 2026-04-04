@@ -9,7 +9,7 @@ from typing import Any
 
 from honey.acs.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
 from honey.consensus.honeybadger.block import honeybadger_block
-from honey.consensus.honeybadger.core import HoneyBadgerBFT
+from honey.consensus.honeybadger.core import CommittedBlock, HoneyBadgerBFT, PendingRoundBatch
 from honey.data.pool_reuse import (
     PoolBundleProposal,
     PoolFetchRequest,
@@ -47,8 +47,6 @@ from honey.support.messages import (
     Channel,
     ProtocolEnvelope,
     ProtocolMessage,
-    encode_tx,
-    encode_tx_batch,
 )
 from honey.support.params import HBConfig
 from honey.support.results import Result, success
@@ -106,6 +104,9 @@ class DumboBFT(HoneyBadgerBFT):
     def _build_logger(self, pid: int) -> logging.LoggerAdapter:
         return logging.LoggerAdapter(logging.getLogger("honey.dumbo"), extra={"node": pid})
 
+    def _protocol_name(self) -> str:
+        return "dumbo"
+
     def _pool_reuse_enabled(self) -> bool:
         return self.config.enable_broadcast_pool_reuse
 
@@ -148,9 +149,9 @@ class DumboBFT(HoneyBadgerBFT):
         return int.from_bytes(digest[:8], "big") % self.common.N
 
     def _build_round_proposal(
-        self, round_id: int, tx_to_send: list[Any]
+        self, round_id: int, batch: PendingRoundBatch
     ) -> bytes | PoolBundleProposal:
-        payload = encode_tx_batch([encode_tx(tx) for tx in tx_to_send])
+        payload = batch.proposal_payload
         if not self._pool_reuse_enabled():
             return payload
 
@@ -280,7 +281,7 @@ class DumboBFT(HoneyBadgerBFT):
         pending_fetches.pop(reference.item_id, None)
         return payload
 
-    async def _run_round(self, round_id: int, tx_to_send: list[Any]) -> Result[list[Any]]:
+    async def _run_round(self, round_id: int, batch: PendingRoundBatch) -> Result[CommittedBlock]:
         try:
             async with asyncio.TaskGroup() as task_group:
                 ctx = self._build_dumbo_round_context(round_id)
@@ -341,7 +342,7 @@ class DumboBFT(HoneyBadgerBFT):
                 )
 
                 propose_queue: asyncio.Queue[bytes | PoolBundleProposal] = asyncio.Queue(1)
-                propose_queue.put_nowait(self._build_round_proposal(round_id, tx_to_send))
+                propose_queue.put_nowait(self._build_round_proposal(round_id, batch))
                 block_task = spawn(
                     honeybadger_block(
                         ctx.pid,
@@ -375,8 +376,7 @@ class DumboBFT(HoneyBadgerBFT):
                 self._cancel_round_tasks(ctx.tasks, keep={block_task})
 
             self.mempool.cleanup(round_id)
-            merged = await asyncio.to_thread(self._merge_block_batches, block)
-            return success(merged)
+            return success(await asyncio.to_thread(self._merge_block_batches, block))
         except TimeoutError:
             return self._round_failure("TIMEOUT", round_id, f"Round {round_id} exceeded timeout")
         except Exception as exc:

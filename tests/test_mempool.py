@@ -5,6 +5,27 @@ import time
 from honey.data.broadcast_mempool import BroadcastMempool
 
 
+def _add_payload(
+    mempool: BroadcastMempool,
+    *,
+    payload: bytes = b"test_data",
+    roothash: bytes = b"test_hash",
+    round_no: int = 0,
+    sender_id: int = 0,
+    shards: list[bytes] | None = None,
+    proofs: list[bytes] | None = None,
+) -> str:
+    return mempool.add(
+        payload,
+        roothash,
+        shards or [b"s0", b"s1", b"s2", b"s3"],
+        proofs or [b"p0", b"p1", b"p2", b"p3"],
+        round_no,
+        sender_id,
+        time.time(),
+    )
+
+
 def test_mempool_add_and_get():
     """Test basic add and get operations"""
     mempool = BroadcastMempool(max_size=100, expire_rounds=5)
@@ -16,10 +37,16 @@ def test_mempool_add_and_get():
     round_no = 0
     sender_id = 0
 
-    # Add data
-    payload_id = mempool.add(payload, roothash, shards, proofs, round_no, sender_id, time.time())
+    payload_id = _add_payload(
+        mempool,
+        payload=payload,
+        roothash=roothash,
+        round_no=round_no,
+        sender_id=sender_id,
+        shards=shards,
+        proofs=proofs,
+    )
 
-    # Get data
     data = mempool.get(payload_id)
     assert data is not None
     assert data.payload == payload
@@ -34,12 +61,9 @@ def test_mempool_get_by_hash():
 
     payload = b"test_data"
     roothash = b"test_hash"
-    # shards = [b"s0", b"s1", b"s2", b"s3"]
-    # proofs = [b"p0", b"p1", b"p2", b"p3"]
 
-    # payload_id = mempool.add(payload, roothash, shards, proofs, 0, 0, time.time())
+    _add_payload(mempool, payload=payload, roothash=roothash)
 
-    # Get by hash
     data = mempool.get_by_hash(roothash)
     assert data is not None
     assert data.payload == payload
@@ -50,15 +74,11 @@ def test_mempool_get_by_round_sender():
     mempool = BroadcastMempool()
 
     payload = b"test_data"
-    # roothash = b"test_hash"
-    # shards = [b"s0", b"s1", b"s2", b"s3"]
-    # proofs = [b"p0", b"p1", b"p2", b"p3"]
     round_no = 2
     sender_id = 3
 
-    # payload_id = mempool.add(payload, roothash, shards, proofs, round_no, sender_id, time.time())
+    _add_payload(mempool, payload=payload, round_no=round_no, sender_id=sender_id)
 
-    # Get by round and sender
     data = mempool.get_by_round_sender(round_no, sender_id)
     assert data is not None
     assert data.payload == payload
@@ -68,20 +88,18 @@ def test_mempool_list_round():
     """Test listing all payloads for a round"""
     mempool = BroadcastMempool()
 
-    # Add multiple payloads in same round
     round_no = 1
     for sender in range(4):
-        mempool.add(
-            f"data_{sender}".encode(),
-            f"hash_{sender}".encode(),
-            [b"s0", b"s1"],
-            [b"p0", b"p1"],
-            round_no,
-            sender,
-            time.time(),
+        _add_payload(
+            mempool,
+            payload=f"data_{sender}".encode(),
+            roothash=f"hash_{sender}".encode(),
+            round_no=round_no,
+            sender_id=sender,
+            shards=[b"s0", b"s1"],
+            proofs=[b"p0", b"p1"],
         )
 
-    # List all payloads for round 1
     payloads = mempool.list_round(round_no)
     assert len(payloads) == 4
     assert all(sender in payloads for sender in range(4))
@@ -92,23 +110,20 @@ def test_mempool_list_unused():
     mempool = BroadcastMempool()
 
     round_no = 1
-    # Add 4 payloads
     for sender in range(4):
-        mempool.add(
-            f"data_{sender}".encode(),
-            f"hash_{sender}".encode(),
-            [b"s0", b"s1"],
-            [b"p0", b"p1"],
-            round_no,
-            sender,
-            time.time(),
+        _add_payload(
+            mempool,
+            payload=f"data_{sender}".encode(),
+            roothash=f"hash_{sender}".encode(),
+            round_no=round_no,
+            sender_id=sender,
+            shards=[b"s0", b"s1"],
+            proofs=[b"p0", b"p1"],
         )
 
-    # Only 2 were selected by ACS
     selected = {0, 1}
     unused = mempool.list_unused(round_no, selected)
 
-    # Should have 2 unused
     assert len(unused) == 2
     unused_senders = {sender for sender, _ in unused}
     assert unused_senders == {2, 3}
@@ -118,23 +133,18 @@ def test_mempool_cleanup():
     """Test cleanup of expired entries"""
     mempool = BroadcastMempool(max_size=100, expire_rounds=2)
 
-    # Add payloads from rounds 0, 1, 2, 3
     for round_no in range(4):
-        mempool.add(
-            f"data_{round_no}".encode(),
-            f"hash_{round_no}".encode(),
-            [b"s0"],
-            [b"p0"],
-            round_no,
-            0,
-            time.time(),
+        _add_payload(
+            mempool,
+            payload=f"data_{round_no}".encode(),
+            roothash=f"hash_{round_no}".encode(),
+            round_no=round_no,
+            shards=[b"s0"],
+            proofs=[b"p0"],
         )
 
-    # Current round is 3, expire_rounds is 2
-    # So round 0 should be expired (3 - 2 = 1, and 0 < 1)
     mempool.cleanup(3)
 
-    # Should have entries from rounds 1, 2, 3
     stats = mempool.stats()
     assert len(stats["rounds_covered"]) == 3
     assert 0 not in stats["rounds_covered"]
@@ -145,26 +155,55 @@ def test_mempool_lru_eviction():
     """Test LRU eviction when max_size is exceeded"""
     mempool = BroadcastMempool(max_size=3, expire_rounds=10)
 
-    # Add 4 payloads (max_size is 3)
     ids = []
     for i in range(4):
-        pid = mempool.add(
-            f"data_{i}".encode(),
-            f"hash_{i}".encode(),
-            [b"s0"],
-            [b"p0"],
-            0,
-            i,
-            time.time(),
+        pid = _add_payload(
+            mempool,
+            payload=f"data_{i}".encode(),
+            roothash=f"hash_{i}".encode(),
+            sender_id=i,
+            shards=[b"s0"],
+            proofs=[b"p0"],
         )
         ids.append(pid)
 
-    # First payload should have been evicted
     assert mempool.get(ids[0]) is None
-    # Others should still be present
     assert mempool.get(ids[1]) is not None
     assert mempool.get(ids[2]) is not None
     assert mempool.get(ids[3]) is not None
+
+
+def test_mempool_access_refreshes_lru_order():
+    """Test that reads refresh LRU order before eviction."""
+    mempool = BroadcastMempool(max_size=3, expire_rounds=10)
+
+    ids = [
+        _add_payload(
+            mempool,
+            payload=f"data_{i}".encode(),
+            roothash=f"hash_{i}".encode(),
+            sender_id=i,
+            shards=[b"s0"],
+            proofs=[b"p0"],
+        )
+        for i in range(3)
+    ]
+
+    assert mempool.get(ids[0]) is not None
+
+    newest_id = _add_payload(
+        mempool,
+        payload=b"data_3",
+        roothash=b"hash_3",
+        sender_id=3,
+        shards=[b"s0"],
+        proofs=[b"p0"],
+    )
+
+    assert mempool.get(ids[0]) is not None
+    assert mempool.get(ids[1]) is None
+    assert mempool.get(ids[2]) is not None
+    assert mempool.get(newest_id) is not None
 
 
 def test_mempool_stats():
@@ -174,17 +213,16 @@ def test_mempool_stats():
     stats_empty = mempool.stats()
     assert stats_empty["size"] == 0
 
-    # Add some data
     for round_no in range(3):
         for sender in range(2):
-            mempool.add(
-                f"data_{round_no}_{sender}".encode(),
-                f"hash_{round_no}_{sender}".encode(),
-                [b"s0"],
-                [b"p0"],
-                round_no,
-                sender,
-                time.time(),
+            _add_payload(
+                mempool,
+                payload=f"data_{round_no}_{sender}".encode(),
+                roothash=f"hash_{round_no}_{sender}".encode(),
+                round_no=round_no,
+                sender_id=sender,
+                shards=[b"s0"],
+                proofs=[b"p0"],
             )
 
     stats = mempool.stats()
