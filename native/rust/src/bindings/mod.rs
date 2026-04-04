@@ -5,6 +5,8 @@ mod codec;
 mod ecdsa;
 mod error;
 mod key_storage;
+mod ledger;
+mod local_transport;
 mod merkle;
 mod threshold_pke;
 mod threshold_sig;
@@ -17,6 +19,8 @@ pub fn register_all(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecdsa::register(m)?;
     aes::register(m)?;
     key_storage::register(m)?;
+    ledger::register(m)?;
+    local_transport::register(m)?;
     codec::register(m)?;
     tx_pool::register(m)?;
     Ok(())

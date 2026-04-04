@@ -1,0 +1,3 @@
+[workspace]
+members = ["rust", "runtime-core", "honey-node"]
+resolver = "2"
