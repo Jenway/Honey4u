@@ -16,9 +16,11 @@ reed-solomon-erasure = "6.0.0"
 sha2 = "0.11.0"
 pyo3 = { version = "0.28.2", features = ["extension-module", "abi3-py38"] }
 rkyv = "0.8.15"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
+runtime-core = { path = "../runtime-core" }
 
 [lints.clippy]
 clone_on_copy = "allow"
