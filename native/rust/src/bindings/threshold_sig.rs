@@ -1,4 +1,5 @@
 use crate::crypto;
+use crate::crypto::threshold::keygen::PartialSignature;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -53,6 +54,36 @@ impl SigPublicKey {
         let msg = msg.to_vec();
         py.detach(move || {
             Ok(crypto::threshold::sig::verify_combined(&self.inner, &sig, &msg).is_ok())
+        })
+    }
+
+    fn verify_share_batch(
+        &self,
+        py: Python<'_>,
+        shares: Vec<(usize, Vec<u8>, Vec<u8>)>,
+    ) -> PyResult<Vec<bool>> {
+        let mut partials = Vec::with_capacity(shares.len());
+        for (player_id, sig_bytes, msg) in shares {
+            let partial = match g1_from_bytes(&sig_bytes) {
+                Ok(value) => Some(PartialSignature {
+                    player_id: player_id + 1,
+                    value,
+                }),
+                Err(_) => None,
+            };
+            partials.push((partial, msg));
+        }
+
+        let params = self.inner.clone();
+        py.detach(move || {
+            Ok(partials
+                .into_iter()
+                .map(|(partial, msg)| {
+                    partial.is_some_and(|partial_sig| {
+                        crypto::threshold::sig::verify_share(&params, &partial_sig, &msg).is_ok()
+                    })
+                })
+                .collect())
         })
     }
 

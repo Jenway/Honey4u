@@ -79,3 +79,62 @@ def test_prbc_proof_validation_rejects_wrong_sid() -> None:
 
     assert validate_prbc_proof("sid-a", n, f, ecdsa_pks, proof) is True
     assert validate_prbc_proof("sid-b", n, f, ecdsa_pks, proof) is False
+
+
+def test_prbc_proof_validation_rejects_duplicate_signer() -> None:
+    n = 4
+    f = 1
+    ecdsa_pks, ecdsa_sks = ecdsa.generate(n)
+    roothash = b"d" * 32
+    digest = b"prbc-ready|sid-dup|" + roothash
+
+    proof = PrbcProof(
+        roothash=roothash,
+        sigmas=(
+            (0, ecdsa.sign(ecdsa_sks[0], digest)),
+            (0, ecdsa.sign(ecdsa_sks[0], digest)),
+            (1, ecdsa.sign(ecdsa_sks[1], digest)),
+        ),
+    )
+
+    assert validate_prbc_proof("sid-dup", n, f, ecdsa_pks, proof) is False
+
+
+def test_prbc_proof_validation_rejects_out_of_range_signer() -> None:
+    n = 4
+    f = 1
+    ecdsa_pks, ecdsa_sks = ecdsa.generate(n)
+    roothash = b"o" * 32
+    digest = b"prbc-ready|sid-range|" + roothash
+
+    proof = PrbcProof(
+        roothash=roothash,
+        sigmas=(
+            (0, ecdsa.sign(ecdsa_sks[0], digest)),
+            (1, ecdsa.sign(ecdsa_sks[1], digest)),
+            (4, ecdsa.sign(ecdsa_sks[2], digest)),
+        ),
+    )
+
+    assert validate_prbc_proof("sid-range", n, f, ecdsa_pks, proof) is False
+
+
+def test_prbc_proof_validation_rejects_bad_signature() -> None:
+    n = 4
+    f = 1
+    ecdsa_pks, ecdsa_sks = ecdsa.generate(n)
+    roothash = b"b" * 32
+    digest = b"prbc-ready|sid-bad|" + roothash
+    bad_sig = bytearray(ecdsa.sign(ecdsa_sks[2], digest))
+    bad_sig[-1] ^= 0x01
+
+    proof = PrbcProof(
+        roothash=roothash,
+        sigmas=(
+            (0, ecdsa.sign(ecdsa_sks[0], digest)),
+            (1, ecdsa.sign(ecdsa_sks[1], digest)),
+            (2, bytes(bad_sig)),
+        ),
+    )
+
+    assert validate_prbc_proof("sid-bad", n, f, ecdsa_pks, proof) is False

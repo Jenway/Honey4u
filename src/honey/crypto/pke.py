@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import honey_native
 
+BatchDecryptor = honey_native.PkeBatchDecryptor
 PublicKey = honey_native.PkePublicKey
 PrivateShare = honey_native.PkePrivateShare
 

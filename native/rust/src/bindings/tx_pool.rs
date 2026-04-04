@@ -95,6 +95,42 @@ impl TxPool {
         }
         Ok(())
     }
+
+    fn resolve_delivery_inner(
+        &mut self,
+        tx_ids: Vec<String>,
+        final_block_payload: Vec<u8>,
+    ) -> Result<(Vec<String>, Vec<String>), String> {
+        let wire: TxBatchWire =
+            archive_api::decode(&final_block_payload).map_err(|e| e.to_string())?;
+        let mut delivered_counts: HashMap<Vec<u8>, usize> = HashMap::new();
+        for payload in wire.items {
+            *delivered_counts.entry(payload).or_default() += 1;
+        }
+
+        let mut retry_ids = Vec::new();
+        let mut delivered_ids = Vec::new();
+        for tx_id in tx_ids {
+            let payload = self
+                .inflight
+                .get(&tx_id)
+                .ok_or_else(|| format!("unknown inflight tx_id: {tx_id}"))?;
+            if let Some(remaining) = delivered_counts.get_mut(payload.as_slice())
+                && *remaining > 0
+            {
+                *remaining -= 1;
+                delivered_ids.push(tx_id);
+                continue;
+            }
+            retry_ids.push(tx_id);
+        }
+
+        self.drop_inflight_inner(delivered_ids.clone())
+            .map_err(|e| e.to_string())?;
+        self.requeue_inner(retry_ids.clone())
+            .map_err(|e| e.to_string())?;
+        Ok((retry_ids, delivered_ids))
+    }
 }
 
 #[pymethods]
@@ -149,6 +185,17 @@ impl TxPool {
 
     fn drop_inflight(&mut self, py: Python<'_>, tx_ids: Vec<String>) -> PyResult<()> {
         py.detach(move || self.drop_inflight_inner(tx_ids))
+            .map_err(PyValueError::new_err)
+    }
+
+    fn resolve_delivery(
+        &mut self,
+        py: Python<'_>,
+        tx_ids: Vec<String>,
+        final_block_payload: &[u8],
+    ) -> PyResult<(Vec<String>, Vec<String>)> {
+        let final_block_payload = final_block_payload.to_vec();
+        py.detach(move || self.resolve_delivery_inner(tx_ids, final_block_payload))
             .map_err(PyValueError::new_err)
     }
 }

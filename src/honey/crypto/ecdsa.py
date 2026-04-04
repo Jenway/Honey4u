@@ -26,3 +26,21 @@ def verify_threshold_sigs(
     threshold: int,
 ) -> bool:
     return bool(honey_native.ecdsa_verify_threshold_sigs(pub_keys, digest, sigmas, threshold))
+
+
+def verify_threshold_sigs_strict(
+    pub_keys: list[bytes],
+    digest: bytes,
+    sigmas: tuple[tuple[int, bytes], ...] | list[tuple[int, bytes]],
+    threshold: int,
+) -> bool:
+    if len(sigmas) < threshold:
+        return False
+
+    seen: set[int] = set()
+    for node_id, _signature in sigmas:
+        if node_id < 0 or node_id >= len(pub_keys) or node_id in seen:
+            return False
+        seen.add(node_id)
+
+    return verify_threshold_sigs(pub_keys, digest, list(sigmas), threshold)

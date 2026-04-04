@@ -66,7 +66,6 @@ class HBConfig:
     """Runtime configuration parameters for HoneyBadgerBFT."""
 
     batch_size: int = 1
-    use_rust_tx_pool: bool = False
     rust_tx_pool_max_bytes: int = 0
     max_rounds: int = 3
     round_timeout: float = 10.0
@@ -78,3 +77,25 @@ class HBConfig:
     pool_grace_ms: int = 200
     pool_expire_rounds: int = 5
     pool_reuse_limit_per_round: int = 1
+    enable_ledger_persistence: bool = False
+    ledger_dir: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.batch_size <= 0:
+            raise ValueError(f"batch_size={self.batch_size} must be > 0")
+        if self.max_rounds <= 0:
+            raise ValueError(f"max_rounds={self.max_rounds} must be > 0")
+        if self.round_timeout <= 0:
+            raise ValueError(f"round_timeout={self.round_timeout} must be > 0")
+        if self.pool_grace_ms < 0:
+            raise ValueError(f"pool_grace_ms={self.pool_grace_ms} must be >= 0")
+        if self.pool_expire_rounds < 0:
+            raise ValueError(f"pool_expire_rounds={self.pool_expire_rounds} must be >= 0")
+        if self.pool_reuse_limit_per_round < 0:
+            raise ValueError(
+                f"pool_reuse_limit_per_round={self.pool_reuse_limit_per_round} must be >= 0"
+            )
+        if self.rust_tx_pool_max_bytes < 0:
+            raise ValueError(f"rust_tx_pool_max_bytes={self.rust_tx_pool_max_bytes} must be >= 0")
+        if self.enable_ledger_persistence and not self.ledger_dir:
+            raise ValueError("ledger_dir must be set when ledger persistence is enabled")

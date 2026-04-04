@@ -1,6 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rand::RngExt;
+use std::collections::BTreeMap;
 
 use crate::archive::api as archive_api;
 use crate::archive::crypto_wire::{
@@ -8,6 +9,7 @@ use crate::archive::crypto_wire::{
 };
 use crate::archive::wire::EncryptedBatchWire;
 use crate::crypto;
+use crate::crypto::threshold::keygen::{Ciphertext, PartialDecryptionShare};
 use crate::crypto::threshold::utils::g1_to_bytes;
 
 fn encode_ciphertext(value: &crypto::threshold::keygen::Ciphertext) -> PyResult<Vec<u8>> {
@@ -28,6 +30,150 @@ fn decode_share(payload: &[u8]) -> PyResult<crypto::threshold::keygen::PartialDe
     let wire: PartialDecryptionShareWire = archive_api::decode(payload)?;
     wire.into_runtime()
         .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+fn decode_encrypted_batch(payload: &[u8]) -> PyResult<(Ciphertext, Vec<u8>)> {
+    let wire: EncryptedBatchWire = archive_api::decode(payload)?;
+    let encrypted_key = decode_ciphertext(&wire.encrypted_key)?;
+    Ok((encrypted_key, wire.ciphertext))
+}
+
+struct BatchDecryptState {
+    encrypted_key: Ciphertext,
+    ciphertext: Vec<u8>,
+    shares: BTreeMap<usize, PartialDecryptionShare>,
+    plaintext: Option<Vec<u8>>,
+    needs_open: bool,
+}
+
+#[pyclass]
+pub struct PkeBatchDecryptor {
+    params: crypto::threshold::keygen::PkePublicParams,
+    states: Vec<BatchDecryptState>,
+}
+
+#[pymethods]
+impl PkeBatchDecryptor {
+    #[new]
+    fn new(pk: &PkePublicKey, batches: Vec<Vec<u8>>) -> PyResult<Self> {
+        let mut states = Vec::with_capacity(batches.len());
+        for batch in batches {
+            let (encrypted_key, ciphertext) = decode_encrypted_batch(&batch)?;
+            crypto::threshold::pke::verify_ciphertext(&pk.inner, &encrypted_key)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            states.push(BatchDecryptState {
+                encrypted_key,
+                ciphertext,
+                shares: BTreeMap::new(),
+                plaintext: None,
+                needs_open: false,
+            });
+        }
+
+        Ok(Self {
+            params: pk.inner.clone(),
+            states,
+        })
+    }
+
+    fn batch_count(&self) -> usize {
+        self.states.len()
+    }
+
+    fn local_shares(&self, py: Python<'_>, sk: &PkePrivateShare) -> PyResult<Vec<Vec<u8>>> {
+        let encrypted_keys = self
+            .states
+            .iter()
+            .map(|state| state.encrypted_key.clone())
+            .collect::<Vec<_>>();
+        let private_share = sk.inner.clone();
+
+        py.detach(move || {
+            let mut shares = Vec::with_capacity(encrypted_keys.len());
+            for encrypted_key in encrypted_keys {
+                let share = crypto::threshold::pke::partial_open(&private_share, &encrypted_key)
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                shares.push(encode_share(&share)?);
+            }
+            Ok(shares)
+        })
+    }
+
+    fn ingest_bundle(
+        &mut self,
+        sender_id: usize,
+        shares: Vec<Option<Vec<u8>>>,
+    ) -> PyResult<Vec<usize>> {
+        if shares.len() != self.states.len() {
+            return Err(PyValueError::new_err(
+                "share bundle length does not match batch count",
+            ));
+        }
+
+        for (state, maybe_share) in self.states.iter_mut().zip(shares) {
+            if state.plaintext.is_some() || state.shares.contains_key(&sender_id) {
+                continue;
+            }
+
+            let Some(share_payload) = maybe_share else {
+                continue;
+            };
+
+            let Ok(share) = decode_share(&share_payload) else {
+                continue;
+            };
+
+            if share.player_id != sender_id + 1 {
+                continue;
+            }
+            if !crypto::threshold::pke::verify_share(&self.params, &share, &state.encrypted_key) {
+                continue;
+            }
+
+            state.shares.insert(sender_id, share);
+            state.needs_open = true;
+        }
+
+        let mut decrypted = Vec::new();
+        for (index, state) in self.states.iter_mut().enumerate() {
+            if state.plaintext.is_some()
+                || !state.needs_open
+                || state.shares.len() < self.params.threshold
+            {
+                continue;
+            }
+
+            let shares = state.shares.values().cloned().collect::<Vec<_>>();
+            match crypto::threshold::pke::open(&self.params, &state.encrypted_key, &shares) {
+                Ok(opened_key) => match crypto::aes::decrypt(&opened_key, &state.ciphertext) {
+                    Ok(plaintext) => {
+                        state.plaintext = Some(plaintext);
+                        state.needs_open = false;
+                        decrypted.push(index);
+                    }
+                    Err(_) => {
+                        state.needs_open = false;
+                    }
+                },
+                Err(_) => {
+                    state.needs_open = false;
+                }
+            }
+        }
+
+        Ok(decrypted)
+    }
+
+    fn is_complete(&self) -> bool {
+        self.states.iter().all(|state| state.plaintext.is_some())
+    }
+
+    fn plaintexts(&self) -> Vec<Option<Vec<u8>>> {
+        self.states
+            .iter()
+            .map(|state| state.plaintext.clone())
+            .collect()
+    }
 }
 
 #[pyclass(from_py_object)]
@@ -214,6 +360,7 @@ fn seal_encrypted_batch(py: Python<'_>, pk: &PkePublicKey, payload: &[u8]) -> Py
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(pke_generate, m)?)?;
     m.add_function(wrap_pyfunction!(seal_encrypted_batch, m)?)?;
+    m.add_class::<PkeBatchDecryptor>()?;
     m.add_class::<PkePublicKey>()?;
     m.add_class::<PkePrivateShare>()?;
     Ok(())

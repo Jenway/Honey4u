@@ -17,6 +17,10 @@ def test_ecdsa_api_round_trip_and_threshold_verify() -> None:
     assert ecdsa.verify(pks[1], msg, sig0) is False
     assert ecdsa.verify_threshold_sigs(pks, msg, [(0, sig0), (1, sig1)], threshold=2) is True
     assert ecdsa.verify_threshold_sigs(pks, msg, [(0, sig0)], threshold=2) is False
+    assert ecdsa.verify_threshold_sigs_strict(pks, msg, [(0, sig0), (1, sig1)], threshold=2) is True
+    assert (
+        ecdsa.verify_threshold_sigs_strict(pks, msg, [(0, sig0), (0, sig0)], threshold=2) is False
+    )
 
 
 def test_build_materials_returns_ecdsa_keys() -> None:

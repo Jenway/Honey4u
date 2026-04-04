@@ -7,6 +7,7 @@ This module stores broadcast outputs across rounds. It serves two roles:
 
 import hashlib
 import logging
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -38,10 +39,9 @@ class BroadcastMempool:
     def __init__(self, max_size: int = 10000, expire_rounds: int = 5):
         self.max_size = max_size
         self.expire_rounds = expire_rounds
-        self._storage: dict[str, BroadcastData] = {}
+        self._storage: OrderedDict[str, BroadcastData] = OrderedDict()
         self._index_by_round_sender: dict[tuple[int, int], str] = {}
         self._payload_ids_by_hash: dict[bytes, str] = {}
-        self._access_order: list[str] = []
 
     def add(
         self,
@@ -110,14 +110,12 @@ class BroadcastMempool:
         return payload_id
 
     def get(self, payload_id: str) -> BroadcastData | None:
-        if payload_id not in self._storage:
+        data = self._storage.get(payload_id)
+        if data is None:
             logger.warning(f"Payload {payload_id[:8]}... not found in mempool")
             return None
 
-        data = self._storage[payload_id]
-        if payload_id in self._access_order:
-            self._access_order.remove(payload_id)
-        self._access_order.append(payload_id)
+        self._storage.move_to_end(payload_id)
         return data
 
     def get_reusable(self, payload_id: str) -> BroadcastData | None:
@@ -139,18 +137,18 @@ class BroadcastMempool:
         return self.get(payload_id)
 
     def list_round(self, round_no: int) -> dict[int, str]:
-        result = {}
-        for (r, sender_id), payload_id in self._index_by_round_sender.items():
-            if r == round_no:
-                result[sender_id] = payload_id
-        return result
+        return {
+            sender_id: payload_id
+            for (r, sender_id), payload_id in self._index_by_round_sender.items()
+            if r == round_no
+        }
 
     def list_unused(self, round_no: int, selected_senders: set[int]) -> list[tuple[int, str]]:
-        unused = []
-        for (r, sender_id), payload_id in self._index_by_round_sender.items():
-            if r == round_no and sender_id not in selected_senders:
-                unused.append((sender_id, payload_id))
-        return unused
+        return [
+            (sender_id, payload_id)
+            for (r, sender_id), payload_id in self._index_by_round_sender.items()
+            if r == round_no and sender_id not in selected_senders
+        ]
 
     def list_reusable(
         self,
@@ -159,37 +157,33 @@ class BroadcastMempool:
         sender_id: int | None = None,
         limit: int = 1,
     ) -> list[tuple[str, BroadcastData]]:
-        reusable: list[tuple[str, BroadcastData]] = []
-        for payload_id in self._access_order:
-            data = self._storage[payload_id]
-            if data.protocol != "prbc":
-                continue
-            if data.consumed_in_round is not None:
-                continue
-            if data.round_no >= current_round:
-                continue
-            if sender_id is not None and data.sender_id != sender_id:
-                continue
-            reusable.append((payload_id, data))
+        reusable = [
+            (payload_id, data)
+            for payload_id, data in self._storage.items()
+            if data.protocol == "prbc"
+            and data.consumed_in_round is None
+            and data.round_no < current_round
+            and (sender_id is None or data.sender_id == sender_id)
+        ]
         reusable.sort(key=lambda item: (item[1].round_no, item[1].sender_id, item[0]))
         return reusable[:limit]
 
     def mark_selected(self, payload_id: str, round_id: int) -> None:
-        if payload_id in self._storage:
-            self._storage[payload_id].selected_in_round = round_id
+        if (data := self._storage.get(payload_id)) is not None:
+            data.selected_in_round = round_id
 
     def mark_consumed(self, payload_id: str, round_id: int) -> None:
-        if payload_id in self._storage:
-            data = self._storage[payload_id]
+        if (data := self._storage.get(payload_id)) is not None:
             data.consumed_in_round = round_id
             data.reuse_count += 1
 
     def cleanup(self, current_round: int) -> None:
         expire_before_round = current_round - self.expire_rounds
-        to_delete = []
-        for payload_id, data in self._storage.items():
-            if data.round_no < expire_before_round:
-                to_delete.append(payload_id)
+        to_delete = [
+            payload_id
+            for payload_id, data in self._storage.items()
+            if data.round_no < expire_before_round
+        ]
         for payload_id in to_delete:
             self._delete_entry(payload_id)
         if to_delete:
@@ -225,23 +219,24 @@ class BroadcastMempool:
         self._storage[payload_id] = data
         self._index_by_round_sender[(data.round_no, data.sender_id)] = payload_id
         self._payload_ids_by_hash[data.roothash] = payload_id
-        self._access_order.append(payload_id)
 
     def _evict_oldest(self) -> None:
-        if not self._access_order:
+        try:
+            oldest_id, data = self._storage.popitem(last=False)
+        except KeyError:
             return
-        oldest_id = self._access_order.pop(0)
-        self._delete_entry(oldest_id)
+        self._remove_indexes(oldest_id, data)
         logger.debug(f"Evicted oldest payload {oldest_id[:8]}... (LRU)")
 
     def _delete_entry(self, payload_id: str) -> None:
-        if payload_id not in self._storage:
+        data = self._storage.pop(payload_id, None)
+        if data is None:
             return
 
-        data = self._storage.pop(payload_id)
+        self._remove_indexes(payload_id, data)
+
+    def _remove_indexes(self, payload_id: str, data: BroadcastData) -> None:
         self._index_by_round_sender.pop((data.round_no, data.sender_id), None)
         existing_id = self._payload_ids_by_hash.get(data.roothash)
         if existing_id == payload_id:
             self._payload_ids_by_hash.pop(data.roothash, None)
-        if payload_id in self._access_order:
-            self._access_order.remove(payload_id)

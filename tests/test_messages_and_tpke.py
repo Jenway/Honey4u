@@ -233,6 +233,45 @@ def test_seal_encrypted_batch_round_trip(encryption_keys) -> None:
     assert pke.decrypt(opened_key, batch.ciphertext) == payload
 
 
+def test_tpke_batch_decryptor_decrypts_multiple_batches(encryption_keys) -> None:
+    pk, sks = encryption_keys
+    payloads = [b"batch-one", b"batch-two"]
+    decryptor = pke.BatchDecryptor(
+        pk, [pke.seal_encrypted_batch(pk, payload) for payload in payloads]
+    )
+
+    shares0 = decryptor.local_shares(sks[0])
+    shares1 = decryptor.local_shares(sks[1])
+
+    assert decryptor.batch_count() == 2
+    assert decryptor.is_complete() is False
+    assert decryptor.ingest_bundle(0, [shares0[0], shares0[1]]) == []
+    assert decryptor.ingest_bundle(1, [shares1[0], shares1[1]]) == [0, 1]
+    assert decryptor.is_complete() is True
+    assert decryptor.plaintexts() == payloads
+
+
+def test_tpke_batch_decryptor_rejects_bad_bundle_shape_and_skips_bad_shares(
+    encryption_keys,
+) -> None:
+    pk, sks = encryption_keys
+    decryptor = pke.BatchDecryptor(
+        pk,
+        [pke.seal_encrypted_batch(pk, b"batch-one"), pke.seal_encrypted_batch(pk, b"batch-two")],
+    )
+
+    shares0 = decryptor.local_shares(sks[0])
+    shares1 = decryptor.local_shares(sks[1])
+
+    with pytest.raises(ValueError, match="share bundle length"):
+        decryptor.ingest_bundle(0, [shares0[0]])
+
+    bad_share = shares1[0][:-1] + bytes([shares1[0][-1] ^ 0x01])
+    assert decryptor.ingest_bundle(0, [shares0[0], shares0[1]]) == []
+    assert decryptor.ingest_bundle(1, [bad_share, shares1[1]]) == [1]
+    assert decryptor.is_complete() is False
+
+
 def test_merkle_decode_from_dicts_matches_object_path() -> None:
     num_nodes = 10
     faulty = 3
