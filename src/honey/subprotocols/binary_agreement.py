@@ -4,10 +4,10 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from honey.infra.telemetry import METRICS
+from honey.protocol.messages import BaAux, BaConf, BaEst
+from honey.protocol.params import CommonParams
 from honey.subprotocols.common_coin import SharedCoin
-from honey.support.messages import BaAux, BaConf, BaEst
-from honey.support.params import CommonParams
-from honey.support.telemetry import METRICS
 
 
 def _canonical_conf_value(values: set[int]) -> tuple[int, ...]:

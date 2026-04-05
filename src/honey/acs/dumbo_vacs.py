@@ -7,9 +7,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from honey.crypto import sig
+from honey.infra.exceptions import ProtocolInvariantError
+from honey.infra.telemetry import METRICS
 from honey.subprotocols.dumbo_mvba import MVBAParams, dumbo_mvba
-from honey.support.exceptions import ProtocolInvariantError
-from honey.support.telemetry import METRICS
 
 
 @dataclass(slots=True)

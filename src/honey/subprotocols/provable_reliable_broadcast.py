@@ -10,9 +10,9 @@ from dataclasses import dataclass
 import honey_native
 
 from honey.crypto import ecdsa, merkle
-from honey.support.exceptions import ProtocolInvariantError
-from honey.support.params import CommonParams
-from honey.support.telemetry import METRICS
+from honey.infra.exceptions import ProtocolInvariantError
+from honey.infra.telemetry import METRICS
+from honey.protocol.params import CommonParams
 
 type SendFn = Callable[[int, object], Awaitable[None]]
 

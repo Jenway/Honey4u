@@ -3,10 +3,10 @@ import asyncio
 import pytest
 
 from honey.crypto import pke, sig
-from honey.network.deterministic_simulator import DeterministicNetworkSimulator
-from honey.network.hbbft_runner import run_local_honeybadger_nodes_deterministic
-from honey.support.messages import BaEst, Channel, ProtocolEnvelope
-from honey.support.telemetry import METRICS
+from honey.infra.telemetry import METRICS, normalize_timing_snapshot
+from honey.protocol.messages import BaEst, Channel, ProtocolEnvelope
+from honey.runtime.launch.local_runner import run_local_honeybadger_nodes_deterministic
+from honey.runtime.simulation import DeterministicNetworkSimulator
 
 
 def test_sig_api_supports_batch_helpers(signing_keys) -> None:
@@ -123,3 +123,38 @@ async def test_deterministic_runner_populates_metrics() -> None:
     snapshot = METRICS.snapshot()
     assert any(key.startswith("hb.round.started") for key in snapshot["counters"])
     assert any(key.startswith("hb.round.seconds") for key in snapshot["timings"])
+
+
+def test_normalize_timing_snapshot_aggregates_labeled_samples() -> None:
+    normalized = normalize_timing_snapshot(
+        {
+            "hb.round.seconds{'node': '0', 'round': '0'}": {
+                "count": 1,
+                "total": 0.4,
+                "max": 0.4,
+            },
+            "hb.round.seconds{'node': '1', 'round': '0'}": {
+                "count": 2,
+                "total": 0.9,
+                "max": 0.5,
+            },
+            "tpke.encrypt.seconds{'node': '0'}": {
+                "count": 3,
+                "total": 0.03,
+                "max": 0.02,
+            },
+        }
+    )
+
+    assert normalized == {
+        "hb.round.seconds": {
+            "sample_count": 3,
+            "total_seconds": 1.3,
+            "max_seconds": 0.5,
+        },
+        "tpke.encrypt.seconds": {
+            "sample_count": 3,
+            "total_seconds": 0.03,
+            "max_seconds": 0.02,
+        },
+    }

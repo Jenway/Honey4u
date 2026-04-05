@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import importlib.util
 import logging
 from dataclasses import dataclass
@@ -10,16 +9,15 @@ import honey_native
 import pytest
 
 from honey.consensus.dumbo.core import DumboBFT
-from honey.network.transport import QueueTransport
-from honey.runtime.node_mailbox import NodeMailboxRouter
-from honey.support.params import CommonParams, CryptoParams, HBConfig
-
-node_embed = importlib.import_module("honey.node_embed")
+from honey.protocol.params import CommonParams, CryptoParams, HBConfig
+from honey.runtime.embed import plan_dumbo_node, plan_hb_node, run_hb_node
+from honey.runtime.routing.mailbox import NodeMailboxRouter
+from honey.runtime.transport import QueueTransport
 
 
 def test_runtime_modules_live_under_honey_namespace() -> None:
-    assert importlib.util.find_spec("honey.network.transport") is not None
-    assert importlib.util.find_spec("honey.network.hbbft_runner") is not None
+    assert importlib.util.find_spec("honey.runtime.transport") is not None
+    assert importlib.util.find_spec("honey.runtime.launch.local_runner") is not None
     assert importlib.util.find_spec("network") is None
 
 
@@ -116,7 +114,7 @@ def test_plan_hb_node_rejects_transport_without_recv() -> None:
             del recipient, envelope
 
     with pytest.raises(ValueError, match="transport_handle must define callable recv"):
-        node_embed.plan_hb_node(
+        plan_hb_node(
             common={"sid": "s", "pid": 0, "N": 4, "f": 1, "leader": 0},
             crypto=None,
             transport_handle=SendOnlyTransport(),
@@ -126,7 +124,7 @@ def test_plan_hb_node_rejects_transport_without_recv() -> None:
 
 
 def test_plan_dumbo_node_builds_protocol_specific_plan() -> None:
-    plan = node_embed.plan_dumbo_node(
+    plan = plan_dumbo_node(
         common={"sid": "s", "pid": 0, "N": 4, "f": 1, "leader": 0},
         crypto=None,
         transport_handle=_DummyTransport(),
@@ -183,9 +181,11 @@ async def test_run_hb_node_emits_commits_via_commit_sink(monkeypatch: pytest.Mon
         def commit(self, *, round_id: int, payload: bytes, tx_count: int) -> None:
             self.records.append((round_id, payload, tx_count))
 
+    import honey.runtime.embed as node_embed
+
     monkeypatch.setattr(node_embed, "HoneyBadgerBFT", FakeHBNode)
     sink = FakeSink()
-    await node_embed.run_hb_node(
+    await run_hb_node(
         common={"sid": "s", "pid": 0, "N": 4, "f": 1, "leader": 0},
         crypto=cast(Any, object()),
         transport_handle=_DummyTransport(),
@@ -199,7 +199,7 @@ async def test_run_hb_node_emits_commits_via_commit_sink(monkeypatch: pytest.Mon
 def test_embedded_transport_handle_exposes_wakeup_seq() -> None:
     if "EmbeddedTransportHandle" not in honey_native.__dict__:
         pytest.skip("EmbeddedTransportHandle export not available in current built extension")
-    transport_cls = cast(Any, honey_native.__dict__["EmbeddedTransportHandle"])
+    transport_cls = honey_native.__dict__["EmbeddedTransportHandle"]
     transport = transport_cls(0, [("127.0.0.1", 35301)])
     try:
         assert isinstance(transport.wakeup_seq(), int)

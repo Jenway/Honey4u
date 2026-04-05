@@ -8,10 +8,10 @@ import pytest
 from honey.consensus.dumbo.core import DumboBFT
 from honey.consensus.honeybadger.core import CommittedBlock
 from honey.crypto import ecdsa, pke, sig
-from honey.network.transport import QueueTransport
-from honey.support.messages import decode_block, encode_tx
-from honey.support.params import CommonParams, CryptoParams, HBConfig
-from honey.support.results import Success
+from honey.protocol.messages import decode_block, encode_tx
+from honey.protocol.params import CommonParams, CryptoParams, HBConfig
+from honey.protocol.results import Success
+from honey.runtime.transport import QueueTransport
 
 
 class RecordingDumbo(DumboBFT):

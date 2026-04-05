@@ -11,21 +11,27 @@ import honey_native
 from honey.acs.bkr93 import CSParams, run_bkr93_acs
 from honey.consensus.honeybadger.block import honeybadger_block
 from honey.data.broadcast_mempool import BroadcastMempool
-from honey.network.transport import Transport
-from honey.runtime.node_mailbox import NodeMailboxRouter
-from honey.runtime.router import AbaRecv, CoinRecv, RbcRecv, RoundProtocolRouter, TpkeRecv
-from honey.support.exceptions import ProtocolInvariantError, RoutingError, SerializationError
-from honey.support.ledger import LedgerRecorder, build_sqlite_ledger_sink
-from honey.support.messages import (
+from honey.infra.exceptions import ProtocolInvariantError, RoutingError, SerializationError
+from honey.infra.ledger import LedgerRecorder, build_sqlite_ledger_sink
+from honey.infra.telemetry import METRICS, log_event, timed_metric
+from honey.protocol.messages import (
     Channel,
     ProtocolMessage,
     decode_block,
     decode_tx_batch,
     merge_tx_batches_bytes,
 )
-from honey.support.params import CommonParams, CryptoParams, HBConfig
-from honey.support.results import Failure, Result, Success, failure, success
-from honey.support.telemetry import METRICS, log_event, timed_metric
+from honey.protocol.params import CommonParams, CryptoParams, HBConfig
+from honey.protocol.results import Failure, Result, Success, failure, success
+from honey.runtime.routing.mailbox import NodeMailboxRouter
+from honey.runtime.routing.round_router import (
+    AbaRecv,
+    CoinRecv,
+    RbcRecv,
+    RoundProtocolRouter,
+    TpkeRecv,
+)
+from honey.runtime.transport import Transport
 
 
 @dataclass

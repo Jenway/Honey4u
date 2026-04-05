@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from honey.support.exceptions import ProtocolInvariantError
+from honey.infra.exceptions import ProtocolInvariantError
 
 
 @dataclass(frozen=True)

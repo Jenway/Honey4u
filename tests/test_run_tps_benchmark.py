@@ -3,14 +3,17 @@ from __future__ import annotations
 import argparse
 from types import SimpleNamespace
 
+import run_tps_benchmark as benchmark_module
 from run_tps_benchmark import (
     BenchmarkSummary,
     LatencyStats,
     PeakStats,
     TimingStats,
+    _build_benchmark_kwargs,
     _build_consistency_summary,
     _build_svg_line_chart,
     _build_sweep_payload,
+    _select_benchmark_runner,
 )
 
 
@@ -156,3 +159,78 @@ def test_build_consistency_summary_flags_divergence() -> None:
     assert agree is False
     assert digest is None
     assert diverged == (2,)
+
+
+def _args(*, protocol: str, node_runtime: str) -> argparse.Namespace:
+    return argparse.Namespace(
+        sid="bench:local:test",
+        protocol=protocol,
+        nodes=4,
+        faulty=1,
+        batch_size=8,
+        sweep_batches=None,
+        rounds=3,
+        warmup_rounds=0,
+        transactions_per_node=24,
+        tx_input="json_str",
+        transport_backend="tcp",
+        node_runtime=node_runtime,
+        round_timeout=20.0,
+        global_timeout=120.0,
+        log_level="ERROR",
+        enable_pool_reuse=True,
+        enable_pool_reference_proposals=True,
+        enable_pool_fetch=True,
+        pool_grace_ms=250,
+        rust_tx_pool_max_bytes=4096,
+        output_json=None,
+        ledger_dir="/tmp/ledger",
+        fail_on_divergence=False,
+        output_svg=None,
+        json=False,
+    )
+
+def test_select_benchmark_runner_matches_protocol_and_runtime() -> None:
+    assert _select_benchmark_runner("hb", "rust") is (
+        benchmark_module.benchmark_local_honeybadger_nodes_rust_hosted
+    )
+    assert _select_benchmark_runner("hb", "embedded") is (
+        benchmark_module.benchmark_local_honeybadger_nodes_multiprocess
+    )
+    assert _select_benchmark_runner("dumbo", "rust") is (
+        benchmark_module.benchmark_local_dumbo_nodes_rust_hosted
+    )
+    assert _select_benchmark_runner("dumbo", "bridge") is (
+        benchmark_module.benchmark_local_dumbo_nodes_multiprocess
+    )
+
+
+def test_build_benchmark_kwargs_for_rust_runtime_omits_node_runtime_only() -> None:
+    kwargs = _build_benchmark_kwargs(
+        _args(protocol="hb", node_runtime="rust"),
+        sid="bench:test:rust",
+        faulty=1,
+        batch_size=8,
+        transactions_per_node=24,
+    )
+
+    assert kwargs["global_timeout"] == 120.0
+    assert "node_runtime" not in kwargs
+    assert kwargs["rust_tx_pool_max_bytes"] == 4096
+
+
+def test_build_benchmark_kwargs_for_explicit_embedded_runtime_keeps_runtime_and_dumbo_flags() -> None:
+    kwargs = _build_benchmark_kwargs(
+        _args(protocol="dumbo", node_runtime="embedded"),
+        sid="bench:test:embedded",
+        faulty=1,
+        batch_size=8,
+        transactions_per_node=24,
+    )
+
+    assert kwargs["global_timeout"] == 120.0
+    assert kwargs["node_runtime"] == "embedded"
+    assert kwargs["enable_broadcast_pool_reuse"] is True
+    assert kwargs["enable_pool_reference_proposals"] is True
+    assert kwargs["enable_pool_fetch_fallback"] is True
+    assert kwargs["pool_grace_ms"] == 250

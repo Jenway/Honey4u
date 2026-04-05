@@ -4,10 +4,10 @@ import honey_native
 import pytest
 
 from honey.consensus.honeybadger.core import CommittedBlock, HoneyBadgerBFT, PendingRoundBatch
-from honey.network.transport import QueueTransport
-from honey.support.messages import ProtocolEnvelope, decode_block, encode_tx, encode_tx_batch
-from honey.support.params import CommonParams, CryptoParams, HBConfig
-from honey.support.results import Result, failure, success
+from honey.protocol.messages import ProtocolEnvelope, decode_block, encode_tx, encode_tx_batch
+from honey.protocol.params import CommonParams, CryptoParams, HBConfig
+from honey.protocol.results import Result, failure, success
+from honey.runtime.transport import QueueTransport
 
 
 @pytest.mark.asyncio

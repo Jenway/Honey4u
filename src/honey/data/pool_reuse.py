@@ -3,7 +3,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
-from honey.support.exceptions import ProtocolInvariantError
+from honey.infra.exceptions import ProtocolInvariantError
 
 _INLINE_TAG = 1
 _REFERENCE_TAG = 2

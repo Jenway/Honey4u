@@ -6,9 +6,9 @@ import logging
 from dataclasses import dataclass
 
 from honey.crypto import sig
-from honey.support.messages import CoinShareMessage
-from honey.support.params import CommonParams
-from honey.support.telemetry import METRICS
+from honey.infra.telemetry import METRICS
+from honey.protocol.messages import CoinShareMessage
+from honey.protocol.params import CommonParams
 
 
 def sha256_hash(x: bytes) -> bytes:

@@ -3,18 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import fmean
 from typing import Any
 
-from honey.network.hbbft_runner import (
+from honey.runtime.launch.local_runner import (
     benchmark_local_dumbo_nodes_multiprocess,
     benchmark_local_dumbo_nodes_rust_hosted,
-    benchmark_local_dumbo_nodes_single_process,
     benchmark_local_honeybadger_nodes_multiprocess,
     benchmark_local_honeybadger_nodes_rust_hosted,
-    benchmark_local_honeybadger_nodes_single_process,
 )
 
 
@@ -105,8 +104,12 @@ _SUBPROTOCOL_LABELS = {
     "tpke.encrypt.seconds": "tpke_encrypt",
     "tpke.partial_open.seconds": "tpke_partial_open",
     "tpke.combine.seconds": "tpke_combine",
+    "bridge.encode.seconds": "bridge_encode",
+    "bridge.decode.seconds": "bridge_decode",
     "node.run.seconds": "node_run",
 }
+
+type BenchmarkFn = Callable[..., list[Any]]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -159,9 +162,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--node-runtime",
         type=str,
-        choices=("bridge", "embedded", "python", "rust"),
+        choices=("bridge", "embedded", "rust"),
         default="rust",
-        help="node runtime mode: python (queue), rust (native), or explicit bridge/embedded",
+        help="node runtime mode: rust-hosted, or explicit bridge/embedded",
     )
     parser.add_argument(
         "--round-timeout", type=float, default=20.0, help="per-round timeout seconds"
@@ -323,43 +326,26 @@ def _build_consistency_summary(results: list[Any]) -> tuple[bool, str | None, tu
     return False, None, diverged_pids
 
 
-def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSummary:
-    faulty = args.faulty if args.faulty is not None else (args.nodes - 1) // 3
-    transactions_per_node = (
-        args.transactions_per_node
-        if args.transactions_per_node is not None
-        else batch_size * args.rounds
-    )
-    sid = f"{args.sid}:{args.nodes}:{batch_size}:{args.rounds}:{int(time.time())}"
-    warmup_rounds = max(0, min(args.warmup_rounds, args.rounds))
+def _select_benchmark_runner(protocol: str, node_runtime: str) -> BenchmarkFn:
+    if protocol == "dumbo":
+        if node_runtime == "rust":
+            return benchmark_local_dumbo_nodes_rust_hosted
+        return benchmark_local_dumbo_nodes_multiprocess
 
-    runtime_alias = {
-        "python": "bridge",
-        "rust": "rust",
-    }
-    effective_runtime = runtime_alias.get(args.node_runtime, args.node_runtime)
-    use_single_process = args.node_runtime == "python"
-    use_rust_hosted = args.node_runtime == "rust"
+    if node_runtime == "rust":
+        return benchmark_local_honeybadger_nodes_rust_hosted
+    return benchmark_local_honeybadger_nodes_multiprocess
 
-    if args.protocol == "dumbo":
-        benchmark_fn = (
-            benchmark_local_dumbo_nodes_single_process
-            if use_single_process
-            else benchmark_local_dumbo_nodes_rust_hosted
-            if use_rust_hosted
-            else benchmark_local_dumbo_nodes_multiprocess
-        )
-    else:
-        benchmark_fn = (
-            benchmark_local_honeybadger_nodes_single_process
-            if use_single_process
-            else benchmark_local_honeybadger_nodes_rust_hosted
-            if use_rust_hosted
-            else benchmark_local_honeybadger_nodes_multiprocess
-        )
 
-    start = time.perf_counter()
-    benchmark_kwargs = {
+def _build_benchmark_kwargs(
+    args: argparse.Namespace,
+    *,
+    sid: str,
+    faulty: int,
+    batch_size: int,
+    transactions_per_node: int,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
         "sid": sid,
         "num_nodes": args.nodes,
         "faulty": faulty,
@@ -370,24 +356,43 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
         "transactions_per_node": transactions_per_node,
         "tx_input": args.tx_input,
         "transport_backend": args.transport_backend,
-        "node_runtime": effective_runtime,
         "log_level": args.log_level,
         "ledger_dir": getattr(args, "ledger_dir", None),
     }
-    if use_single_process:
-        benchmark_kwargs.pop("global_timeout")
-        benchmark_kwargs.pop("node_runtime")
-    if use_rust_hosted:
-        benchmark_kwargs.pop("node_runtime")
+    if args.node_runtime != "rust":
+        kwargs["node_runtime"] = args.node_runtime
     if args.protocol == "dumbo":
-        benchmark_kwargs.update(
+        kwargs.update(
             enable_broadcast_pool_reuse=args.enable_pool_reuse,
             enable_pool_reference_proposals=args.enable_pool_reference_proposals,
             enable_pool_fetch_fallback=args.enable_pool_fetch,
             pool_grace_ms=args.pool_grace_ms,
         )
     else:
-        benchmark_kwargs.update(rust_tx_pool_max_bytes=args.rust_tx_pool_max_bytes)
+        kwargs["rust_tx_pool_max_bytes"] = args.rust_tx_pool_max_bytes
+    return kwargs
+
+
+def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSummary:
+    faulty = args.faulty if args.faulty is not None else (args.nodes - 1) // 3
+    transactions_per_node = (
+        args.transactions_per_node
+        if args.transactions_per_node is not None
+        else batch_size * args.rounds
+    )
+    sid = f"{args.sid}:{args.nodes}:{batch_size}:{args.rounds}:{int(time.time())}"
+    warmup_rounds = max(0, min(args.warmup_rounds, args.rounds))
+
+    benchmark_fn = _select_benchmark_runner(args.protocol, args.node_runtime)
+
+    start = time.perf_counter()
+    benchmark_kwargs = _build_benchmark_kwargs(
+        args,
+        sid=sid,
+        faulty=faulty,
+        batch_size=batch_size,
+        transactions_per_node=transactions_per_node,
+    )
     results = benchmark_fn(**benchmark_kwargs)
     elapsed_seconds = time.perf_counter() - start
     all_nodes_agree, consensus_chain_digest, diverged_pids = _build_consistency_summary(results)

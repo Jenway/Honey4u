@@ -8,10 +8,10 @@ import honey_native
 
 from honey.crypto.merkle import decode, encode
 from honey.data.broadcast_mempool import BroadcastMempool
-from honey.support.exceptions import ProtocolInvariantError
-from honey.support.messages import RbcEcho, RbcReady, RbcVal
-from honey.support.params import CommonParams
-from honey.support.telemetry import METRICS, timed_metric
+from honey.infra.exceptions import ProtocolInvariantError
+from honey.infra.telemetry import METRICS, timed_metric
+from honey.protocol.messages import RbcEcho, RbcReady, RbcVal
+from honey.protocol.params import CommonParams
 
 
 @dataclass

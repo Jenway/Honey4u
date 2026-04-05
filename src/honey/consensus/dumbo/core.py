@@ -17,8 +17,21 @@ from honey.data.pool_reuse import (
     PoolReference,
     decode_acs_payload,
 )
-from honey.network.transport import Transport
-from honey.runtime.router import DumboPoolRecv, DumboRecv, RoundProtocolRouter, TpkeRecv
+from honey.infra.exceptions import ProtocolInvariantError
+from honey.protocol.messages import (
+    Channel,
+    ProtocolEnvelope,
+    ProtocolMessage,
+)
+from honey.protocol.params import HBConfig
+from honey.protocol.results import Result, success
+from honey.runtime.routing.round_router import (
+    DumboPoolRecv,
+    DumboRecv,
+    RoundProtocolRouter,
+    TpkeRecv,
+)
+from honey.runtime.transport import Transport
 from honey.subprotocols.dumbo_mvba import (
     MvbaAbaCoinShare,
     MvbaAbaMessage,
@@ -42,14 +55,6 @@ from honey.subprotocols.provable_reliable_broadcast import (
     serialize_prbc_proof,
     validate_prbc_proof,
 )
-from honey.support.exceptions import ProtocolInvariantError
-from honey.support.messages import (
-    Channel,
-    ProtocolEnvelope,
-    ProtocolMessage,
-)
-from honey.support.params import HBConfig
-from honey.support.results import Result, success
 
 DUMBO_PRBC_MESSAGES = (PrbcVal, PrbcEcho, PrbcReady)
 DUMBO_MVBA_MESSAGES = (

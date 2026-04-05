@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from honey.data.broadcast_mempool import BroadcastMempool
-from honey.runtime.router import (
+from honey.infra.exceptions import ProtocolInvariantError
+from honey.protocol.messages import Channel, ProtocolMessage
+from honey.protocol.params import CommonParams, CryptoParams
+from honey.runtime.routing.round_router import (
     AbaRecv,
     CoinRecv,
     PointToPointOutbound,
@@ -15,9 +18,6 @@ from honey.runtime.router import (
 from honey.subprotocols.binary_agreement import BAParams, binaryagreement
 from honey.subprotocols.common_coin import CoinParams, SharedCoin
 from honey.subprotocols.reliable_broadcast import BroadcastParams, reliablebroadcast
-from honey.support.exceptions import ProtocolInvariantError
-from honey.support.messages import Channel, ProtocolMessage
-from honey.support.params import CommonParams, CryptoParams
 
 from . import bkr93_core
 

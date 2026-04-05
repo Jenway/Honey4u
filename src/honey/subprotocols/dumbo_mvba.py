@@ -10,12 +10,12 @@ from dataclasses import dataclass
 import honey_native
 
 from honey.crypto import merkle, sig
+from honey.infra.exceptions import ProtocolInvariantError
+from honey.infra.telemetry import METRICS
+from honey.protocol.messages import BaAux, BaConf, BaEst, CoinShareMessage
+from honey.protocol.params import CommonParams
 from honey.subprotocols.binary_agreement import BAParams, binaryagreement
 from honey.subprotocols.common_coin import CoinParams, SharedCoin
-from honey.support.exceptions import ProtocolInvariantError
-from honey.support.messages import BaAux, BaConf, BaEst, CoinShareMessage
-from honey.support.params import CommonParams
-from honey.support.telemetry import METRICS
 
 type AbaPayload = BaEst | BaAux | BaConf
 type SendFn = Callable[[int, object], Awaitable[None]]

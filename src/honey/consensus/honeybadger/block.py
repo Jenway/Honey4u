@@ -13,9 +13,9 @@ from honey.data.pool_reuse import (
     decode_acs_payload,
     encode_bundle_acs_payload,
 )
-from honey.support.exceptions import ProtocolInvariantError
-from honey.support.messages import TpkeShareBundle
-from honey.support.telemetry import METRICS, timed_metric
+from honey.infra.exceptions import ProtocolInvariantError
+from honey.infra.telemetry import METRICS, timed_metric
+from honey.protocol.messages import TpkeShareBundle
 
 logger = logging.getLogger(__name__)
 

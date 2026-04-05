@@ -6,6 +6,8 @@ import struct
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from honey.infra.exceptions import ProtocolInvariantError
+from honey.infra.telemetry import METRICS
 from honey.subprotocols.dumbo_mvba import MVBAParams, dumbo_mvba
 from honey.subprotocols.provable_reliable_broadcast import (
     PrbcEcho,
@@ -17,8 +19,6 @@ from honey.subprotocols.provable_reliable_broadcast import (
     provable_reliable_broadcast,
     validate_prbc_proof,
 )
-from honey.support.exceptions import ProtocolInvariantError
-from honey.support.telemetry import METRICS
 
 type SendFn = Callable[[int, object], Awaitable[None]]
 type PrbcProofVector = tuple[PrbcProof | None, ...]
