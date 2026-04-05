@@ -66,13 +66,6 @@ fn merge_tx_batches_bytes_inner(blocks: Vec<Vec<u8>>) -> PyResult<Vec<Vec<u8>>> 
     Ok(ordered_results)
 }
 
-fn merge_tx_batches_inner(blocks: Vec<Vec<u8>>) -> PyResult<Vec<JsonValue>> {
-    merge_tx_batches_bytes_inner(blocks)?
-        .into_iter()
-        .map(|raw_tx| parse_tx_json(&raw_tx))
-        .collect()
-}
-
 fn to_u32(value: usize, name: &str) -> PyResult<u32> {
     u32::try_from(value).map_err(|_| PyValueError::new_err(format!("{name} does not fit into u32")))
 }
@@ -648,31 +641,6 @@ fn build_message_object(
 }
 
 #[pyfunction]
-fn encode_encrypted_batch(
-    py: Python<'_>,
-    encrypted_key: &[u8],
-    ciphertext: &[u8],
-) -> PyResult<Vec<u8>> {
-    let encrypted_key = encrypted_key.to_vec();
-    let ciphertext = ciphertext.to_vec();
-    py.detach(move || {
-        archive_api::encode(&EncryptedBatchWire {
-            encrypted_key,
-            ciphertext,
-        })
-    })
-}
-
-#[pyfunction]
-fn decode_encrypted_batch(py: Python<'_>, payload: &[u8]) -> PyResult<(Vec<u8>, Vec<u8>)> {
-    let payload = payload.to_vec();
-    py.detach(move || {
-        let wire: EncryptedBatchWire = archive_api::decode(&payload)?;
-        Ok((wire.encrypted_key, wire.ciphertext))
-    })
-}
-
-#[pyfunction]
 fn encode_encrypted_batch_py(py: Python<'_>, batch: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     let encrypted_key = batch.getattr("encrypted_key")?.extract::<Vec<u8>>()?;
     let ciphertext = batch.getattr("ciphertext")?.extract::<Vec<u8>>()?;
@@ -688,7 +656,7 @@ fn encode_encrypted_batch_py(py: Python<'_>, batch: &Bound<'_, PyAny>) -> PyResu
 fn decode_encrypted_batch_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAny>> {
     let payload = payload.to_vec();
     let wire: EncryptedBatchWire = py.detach(move || archive_api::decode(&payload))?;
-    let messages_mod = PyModule::import(py, "honey.support.messages")?;
+    let messages_mod = PyModule::import(py, "honey.protocol.messages")?;
     Ok(messages_mod
         .getattr("EncryptedBatch")?
         .call1((
@@ -720,150 +688,11 @@ fn decode_tx_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAny>> {
 }
 
 #[pyfunction]
-fn merge_tx_batches_py(py: Python<'_>, blocks: Vec<Vec<u8>>) -> PyResult<Py<PyAny>> {
-    let merged = py.detach(move || merge_tx_batches_inner(blocks))?;
-    let mut py_items = Vec::with_capacity(merged.len());
-    for item in merged {
-        py_items.push(json_value_to_py(py, item)?);
-    }
-    Ok(PyList::new(py, py_items)?.into_any().unbind())
-}
-
-#[pyfunction]
 fn merge_tx_batches_bytes(py: Python<'_>, blocks: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
     py.detach(move || {
         let items = merge_tx_batches_bytes_inner(blocks)?;
         archive_api::encode(&TxBatchWire { items })
     })
-}
-
-#[pyfunction(signature = (sender, round_id, channel, instance_id, message_type, byte_fields, int_fields))]
-fn encode_protocol_envelope(
-    py: Python<'_>,
-    sender: usize,
-    round_id: usize,
-    channel: &str,
-    instance_id: Option<usize>,
-    message_type: &str,
-    byte_fields: Vec<Option<Vec<u8>>>,
-    int_fields: Vec<usize>,
-) -> PyResult<Vec<u8>> {
-    let wire = ProtocolEnvelopeWire {
-        sender: to_u32(sender, "sender")?,
-        round_id: to_u32(round_id, "round_id")?,
-        channel: channel_from_str(channel)?,
-        instance_id: match instance_id {
-            Some(value) => Some(to_u32(value, "instance_id")?),
-            None => None,
-        },
-        message: match message_type {
-            "RbcVal" => {
-                if byte_fields.len() != 3 || int_fields.len() != 1 {
-                    return Err(PyValueError::new_err(
-                        "RbcVal requires 3 byte fields and 1 int field",
-                    ));
-                }
-                let [roothash, proof, stripe] = byte_fields.try_into().unwrap();
-                MessageWire::RbcVal {
-                    roothash: roothash
-                        .ok_or_else(|| PyValueError::new_err("RbcVal.roothash is required"))?,
-                    proof: proof
-                        .ok_or_else(|| PyValueError::new_err("RbcVal.proof is required"))?,
-                    stripe: stripe
-                        .ok_or_else(|| PyValueError::new_err("RbcVal.stripe is required"))?,
-                    stripe_index: to_u32(int_fields[0], "stripe_index")?,
-                }
-            }
-            "RbcEcho" => {
-                if byte_fields.len() != 3 || int_fields.len() != 1 {
-                    return Err(PyValueError::new_err(
-                        "RbcEcho requires 3 byte fields and 1 int field",
-                    ));
-                }
-                let [roothash, proof, stripe] = byte_fields.try_into().unwrap();
-                MessageWire::RbcEcho {
-                    roothash: roothash
-                        .ok_or_else(|| PyValueError::new_err("RbcEcho.roothash is required"))?,
-                    proof: proof
-                        .ok_or_else(|| PyValueError::new_err("RbcEcho.proof is required"))?,
-                    stripe: stripe
-                        .ok_or_else(|| PyValueError::new_err("RbcEcho.stripe is required"))?,
-                    stripe_index: to_u32(int_fields[0], "stripe_index")?,
-                }
-            }
-            "RbcReady" => MessageWire::RbcReady {
-                roothash: byte_fields
-                    .into_iter()
-                    .next()
-                    .flatten()
-                    .ok_or_else(|| PyValueError::new_err("RbcReady.roothash is required"))?,
-            },
-            "BaEst" => MessageWire::BaEst {
-                epoch: to_u32(
-                    *int_fields
-                        .first()
-                        .ok_or_else(|| PyValueError::new_err("BaEst.epoch is required"))?,
-                    "epoch",
-                )?,
-                value: to_u32(
-                    *int_fields
-                        .get(1)
-                        .ok_or_else(|| PyValueError::new_err("BaEst.value is required"))?,
-                    "value",
-                )?,
-            },
-            "BaAux" => MessageWire::BaAux {
-                epoch: to_u32(
-                    *int_fields
-                        .first()
-                        .ok_or_else(|| PyValueError::new_err("BaAux.epoch is required"))?,
-                    "epoch",
-                )?,
-                value: to_u32(
-                    *int_fields
-                        .get(1)
-                        .ok_or_else(|| PyValueError::new_err("BaAux.value is required"))?,
-                    "value",
-                )?,
-            },
-            "BaConf" => {
-                if int_fields.is_empty() {
-                    return Err(PyValueError::new_err("BaConf requires at least epoch"));
-                }
-                let mut values = Vec::with_capacity(int_fields.len().saturating_sub(1));
-                for value in int_fields.iter().skip(1) {
-                    values.push(to_u32(*value, "BaConf.value")?);
-                }
-                MessageWire::BaConf {
-                    epoch: to_u32(int_fields[0], "epoch")?,
-                    values,
-                }
-            }
-            "CoinShareMessage" => MessageWire::CoinShareMessage {
-                round_id: to_u32(
-                    *int_fields.first().ok_or_else(|| {
-                        PyValueError::new_err("CoinShareMessage.round_id is required")
-                    })?,
-                    "round_id",
-                )?,
-                signature: byte_fields.into_iter().next().flatten().ok_or_else(|| {
-                    PyValueError::new_err("CoinShareMessage.signature is required")
-                })?,
-            },
-            "TpkeShareBundle" => MessageWire::TpkeShareBundle {
-                shares: byte_fields,
-            },
-            "RawPayload" => MessageWire::RawPayload {
-                data: byte_fields
-                    .into_iter()
-                    .next()
-                    .flatten()
-                    .ok_or_else(|| PyValueError::new_err("RawPayload.data is required"))?,
-            },
-            _ => return Err(PyValueError::new_err("invalid message tag")),
-        },
-    };
-    py.detach(move || archive_api::encode(&wire))
 }
 
 #[pyfunction]
@@ -895,98 +724,10 @@ fn encode_protocol_envelope_py(
 }
 
 #[pyfunction]
-fn decode_protocol_envelope(
-    py: Python<'_>,
-    payload: &[u8],
-) -> PyResult<(
-    usize,
-    usize,
-    String,
-    Option<usize>,
-    String,
-    Vec<Option<Vec<u8>>>,
-    Vec<usize>,
-)> {
-    let payload = payload.to_vec();
-    py.detach(move || {
-        let wire: ProtocolEnvelopeWire = archive_api::decode(&payload)?;
-        let (message_type, byte_fields, int_fields) = match wire.message {
-            MessageWire::RbcVal {
-                roothash,
-                proof,
-                stripe,
-                stripe_index,
-            } => (
-                "RbcVal".to_string(),
-                vec![Some(roothash), Some(proof), Some(stripe)],
-                vec![stripe_index as usize],
-            ),
-            MessageWire::RbcEcho {
-                roothash,
-                proof,
-                stripe,
-                stripe_index,
-            } => (
-                "RbcEcho".to_string(),
-                vec![Some(roothash), Some(proof), Some(stripe)],
-                vec![stripe_index as usize],
-            ),
-            MessageWire::RbcReady { roothash } => {
-                ("RbcReady".to_string(), vec![Some(roothash)], vec![])
-            }
-            MessageWire::BaEst { epoch, value } => (
-                "BaEst".to_string(),
-                vec![],
-                vec![epoch as usize, value as usize],
-            ),
-            MessageWire::BaAux { epoch, value } => (
-                "BaAux".to_string(),
-                vec![],
-                vec![epoch as usize, value as usize],
-            ),
-            MessageWire::BaConf { epoch, values } => {
-                let mut ints = Vec::with_capacity(values.len() + 1);
-                ints.push(epoch as usize);
-                ints.extend(values.into_iter().map(|value| value as usize));
-                ("BaConf".to_string(), vec![], ints)
-            }
-            MessageWire::CoinShareMessage {
-                round_id,
-                signature,
-            } => (
-                "CoinShareMessage".to_string(),
-                vec![Some(signature)],
-                vec![round_id as usize],
-            ),
-            MessageWire::TpkeShareBundle { shares } => {
-                ("TpkeShareBundle".to_string(), shares, vec![])
-            }
-            MessageWire::RawPayload { data } => {
-                ("RawPayload".to_string(), vec![Some(data)], vec![])
-            }
-            _ => {
-                return Err(PyValueError::new_err(
-                    "message type not supported by decode_protocol_envelope",
-                ));
-            }
-        };
-        Ok((
-            wire.sender as usize,
-            wire.round_id as usize,
-            channel_to_str(&wire.channel).to_string(),
-            wire.instance_id.map(|value| value as usize),
-            message_type,
-            byte_fields,
-            int_fields,
-        ))
-    })
-}
-
-#[pyfunction]
 fn decode_protocol_envelope_py(py: Python<'_>, payload: &[u8]) -> PyResult<(usize, Py<PyAny>)> {
     let payload = payload.to_vec();
     let wire: ProtocolEnvelopeWire = py.detach(move || archive_api::decode(&payload))?;
-    let messages_mod = PyModule::import(py, "honey.support.messages")?;
+    let messages_mod = PyModule::import(py, "honey.protocol.messages")?;
     let message = build_message_object(py, &messages_mod, wire.message)?;
     let channel = messages_mod
         .getattr("Channel")?
@@ -1001,18 +742,13 @@ fn decode_protocol_envelope_py(py: Python<'_>, payload: &[u8]) -> PyResult<(usiz
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(encode_encrypted_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(decode_encrypted_batch, m)?)?;
     m.add_function(wrap_pyfunction!(encode_encrypted_batch_py, m)?)?;
     m.add_function(wrap_pyfunction!(decode_encrypted_batch_py, m)?)?;
     m.add_function(wrap_pyfunction!(encode_tx_batch, m)?)?;
     m.add_function(wrap_pyfunction!(decode_tx_batch, m)?)?;
     m.add_function(wrap_pyfunction!(decode_tx_py, m)?)?;
     m.add_function(wrap_pyfunction!(merge_tx_batches_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(merge_tx_batches_py, m)?)?;
-    m.add_function(wrap_pyfunction!(encode_protocol_envelope, m)?)?;
     m.add_function(wrap_pyfunction!(encode_protocol_envelope_py, m)?)?;
-    m.add_function(wrap_pyfunction!(decode_protocol_envelope, m)?)?;
     m.add_function(wrap_pyfunction!(decode_protocol_envelope_py, m)?)?;
     Ok(())
 }

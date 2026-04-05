@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 pyo3 = { version = "0.28.2", features = ["auto-initialize"] }
 runtime-core = { path = "../runtime-core" }
+
+[build-dependencies]
+pyo3-build-config = { version = "0.28.2", features = ["resolve-config"] }

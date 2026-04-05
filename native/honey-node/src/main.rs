@@ -193,7 +193,7 @@ fn run_rust_hosted_node(args: CliArgs) -> PyResult<()> {
         path.insert(0, ".")?;
         path.insert(0, "src")?;
 
-        let rust_host = PyModule::import(py, "honey.runtime.rust_host")?;
+        let rust_host = PyModule::import(py, "honey.runtime.launch.rust_host")?;
         let result = rust_host.getattr("run_protocol_node")?.call1((
             protocol_name(args.protocol),
             args.sid,
