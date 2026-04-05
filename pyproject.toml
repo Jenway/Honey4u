@@ -28,10 +28,12 @@ root = ["src"]
 [tool.ty.src]
 include = [
     "src/honey/data",
-    "src/honey/network/crypto_material.py",
-    "src/honey/network/transport.py",
-    "src/honey/runtime/node_mailbox.py",
-    "src/honey/support",
+    "src/honey/protocol",
+    "src/honey/infra",
+    "src/honey/runtime/transport",
+    "src/honey/runtime/routing",
+    "src/honey/runtime/launch/crypto_material.py",
+    "src/honey/runtime/embed.py",
     "tests/test_ecdsa_and_crypto_params.py",
     "tests/test_runtime_boundaries.py",
 ]
