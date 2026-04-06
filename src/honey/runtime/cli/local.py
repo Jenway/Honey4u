@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 
 from honey.infra.logging import setup_logging
-from honey.runtime.launch.local_runner import run_local_honeybadger_nodes_multiprocess
+from honey.runtime.runners import run_local_honeybadger_nodes_multiprocess
 
 setup_logging("DEBUG")
 

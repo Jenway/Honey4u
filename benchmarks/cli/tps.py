@@ -9,7 +9,7 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any
 
-from honey.runtime.launch.local_runner import (
+from honey.runtime.runners import (
     benchmark_local_dumbo_nodes_multiprocess,
     benchmark_local_dumbo_nodes_rust_hosted,
     benchmark_local_honeybadger_nodes_multiprocess,

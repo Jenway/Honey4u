@@ -20,13 +20,13 @@ from typing import Any, Literal, cast
 
 import honey_native
 
-from honey.consensus.dumbo.core import DumboBFT
-from honey.consensus.honeybadger.core import HoneyBadgerBFT
+from honey.host.crypto_material import build_dumbo_materials, build_materials
 from honey.infra.logging import setup_logging
 from honey.infra.telemetry import METRICS, log_event, timed_metric
 from honey.protocol.messages import ProtocolEnvelope
 from honey.protocol.params import CommonParams, CryptoParams, HBConfig
-from honey.runtime.launch.crypto_material import build_dumbo_materials, build_materials
+from honey.python_node.dumbo.core import DumboBFT
+from honey.python_node.honeybadger.core import HoneyBadgerBFT
 from honey.runtime.simulation import DeterministicNetworkSimulator
 from honey.runtime.transport import QueueTransport
 
@@ -315,9 +315,7 @@ def _decode_rust_driven_honeybadger_payload(
 
 
 def _build_runner_logger(pid: int) -> logging.LoggerAdapter:
-    return logging.LoggerAdapter(
-        logging.getLogger("honey.runtime.launch.local_runner"), extra={"node": pid}
-    )
+    return logging.LoggerAdapter(logging.getLogger("honey.runtime.runners.core"), extra={"node": pid})
 
 
 def _queue_peak_snapshot(
