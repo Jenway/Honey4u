@@ -8,8 +8,7 @@ from typing import Any, cast
 
 import honey_native
 
-from honey.acs.bkr93 import CSParams, run_bkr93_acs
-from honey.consensus.honeybadger.block import honeybadger_block
+from honey.acs.hb.bkr93 import CSParams, run_bkr93_acs
 from honey.data.broadcast_mempool import BroadcastMempool
 from honey.infra.exceptions import ProtocolInvariantError, RoutingError, SerializationError
 from honey.infra.ledger import LedgerRecorder, build_sqlite_ledger_sink
@@ -23,6 +22,7 @@ from honey.protocol.messages import (
 )
 from honey.protocol.params import CommonParams, CryptoParams, HBConfig
 from honey.protocol.results import Failure, Result, Success, failure, success
+from honey.python_node.honeybadger.block import honeybadger_block
 from honey.runtime.routing.mailbox import NodeMailboxRouter
 from honey.runtime.routing.round_router import (
     AbaRecv,

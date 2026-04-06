@@ -5,9 +5,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast, overload
 
-from honey.consensus.dumbo.core import DumboBFT
-from honey.consensus.honeybadger.core import HoneyBadgerBFT
 from honey.protocol.params import CommonParams, CryptoParams, HBConfig
+from honey.python_node.dumbo.core import DumboBFT
+from honey.python_node.honeybadger.core import HoneyBadgerBFT
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,9 +7,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from honey.acs.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
-from honey.consensus.honeybadger.block import honeybadger_block
-from honey.consensus.honeybadger.core import CommittedBlock, HoneyBadgerBFT, PendingRoundBatch
+from honey.acs.dumbo.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
+from honey.python_node.honeybadger.block import honeybadger_block
+from honey.python_node.honeybadger.core import CommittedBlock, HoneyBadgerBFT, PendingRoundBatch
 from honey.data.pool_reuse import (
     PoolBundleProposal,
     PoolFetchRequest,

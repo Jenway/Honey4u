@@ -9,13 +9,13 @@ from dataclasses import dataclass
 from queue import Empty, Queue
 from typing import Any, Literal, cast
 
-from honey.acs.bkr93 import CSParams, run_bkr93_acs_with_send
-from honey.acs.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
+from honey.acs.hb.bkr93 import CSParams, run_bkr93_acs_with_send
+from honey.acs.dumbo.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
 from honey.data.broadcast_mempool import BroadcastMempool
 from honey.infra.exceptions import ProtocolInvariantError
 from honey.protocol.messages import Channel, ProtocolEnvelope, ProtocolMessage
 from honey.protocol.params import CryptoParams, HBConfig
-from honey.runtime.launch.crypto_material import build_crypto_params_from_json
+from honey.host.crypto_material import build_crypto_params_from_json
 from honey.subprotocols.dumbo_mvba import (
     MvbaAbaCoinShare,
     MvbaAbaMessage,

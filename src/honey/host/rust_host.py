@@ -7,11 +7,11 @@ from typing import Any, cast
 
 import honey_native
 
-from honey.consensus.dumbo.core import DumboBFT
-from honey.consensus.honeybadger.core import HoneyBadgerBFT
+from honey.python_node.dumbo.core import DumboBFT
+from honey.python_node.honeybadger.core import HoneyBadgerBFT
 from honey.infra.telemetry import METRICS, normalize_timing_snapshot, timed_metric
 from honey.protocol.params import CommonParams, HBConfig
-from honey.runtime.launch.crypto_material import build_crypto_params_from_payload
+from honey.host.crypto_material import build_crypto_params_from_payload
 from honey.runtime.transport.rust import create_rust_transport
 
 
