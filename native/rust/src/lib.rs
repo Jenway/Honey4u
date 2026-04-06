@@ -1,6 +1,7 @@
 mod archive;
 mod bindings;
 mod crypto;
+pub mod hb;
 use pyo3::prelude::*;
 
 #[pymodule]
