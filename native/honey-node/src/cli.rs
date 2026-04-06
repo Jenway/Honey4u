@@ -1,0 +1,415 @@
+use super::*;
+
+pub(crate) fn parse_cli<I>(mut argv: I) -> Result<CliCommand, String>
+where
+    I: Iterator<Item = String>,
+{
+    let _bin = argv.next();
+    let Some(command) = argv.next() else {
+        return Err(String::from("missing command"));
+    };
+
+    match command.as_str() {
+        "run-node" => parse_run_node_args(argv).map(CliCommand::RunNode),
+        "bench-local" => parse_bench_local_args(argv).map(CliCommand::BenchLocal),
+        "drive-acs" => parse_drive_acs_args(argv).map(CliCommand::DriveAcs),
+        "drive-hb" => parse_drive_honeybadger_args(argv).map(CliCommand::DriveHoneyBadger),
+        "hb-worker" => parse_hb_worker_args(argv).map(CliCommand::HbWorker),
+        _ if command.starts_with("--") => {
+            let mut forwarded = vec![command];
+            forwarded.extend(argv);
+            parse_run_node_args(forwarded.into_iter()).map(CliCommand::RunNode)
+        }
+        _ => Err(format!("unknown command: {command}")),
+    }
+}
+
+fn parse_run_node_args<I>(mut argv: I) -> Result<RunNodeArgs, String>
+where
+    I: Iterator<Item = String>,
+{
+    let mut protocol = Protocol::HoneyBadger;
+    let mut pid = 0usize;
+    let mut nodes = 4usize;
+    let mut faulty = 1usize;
+    let mut rounds = 1usize;
+    let mut sid = String::from("local:hb");
+    let mut addresses_json: Option<String> = None;
+    let mut crypto_json: Option<String> = None;
+    let mut config_json: Option<String> = None;
+    let mut transactions_per_node = 1usize;
+    let mut tx_input = String::from("json_str");
+    let mut start_at_ms: Option<u64> = None;
+    let mut result_path: Option<String> = None;
+
+    while let Some(arg) = argv.next() {
+        match arg.as_str() {
+            "--protocol" => {
+                protocol = Protocol::parse(&take_value(&mut argv, "--protocol")?)?;
+            }
+            "--pid" => {
+                pid = parse_usize_flag(&mut argv, "--pid")?;
+            }
+            "--nodes" => {
+                nodes = parse_usize_flag(&mut argv, "--nodes")?;
+            }
+            "--faulty" => {
+                faulty = parse_usize_flag(&mut argv, "--faulty")?;
+            }
+            "--rounds" => {
+                rounds = parse_usize_flag(&mut argv, "--rounds")?;
+            }
+            "--sid" => {
+                sid = take_value(&mut argv, "--sid")?;
+            }
+            "--addresses-json" => {
+                addresses_json = Some(take_value(&mut argv, "--addresses-json")?);
+            }
+            "--crypto-json" => {
+                crypto_json = Some(take_value(&mut argv, "--crypto-json")?);
+            }
+            "--config-json" => {
+                config_json = Some(take_value(&mut argv, "--config-json")?);
+            }
+            "--transactions-per-node" => {
+                transactions_per_node = parse_usize_flag(&mut argv, "--transactions-per-node")?;
+            }
+            "--tx-input" => {
+                tx_input = take_value(&mut argv, "--tx-input")?;
+            }
+            "--start-at-ms" => {
+                start_at_ms = Some(parse_u64_flag(&mut argv, "--start-at-ms")?);
+            }
+            "--result-path" => {
+                result_path = Some(take_value(&mut argv, "--result-path")?);
+            }
+            _ => return Err(format!("unknown argument: {arg}")),
+        }
+    }
+
+    if nodes == 0 {
+        return Err(String::from("--nodes must be > 0"));
+    }
+    if pid >= nodes {
+        return Err(format!("--pid {pid} must be < --nodes {nodes}"));
+    }
+    if rounds == 0 {
+        return Err(String::from("--rounds must be > 0"));
+    }
+
+    Ok(RunNodeArgs {
+        protocol,
+        pid,
+        nodes,
+        faulty,
+        sid,
+        addresses_json: addresses_json
+            .ok_or_else(|| String::from("--addresses-json is required"))?,
+        crypto_json: crypto_json.ok_or_else(|| String::from("--crypto-json is required"))?,
+        config_json: config_json.ok_or_else(|| String::from("--config-json is required"))?,
+        transactions_per_node,
+        tx_input,
+        start_at_ms,
+        result_path,
+    })
+}
+
+fn parse_bench_local_args<I>(mut argv: I) -> Result<BenchLocalArgs, String>
+where
+    I: Iterator<Item = String>,
+{
+    let mut protocol = Protocol::HoneyBadger;
+    let mut sid = String::from("bench:local:hb");
+    let mut nodes = 4usize;
+    let mut faulty = 1usize;
+    let mut rounds = 1usize;
+    let mut batch_size = 1usize;
+    let mut round_timeout = 10.0f64;
+    let mut global_timeout = 30.0f64;
+    let mut transactions_per_node = 1usize;
+    let mut tx_input = String::from("json_str");
+    let mut transport_backend = String::from("tcp");
+    let mut log_level = String::from("WARNING");
+    let mut config_json: Option<String> = None;
+    let mut result_path: Option<String> = None;
+
+    while let Some(arg) = argv.next() {
+        match arg.as_str() {
+            "--protocol" => {
+                protocol = Protocol::parse(&take_value(&mut argv, "--protocol")?)?;
+            }
+            "--sid" => {
+                sid = take_value(&mut argv, "--sid")?;
+            }
+            "--nodes" => {
+                nodes = parse_usize_flag(&mut argv, "--nodes")?;
+            }
+            "--faulty" => {
+                faulty = parse_usize_flag(&mut argv, "--faulty")?;
+            }
+            "--rounds" => {
+                rounds = parse_usize_flag(&mut argv, "--rounds")?;
+            }
+            "--batch-size" => {
+                batch_size = parse_usize_flag(&mut argv, "--batch-size")?;
+            }
+            "--round-timeout" => {
+                round_timeout = parse_f64_flag(&mut argv, "--round-timeout")?;
+            }
+            "--global-timeout" => {
+                global_timeout = parse_f64_flag(&mut argv, "--global-timeout")?;
+            }
+            "--transactions-per-node" => {
+                transactions_per_node = parse_usize_flag(&mut argv, "--transactions-per-node")?;
+            }
+            "--tx-input" => {
+                tx_input = take_value(&mut argv, "--tx-input")?;
+            }
+            "--transport-backend" => {
+                transport_backend = take_value(&mut argv, "--transport-backend")?;
+            }
+            "--log-level" => {
+                log_level = take_value(&mut argv, "--log-level")?;
+            }
+            "--config-json" => {
+                config_json = Some(take_value(&mut argv, "--config-json")?);
+            }
+            "--result-path" => {
+                result_path = Some(take_value(&mut argv, "--result-path")?);
+            }
+            _ => return Err(format!("unknown argument: {arg}")),
+        }
+    }
+
+    if nodes == 0 {
+        return Err(String::from("--nodes must be > 0"));
+    }
+    if rounds == 0 {
+        return Err(String::from("--rounds must be > 0"));
+    }
+    if batch_size == 0 {
+        return Err(String::from("--batch-size must be > 0"));
+    }
+    if global_timeout <= 0.0 {
+        return Err(String::from("--global-timeout must be > 0"));
+    }
+
+    Ok(BenchLocalArgs {
+        protocol,
+        sid,
+        nodes,
+        faulty,
+        rounds,
+        batch_size,
+        round_timeout,
+        global_timeout,
+        transactions_per_node,
+        tx_input,
+        transport_backend,
+        log_level,
+        config_json: config_json.ok_or_else(|| String::from("--config-json is required"))?,
+        result_path,
+    })
+}
+
+fn parse_drive_acs_args<I>(mut argv: I) -> Result<DriveAcsArgs, String>
+where
+    I: Iterator<Item = String>,
+{
+    let mut protocol = Protocol::HoneyBadger;
+    let mut sid = String::from("drive:acs");
+    let mut nodes = 4usize;
+    let mut faulty = 1usize;
+    let mut rounds = 1usize;
+    let mut global_timeout = 30.0f64;
+    let mut config_json = String::from("{}");
+    let mut result_path: Option<String> = None;
+
+    while let Some(arg) = argv.next() {
+        match arg.as_str() {
+            "--protocol" => {
+                protocol = Protocol::parse(&take_value(&mut argv, "--protocol")?)?;
+            }
+            "--sid" => {
+                sid = take_value(&mut argv, "--sid")?;
+            }
+            "--nodes" => {
+                nodes = parse_usize_flag(&mut argv, "--nodes")?;
+            }
+            "--faulty" => {
+                faulty = parse_usize_flag(&mut argv, "--faulty")?;
+            }
+            "--rounds" => {
+                rounds = parse_usize_flag(&mut argv, "--rounds")?;
+            }
+            "--global-timeout" => {
+                global_timeout = parse_f64_flag(&mut argv, "--global-timeout")?;
+            }
+            "--config-json" => {
+                config_json = take_value(&mut argv, "--config-json")?;
+            }
+            "--result-path" => {
+                result_path = Some(take_value(&mut argv, "--result-path")?);
+            }
+            _ => return Err(format!("unknown argument: {arg}")),
+        }
+    }
+
+    if nodes == 0 {
+        return Err(String::from("--nodes must be > 0"));
+    }
+    if rounds == 0 {
+        return Err(String::from("--rounds must be > 0"));
+    }
+    if global_timeout <= 0.0 {
+        return Err(String::from("--global-timeout must be > 0"));
+    }
+
+    Ok(DriveAcsArgs {
+        protocol,
+        sid,
+        nodes,
+        faulty,
+        rounds,
+        global_timeout,
+        config_json,
+        result_path,
+    })
+}
+
+fn parse_drive_honeybadger_args<I>(mut argv: I) -> Result<DriveHoneyBadgerArgs, String>
+where
+    I: Iterator<Item = String>,
+{
+    let mut sid = String::from("drive:hb");
+    let mut acs_protocol = Protocol::HoneyBadger;
+    let mut nodes = 4usize;
+    let mut faulty = 1usize;
+    let mut rounds = 1usize;
+    let mut batch_size = 1usize;
+    let mut global_timeout = 30.0f64;
+    let mut config_json = String::from("{}");
+    let mut result_path: Option<String> = None;
+
+    while let Some(arg) = argv.next() {
+        match arg.as_str() {
+            "--sid" => {
+                sid = take_value(&mut argv, "--sid")?;
+            }
+            "--acs-protocol" => {
+                acs_protocol = Protocol::parse(&take_value(&mut argv, "--acs-protocol")?)?;
+            }
+            "--nodes" => {
+                nodes = parse_usize_flag(&mut argv, "--nodes")?;
+            }
+            "--faulty" => {
+                faulty = parse_usize_flag(&mut argv, "--faulty")?;
+            }
+            "--rounds" => {
+                rounds = parse_usize_flag(&mut argv, "--rounds")?;
+            }
+            "--batch-size" => {
+                batch_size = parse_usize_flag(&mut argv, "--batch-size")?;
+            }
+            "--global-timeout" => {
+                global_timeout = parse_f64_flag(&mut argv, "--global-timeout")?;
+            }
+            "--config-json" => {
+                config_json = take_value(&mut argv, "--config-json")?;
+            }
+            "--result-path" => {
+                result_path = Some(take_value(&mut argv, "--result-path")?);
+            }
+            _ => return Err(format!("unknown argument: {arg}")),
+        }
+    }
+
+    if nodes == 0 {
+        return Err(String::from("--nodes must be > 0"));
+    }
+    if rounds == 0 {
+        return Err(String::from("--rounds must be > 0"));
+    }
+    if batch_size == 0 {
+        return Err(String::from("--batch-size must be > 0"));
+    }
+    if global_timeout <= 0.0 {
+        return Err(String::from("--global-timeout must be > 0"));
+    }
+
+    Ok(DriveHoneyBadgerArgs {
+        sid,
+        acs_protocol,
+        nodes,
+        faulty,
+        rounds,
+        batch_size,
+        global_timeout,
+        config_json,
+        result_path,
+    })
+}
+
+fn parse_hb_worker_args<I>(mut argv: I) -> Result<HbWorkerArgs, String>
+where
+    I: Iterator<Item = String>,
+{
+    let mut pid = 0usize;
+    let mut nodes = 4usize;
+    let mut faulty = 1usize;
+    let mut acs_protocol = Protocol::HoneyBadger;
+    let mut acs_crypto_json: Option<String> = None;
+    let mut hb_crypto_json: Option<String> = None;
+    let mut config_json = String::from("{}");
+    let mut ipc_mode = HbWorkerIpcMode::Json;
+
+    while let Some(arg) = argv.next() {
+        match arg.as_str() {
+            "--pid" => {
+                pid = parse_usize_flag(&mut argv, "--pid")?;
+            }
+            "--nodes" => {
+                nodes = parse_usize_flag(&mut argv, "--nodes")?;
+            }
+            "--faulty" => {
+                faulty = parse_usize_flag(&mut argv, "--faulty")?;
+            }
+            "--acs-protocol" => {
+                acs_protocol = Protocol::parse(&take_value(&mut argv, "--acs-protocol")?)?;
+            }
+            "--acs-crypto-json" => {
+                acs_crypto_json = Some(take_value(&mut argv, "--acs-crypto-json")?);
+            }
+            "--hb-crypto-json" => {
+                hb_crypto_json = Some(take_value(&mut argv, "--hb-crypto-json")?);
+            }
+            "--config-json" => {
+                config_json = take_value(&mut argv, "--config-json")?;
+            }
+            "--ipc-mode" => {
+                ipc_mode = HbWorkerIpcMode::parse(&take_value(&mut argv, "--ipc-mode")?)?;
+            }
+            _ => return Err(format!("unknown argument: {arg}")),
+        }
+    }
+
+    if nodes == 0 {
+        return Err(String::from("--nodes must be > 0"));
+    }
+    if pid >= nodes {
+        return Err(format!("--pid {pid} must be < --nodes {nodes}"));
+    }
+
+    Ok(HbWorkerArgs {
+        pid,
+        nodes,
+        faulty,
+        acs_protocol,
+        acs_crypto_json: acs_crypto_json
+            .ok_or_else(|| String::from("--acs-crypto-json is required"))?,
+        hb_crypto_json: hb_crypto_json
+            .ok_or_else(|| String::from("--hb-crypto-json is required"))?,
+        config_json,
+        ipc_mode,
+    })
+}
