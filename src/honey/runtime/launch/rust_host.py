@@ -10,31 +10,9 @@ import honey_native
 from honey.consensus.dumbo.core import DumboBFT
 from honey.consensus.honeybadger.core import HoneyBadgerBFT
 from honey.infra.telemetry import METRICS, normalize_timing_snapshot, timed_metric
-from honey.protocol.params import CommonParams, CryptoParams, HBConfig
+from honey.protocol.params import CommonParams, HBConfig
+from honey.runtime.launch.crypto_material import build_crypto_params_from_payload
 from honey.runtime.transport.rust import create_rust_transport
-
-
-def _decode_hex(value: str) -> bytes:
-    return bytes.fromhex(value)
-
-
-def _build_crypto(protocol: str, payload: dict[str, Any]) -> CryptoParams:
-    crypto = CryptoParams(
-        sig_pk=honey_native.SigPublicKey.from_bytes(_decode_hex(str(payload["sig_pk"]))),
-        sig_sk=honey_native.SigPrivateShare.from_bytes(_decode_hex(str(payload["sig_sk"]))),
-        enc_pk=honey_native.PkePublicKey.from_bytes(_decode_hex(str(payload["enc_pk"]))),
-        enc_sk=honey_native.PkePrivateShare.from_bytes(_decode_hex(str(payload["enc_sk"]))),
-        ecdsa_pks=[_decode_hex(str(value)) for value in cast(list[str], payload["ecdsa_pks"])],
-        ecdsa_sk=_decode_hex(str(payload["ecdsa_sk"])),
-    )
-    if protocol == "dumbo":
-        crypto.proof_sig_pk = honey_native.SigPublicKey.from_bytes(
-            _decode_hex(str(payload["proof_sig_pk"]))
-        )
-        crypto.proof_sig_sk = honey_native.SigPrivateShare.from_bytes(
-            _decode_hex(str(payload["proof_sig_sk"]))
-        )
-    return crypto
 
 
 def _seed_transactions(
@@ -56,6 +34,7 @@ def _seed_transactions(
             continue
         node.submit_tx_json_str(tx, track_latency=True, submitted_at_ns=submitted_at_ns)
 
+
 async def _run_protocol_node(
     *,
     protocol: str,
@@ -72,7 +51,7 @@ async def _run_protocol_node(
 ) -> dict[str, Any]:
     METRICS.reset()
     common = CommonParams(sid=sid, pid=pid, N=nodes, f=faulty, leader=0)
-    crypto = _build_crypto(protocol, crypto_payload)
+    crypto = build_crypto_params_from_payload(protocol, crypto_payload)
     config = HBConfig(**config_payload)
     transport = create_rust_transport(pid=pid, addresses=addresses)
     node_cls = DumboBFT if protocol == "dumbo" else HoneyBadgerBFT

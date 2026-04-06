@@ -29,7 +29,6 @@ from honey.protocol.params import CommonParams, CryptoParams, HBConfig
 from honey.runtime.launch.crypto_material import build_dumbo_materials, build_materials
 from honey.runtime.simulation import DeterministicNetworkSimulator
 from honey.runtime.transport import QueueTransport
-from honey.runtime.transport.rust import create_rust_transport
 
 _TIMED_METRIC_NAMES = (
     "hb.round.seconds",
@@ -52,7 +51,7 @@ _NATIVE_TRANSPORT_POLL_SECONDS = 0.001
 _HONEY_NODE_BINARY: Path | None = None
 TxInputMode = Literal["json_str", "bytes"]
 TransportBackend = Literal["tcp", "quic"]
-NodeRuntime = Literal["bridge", "embedded"]
+AcsRuntimeProtocol = Literal["hb", "dumbo"]
 type NodeFactory = Callable[[Any], HoneyBadgerBFT | DumboBFT]
 
 
@@ -106,6 +105,63 @@ class MultiprocessNodeResult:
     subprotocol_timings: dict[str, MetricTimingSummary] = field(default_factory=dict)
     queue_peaks: NodeQueuePeaks = field(default_factory=NodeQueuePeaks)
     transport_stats: TransportStats = field(default_factory=TransportStats)
+
+
+@dataclass(frozen=True)
+class RustDrivenAcsNodeResult:
+    pid: int
+    worker_ident: int
+    rounds_started: int
+    rounds_finished: int
+    processed_commands: int = 0
+    bridge_queue_size: int = 0
+    worker_running: bool = False
+    worker_error: str | None = None
+
+
+@dataclass(frozen=True)
+class RustDrivenAcsRoundResult:
+    round_id: int
+    selected_count: int
+    send_events: int
+
+
+@dataclass(frozen=True)
+class RustDrivenAcsRunResult:
+    protocol: str
+    sid: str
+    nodes: tuple[RustDrivenAcsNodeResult, ...]
+    rounds: tuple[RustDrivenAcsRoundResult, ...]
+
+
+@dataclass(frozen=True)
+class RustDrivenHoneyBadgerRoundResult:
+    round_id: int
+    selected_count: int
+    selected_pids: tuple[int, ...]
+    acs_send_events: int
+    tpke_bundle_events: int
+    delivered_count: int
+    block_size: int
+    block_digest: str
+    chain_digest: str
+    build_seconds: float
+    acs_seconds: float
+    tpke_seconds: float
+    tpke_local_share_seconds: float
+    tpke_combine_seconds: float
+    protocol_seconds: float
+    wall_seconds: float
+
+
+@dataclass(frozen=True)
+class RustDrivenHoneyBadgerRunResult:
+    protocol: str
+    sid: str
+    chain_digest: str | None
+    nodes: tuple[RustDrivenAcsNodeResult, ...]
+    rounds: tuple[RustDrivenHoneyBadgerRoundResult, ...]
+    acs_protocol: str = "hb"
 
 
 def _encode_result_payload(result: MultiprocessNodeResult) -> dict[str, Any]:
@@ -177,6 +233,83 @@ def _decode_result_payload(pid: int, value: dict[str, Any]) -> MultiprocessNodeR
             recv_frames=int(value.get("transport_stats", {}).get("recv_frames", 0)),
             connect_retries=int(value.get("transport_stats", {}).get("connect_retries", 0)),
             send_retries=int(value.get("transport_stats", {}).get("send_retries", 0)),
+        ),
+    )
+
+
+def _decode_rust_driven_acs_payload(value: dict[str, Any]) -> RustDrivenAcsRunResult:
+    return RustDrivenAcsRunResult(
+        protocol=str(value["protocol"]),
+        sid=str(value["sid"]),
+        nodes=tuple(
+            RustDrivenAcsNodeResult(
+                pid=int(node["pid"]),
+                worker_ident=int(node["worker_ident"]),
+                rounds_started=int(node["rounds_started"]),
+                rounds_finished=int(node["rounds_finished"]),
+                processed_commands=int(node.get("processed_commands", 0)),
+                bridge_queue_size=int(node.get("bridge_queue_size", 0)),
+                worker_running=bool(node.get("worker_running", False)),
+                worker_error=(
+                    str(node["worker_error"]) if node.get("worker_error") is not None else None
+                ),
+            )
+            for node in value.get("nodes", ())
+        ),
+        rounds=tuple(
+            RustDrivenAcsRoundResult(
+                round_id=int(round_data["round_id"]),
+                selected_count=int(round_data["selected_count"]),
+                send_events=int(round_data["send_events"]),
+            )
+            for round_data in value.get("rounds", ())
+        ),
+    )
+
+
+def _decode_rust_driven_honeybadger_payload(
+    value: dict[str, Any],
+) -> RustDrivenHoneyBadgerRunResult:
+    return RustDrivenHoneyBadgerRunResult(
+        protocol=str(value["protocol"]),
+        acs_protocol=str(value.get("acs_protocol", "hb")),
+        sid=str(value["sid"]),
+        chain_digest=str(value["chain_digest"]) if value.get("chain_digest") is not None else None,
+        nodes=tuple(
+            RustDrivenAcsNodeResult(
+                pid=int(node["pid"]),
+                worker_ident=int(node["worker_ident"]),
+                rounds_started=int(node["rounds_started"]),
+                rounds_finished=int(node["rounds_finished"]),
+                processed_commands=int(node.get("processed_commands", 0)),
+                bridge_queue_size=int(node.get("bridge_queue_size", 0)),
+                worker_running=bool(node.get("worker_running", False)),
+                worker_error=(
+                    str(node["worker_error"]) if node.get("worker_error") is not None else None
+                ),
+            )
+            for node in value.get("nodes", ())
+        ),
+        rounds=tuple(
+            RustDrivenHoneyBadgerRoundResult(
+                round_id=int(round_data["round_id"]),
+                selected_count=int(round_data["selected_count"]),
+                selected_pids=tuple(int(pid) for pid in round_data.get("selected_pids", ())),
+                acs_send_events=int(round_data["acs_send_events"]),
+                tpke_bundle_events=int(round_data["tpke_bundle_events"]),
+                delivered_count=int(round_data["delivered_count"]),
+                block_size=int(round_data["block_size"]),
+                block_digest=str(round_data["block_digest"]),
+                chain_digest=str(round_data["chain_digest"]),
+                build_seconds=float(round_data["build_seconds"]),
+                acs_seconds=float(round_data["acs_seconds"]),
+                tpke_seconds=float(round_data["tpke_seconds"]),
+                tpke_local_share_seconds=float(round_data["tpke_local_share_seconds"]),
+                tpke_combine_seconds=float(round_data["tpke_combine_seconds"]),
+                protocol_seconds=float(round_data["protocol_seconds"]),
+                wall_seconds=float(round_data["wall_seconds"]),
+            )
+            for round_data in value.get("rounds", ())
         ),
     )
 
@@ -475,156 +608,233 @@ def _build_honey_node_binary() -> Path:
     return _HONEY_NODE_BINARY
 
 
-def _serialize_hb_crypto_payloads(num_nodes: int, faulty: int) -> list[dict[str, Any]]:
-    sig_pk, sig_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks = build_materials(
-        num_nodes, faulty
-    )
-    payloads: list[dict[str, Any]] = []
-    for pid in range(num_nodes):
-        payloads.append(
-            {
-                "sig_pk": sig_pk.to_bytes().hex(),
-                "sig_sk": sig_shares[pid].to_bytes().hex(),
-                "enc_pk": enc_pk.to_bytes().hex(),
-                "enc_sk": enc_shares[pid].to_bytes().hex(),
-                "ecdsa_pks": [pk.hex() for pk in ecdsa_pks],
-                "ecdsa_sk": ecdsa_sks[pid].hex(),
-            }
-        )
-    return payloads
-
-
-def _serialize_dumbo_crypto_payloads(num_nodes: int, faulty: int) -> list[dict[str, Any]]:
-    coin_pk, coin_shares, proof_pk, proof_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks = (
-        build_dumbo_materials(num_nodes, faulty)
-    )
-    payloads: list[dict[str, Any]] = []
-    for pid in range(num_nodes):
-        payloads.append(
-            {
-                "sig_pk": coin_pk.to_bytes().hex(),
-                "sig_sk": coin_shares[pid].to_bytes().hex(),
-                "enc_pk": enc_pk.to_bytes().hex(),
-                "enc_sk": enc_shares[pid].to_bytes().hex(),
-                "ecdsa_pks": [pk.hex() for pk in ecdsa_pks],
-                "ecdsa_sk": ecdsa_sks[pid].hex(),
-                "proof_sig_pk": proof_pk.to_bytes().hex(),
-                "proof_sig_sk": proof_shares[pid].to_bytes().hex(),
-            }
-        )
-    return payloads
-
-
 def _benchmark_rust_hosted_nodes(
     *,
     protocol: str,
     sid: str,
     num_nodes: int,
     faulty: int,
+    batch_size: int,
     max_rounds: int,
     round_timeout: float,
     global_timeout: float,
     transactions_per_node: int,
     tx_input: TxInputMode,
+    transport_backend: TransportBackend,
     log_level: str,
-    crypto_payloads: list[dict[str, Any]],
     config_payload: dict[str, Any],
 ) -> list[MultiprocessNodeResult]:
     _configure_logging(log_level)
     binary = _build_honey_node_binary()
-    addresses = _allocate_loopback_addresses(num_nodes)
-    addresses_json = json.dumps(addresses, separators=(",", ":"))
-    result_dir = Path(_build_result_dir(f"{protocol}-rust-hosted", sid))
-    start_at_ms = int((time.time() + 5.0) * 1000)
-    processes: list[subprocess.Popen[bytes]] = []
-    log_handles: list[Any] = []
-    result_paths: dict[int, Path] = {}
-    stderr_paths: dict[int, Path] = {}
+    command = [
+        str(binary),
+        "bench-local",
+        "--protocol",
+        protocol,
+        "--sid",
+        sid,
+        "--nodes",
+        str(num_nodes),
+        "--faulty",
+        str(faulty),
+        "--batch-size",
+        str(batch_size),
+        "--rounds",
+        str(max_rounds),
+        "--round-timeout",
+        str(round_timeout),
+        "--global-timeout",
+        str(global_timeout),
+        "--transactions-per-node",
+        str(transactions_per_node),
+        "--tx-input",
+        tx_input,
+        "--transport-backend",
+        transport_backend,
+        "--log-level",
+        log_level,
+        "--config-json",
+        json.dumps(config_payload, separators=(",", ":")),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+        raise RuntimeError(f"Rust-hosted benchmark failed: {error_text}")
 
-    for pid in range(num_nodes):
-        result_path = result_dir / f"node-{pid}.json"
-        stdout_path = result_dir / f"node-{pid}.out.log"
-        stderr_path = result_dir / f"node-{pid}.err.log"
-        result_paths[pid] = result_path
-        stderr_paths[pid] = stderr_path
-        stdout_handle = stdout_path.open("wb")
-        stderr_handle = stderr_path.open("wb")
-        log_handles.extend((stdout_handle, stderr_handle))
-        process = subprocess.Popen(
-            [
-                str(binary),
-                "--protocol",
-                protocol,
-                "--pid",
-                str(pid),
-                "--nodes",
-                str(num_nodes),
-                "--faulty",
-                str(faulty),
-                "--rounds",
-                str(max_rounds),
-                "--sid",
-                sid,
-                "--addresses-json",
-                addresses_json,
-                "--crypto-json",
-                json.dumps(crypto_payloads[pid], separators=(",", ":")),
-                "--config-json",
-                json.dumps(config_payload, separators=(",", ":")),
-                "--transactions-per-node",
-                str(transactions_per_node),
-                "--tx-input",
-                tx_input,
-                "--start-at-ms",
-                str(start_at_ms),
-                "--result-path",
-                str(result_path),
-            ],
-            cwd=Path.cwd(),
-            stdout=stdout_handle,
-            stderr=stderr_handle,
+    payload = completed.stdout.strip()
+    if not payload:
+        raise RuntimeError("Rust-hosted benchmark produced no output")
+    decoded = cast(list[dict[str, Any]], json.loads(payload))
+    return [_decode_result_payload(pid, value) for pid, value in enumerate(decoded)]
+
+
+def _run_rust_driven_acs(
+    *,
+    protocol: str,
+    sid: str,
+    num_nodes: int,
+    faulty: int,
+    max_rounds: int,
+    global_timeout: float,
+    config_payload: dict[str, Any] | None = None,
+) -> RustDrivenAcsRunResult:
+    binary = _build_honey_node_binary()
+    completed = subprocess.run(
+        [
+            str(binary),
+            "drive-acs",
+            "--protocol",
+            protocol,
+            "--sid",
+            sid,
+            "--nodes",
+            str(num_nodes),
+            "--faulty",
+            str(faulty),
+            "--rounds",
+            str(max_rounds),
+            "--global-timeout",
+            str(global_timeout),
+            "--config-json",
+            json.dumps(config_payload or {}, separators=(",", ":")),
+        ],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+        raise RuntimeError(f"Rust-driven ACS run failed: {error_text}")
+
+    payload = completed.stdout.strip()
+    if not payload:
+        raise RuntimeError("Rust-driven ACS run produced no output")
+    return _decode_rust_driven_acs_payload(cast(dict[str, Any], json.loads(payload)))
+
+
+def _run_rust_driven_honeybadger(
+    *,
+    sid: str,
+    num_nodes: int,
+    faulty: int,
+    batch_size: int,
+    max_rounds: int,
+    global_timeout: float,
+    acs_protocol: AcsRuntimeProtocol = "hb",
+    acs_config_payload: dict[str, Any] | None = None,
+) -> RustDrivenHoneyBadgerRunResult:
+    binary = _build_honey_node_binary()
+    completed = subprocess.run(
+        [
+            str(binary),
+            "drive-hb",
+            "--sid",
+            sid,
+            "--acs-protocol",
+            acs_protocol,
+            "--nodes",
+            str(num_nodes),
+            "--faulty",
+            str(faulty),
+            "--rounds",
+            str(max_rounds),
+            "--batch-size",
+            str(batch_size),
+            "--global-timeout",
+            str(global_timeout),
+            "--config-json",
+            json.dumps(acs_config_payload or {}, separators=(",", ":")),
+        ],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+        raise RuntimeError(f"Rust-driven HoneyBadger run failed: {error_text}")
+
+    payload = completed.stdout.strip()
+    if not payload:
+        raise RuntimeError("Rust-driven HoneyBadger run produced no output")
+    return _decode_rust_driven_honeybadger_payload(cast(dict[str, Any], json.loads(payload)))
+
+
+def _timing_summary(
+    samples: tuple[float, ...], *, total_seconds: float | None = None
+) -> MetricTimingSummary:
+    if not samples:
+        return MetricTimingSummary()
+    return MetricTimingSummary(
+        sample_count=len(samples),
+        total_seconds=sum(samples) if total_seconds is None else total_seconds,
+        max_seconds=max(samples),
+    )
+
+
+def _results_from_rust_driven_honeybadger(
+    run_result: RustDrivenHoneyBadgerRunResult,
+    *,
+    batch_size: int,
+) -> list[MultiprocessNodeResult]:
+    round_build_latencies = tuple(round_data.build_seconds for round_data in run_result.rounds)
+    round_latencies = tuple(round_data.protocol_seconds for round_data in run_result.rounds)
+    round_wall_latencies = tuple(round_data.wall_seconds for round_data in run_result.rounds)
+    round_proposed_counts = tuple(batch_size for _ in run_result.rounds)
+    round_delivered_counts = tuple(round_data.delivered_count for round_data in run_result.rounds)
+    delivered_total = sum(round_delivered_counts)
+    node_run_total = sum(round_wall_latencies)
+    shared_timings = {
+        "hb.round.seconds": _timing_summary(round_latencies),
+        "tpke.encrypt.seconds": _timing_summary(round_build_latencies),
+        "tpke.partial_open.seconds": _timing_summary(
+            tuple(round_data.tpke_local_share_seconds for round_data in run_result.rounds)
+        ),
+        "tpke.combine.seconds": _timing_summary(
+            tuple(round_data.tpke_combine_seconds for round_data in run_result.rounds)
+        ),
+        "node.run.seconds": _timing_summary(
+            (node_run_total,),
+            total_seconds=node_run_total,
+        ),
+    }
+
+    results: list[MultiprocessNodeResult] = []
+    for node in run_result.nodes:
+        origin_tx_latencies_by_round = tuple(
+            (
+                tuple(round_data.wall_seconds for _ in range(batch_size))
+                if node.pid in round_data.selected_pids
+                else ()
+            )
+            for round_data in run_result.rounds
         )
-        processes.append(process)
-
-    deadline = time.monotonic() + global_timeout
-    while time.monotonic() < deadline:
-        if all(result_path.exists() for result_path in result_paths.values()):
-            break
-        if any(process.poll() not in (None, 0) for process in processes):
-            break
-        time.sleep(0.05)
-
-    all_results_ready = all(result_path.exists() for result_path in result_paths.values())
-    for process in processes:
-        if process.poll() is None and all_results_ready:
-            process.wait(timeout=1.0)
-            continue
-        if process.poll() is None:
-            process.terminate()
-            process.wait(timeout=1.0)
-    for handle in log_handles:
-        handle.close()
-
-    errors: list[str] = []
-    for pid, process in enumerate(processes):
-        if process.returncode not in (0, None):
-            error_text = stderr_paths[pid].read_text(encoding="utf-8", errors="replace")
-            errors.append(f"pid={pid}: returncode={process.returncode}: {error_text.strip()}")
-        elif not result_paths[pid].exists():
-            error_text = stderr_paths[pid].read_text(encoding="utf-8", errors="replace")
-            errors.append(f"pid={pid}: missing result file: {error_text.strip()}")
-
-    if errors:
-        shutil.rmtree(result_dir, ignore_errors=True)
-        raise RuntimeError("Rust-hosted node failed: " + "; ".join(errors))
-
-    try:
-        return [
-            _decode_result_payload(pid, json.loads(result_paths[pid].read_text(encoding="utf-8")))
-            for pid in range(num_nodes)
-        ]
-    finally:
-        shutil.rmtree(result_dir, ignore_errors=True)
+        origin_tx_latencies = tuple(
+            latency for round_samples in origin_tx_latencies_by_round for latency in round_samples
+        )
+        results.append(
+            MultiprocessNodeResult(
+                pid=node.pid,
+                rounds=node.rounds_finished,
+                delivered=delivered_total,
+                round_build_latencies=round_build_latencies,
+                round_latencies=round_latencies,
+                round_wall_latencies=round_wall_latencies,
+                round_proposed_counts=round_proposed_counts,
+                round_delivered_counts=round_delivered_counts,
+                origin_tx_latencies=origin_tx_latencies,
+                origin_tx_latencies_by_round=origin_tx_latencies_by_round,
+                chain_digest=run_result.chain_digest,
+                subprotocol_timings=dict(shared_timings),
+                queue_peaks=NodeQueuePeaks(),
+                transport_stats=TransportStats(),
+            )
+        )
+    return results
 
 
 def benchmark_local_honeybadger_nodes_rust_hosted(
@@ -642,7 +852,6 @@ def benchmark_local_honeybadger_nodes_rust_hosted(
     rust_tx_pool_max_bytes: int = 0,
     ledger_dir: str | None = None,
 ) -> list[MultiprocessNodeResult]:
-    del transport_backend
     config_payload: dict[str, Any] = {
         "batch_size": batch_size,
         "rust_tx_pool_max_bytes": rust_tx_pool_max_bytes,
@@ -657,14 +866,112 @@ def benchmark_local_honeybadger_nodes_rust_hosted(
         sid=sid,
         num_nodes=num_nodes,
         faulty=faulty,
+        batch_size=batch_size,
         max_rounds=max_rounds,
         round_timeout=round_timeout,
         global_timeout=global_timeout,
         transactions_per_node=transactions_per_node,
         tx_input=tx_input,
+        transport_backend=transport_backend,
         log_level=log_level,
-        crypto_payloads=_serialize_hb_crypto_payloads(num_nodes, faulty),
         config_payload=config_payload,
+    )
+
+
+def benchmark_local_honeybadger_nodes_rust_driven(
+    sid: str,
+    num_nodes: int,
+    faulty: int,
+    batch_size: int = 1,
+    max_rounds: int = 1,
+    round_timeout: float = 10.0,
+    global_timeout: float = 30.0,
+    transactions_per_node: int = 1,
+    tx_input: TxInputMode = "json_str",
+    transport_backend: TransportBackend = "tcp",
+    log_level: str = "WARNING",
+    rust_tx_pool_max_bytes: int = 0,
+    ledger_dir: str | None = None,
+    acs_protocol: AcsRuntimeProtocol = "hb",
+    enable_broadcast_pool_reuse: bool = False,
+    pool_grace_ms: int = 200,
+) -> list[MultiprocessNodeResult]:
+    del round_timeout, transport_backend, log_level, rust_tx_pool_max_bytes
+    if tx_input != "json_str":
+        raise ValueError(
+            "Rust-driven HoneyBadger benchmark currently supports only tx_input='json_str'"
+        )
+    expected_transactions_per_node = batch_size * max_rounds
+    if transactions_per_node != expected_transactions_per_node:
+        raise ValueError(
+            "Rust-driven HoneyBadger benchmark requires transactions_per_node == batch_size * max_rounds"
+        )
+    if ledger_dir is not None:
+        raise ValueError("Rust-driven HoneyBadger benchmark does not support ledger persistence")
+
+    acs_config_payload: dict[str, Any] | None = None
+    if acs_protocol == "dumbo":
+        acs_config_payload = {
+            "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
+            "pool_grace_ms": pool_grace_ms,
+        }
+
+    run_result = _run_rust_driven_honeybadger(
+        sid=sid,
+        num_nodes=num_nodes,
+        faulty=faulty,
+        batch_size=batch_size,
+        max_rounds=max_rounds,
+        global_timeout=global_timeout,
+        acs_protocol=acs_protocol,
+        acs_config_payload=acs_config_payload,
+    )
+    return _results_from_rust_driven_honeybadger(run_result, batch_size=batch_size)
+
+
+def run_local_honeybadger_acs_rust_driven(
+    sid: str,
+    num_nodes: int,
+    faulty: int,
+    max_rounds: int = 1,
+    global_timeout: float = 30.0,
+) -> RustDrivenAcsRunResult:
+    return _run_rust_driven_acs(
+        protocol="hb",
+        sid=sid,
+        num_nodes=num_nodes,
+        faulty=faulty,
+        max_rounds=max_rounds,
+        global_timeout=global_timeout,
+    )
+
+
+def run_local_honeybadger_rust_driven(
+    sid: str,
+    num_nodes: int,
+    faulty: int,
+    batch_size: int = 1,
+    max_rounds: int = 1,
+    global_timeout: float = 30.0,
+    acs_protocol: AcsRuntimeProtocol = "hb",
+    enable_broadcast_pool_reuse: bool = False,
+    pool_grace_ms: int = 200,
+) -> RustDrivenHoneyBadgerRunResult:
+    acs_config_payload: dict[str, Any] | None = None
+    if acs_protocol == "dumbo":
+        acs_config_payload = {
+            "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
+            "pool_grace_ms": pool_grace_ms,
+        }
+    return _run_rust_driven_honeybadger(
+        sid=sid,
+        num_nodes=num_nodes,
+        faulty=faulty,
+        batch_size=batch_size,
+        max_rounds=max_rounds,
+        global_timeout=global_timeout,
+        acs_protocol=acs_protocol,
+        acs_config_payload=acs_config_payload,
     )
 
 
@@ -687,7 +994,7 @@ def benchmark_local_dumbo_nodes_rust_hosted(
     rust_tx_pool_max_bytes: int = 0,
     ledger_dir: str | None = None,
 ) -> list[MultiprocessNodeResult]:
-    del transport_backend, rust_tx_pool_max_bytes
+    del rust_tx_pool_max_bytes
     config_payload: dict[str, Any] = {
         "batch_size": batch_size,
         "max_rounds": max_rounds,
@@ -705,13 +1012,38 @@ def benchmark_local_dumbo_nodes_rust_hosted(
         sid=sid,
         num_nodes=num_nodes,
         faulty=faulty,
+        batch_size=batch_size,
         max_rounds=max_rounds,
         round_timeout=round_timeout,
         global_timeout=global_timeout,
         transactions_per_node=transactions_per_node,
         tx_input=tx_input,
+        transport_backend=transport_backend,
         log_level=log_level,
-        crypto_payloads=_serialize_dumbo_crypto_payloads(num_nodes, faulty),
+        config_payload=config_payload,
+    )
+
+
+def run_local_dumbo_acs_rust_driven(
+    sid: str,
+    num_nodes: int,
+    faulty: int,
+    max_rounds: int = 1,
+    global_timeout: float = 30.0,
+    enable_broadcast_pool_reuse: bool = False,
+    pool_grace_ms: int = 200,
+) -> RustDrivenAcsRunResult:
+    config_payload: dict[str, Any] = {
+        "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
+        "pool_grace_ms": pool_grace_ms,
+    }
+    return _run_rust_driven_acs(
+        protocol="dumbo",
+        sid=sid,
+        num_nodes=num_nodes,
+        faulty=faulty,
+        max_rounds=max_rounds,
+        global_timeout=global_timeout,
         config_payload=config_payload,
     )
 
@@ -756,90 +1088,6 @@ def _finalize_worker_profile(
         f"protocol={protocol}\nworker_pid={pid}\nsort={sort_by}\nlimit={limit}\n\n{buffer.getvalue()}",
         encoding="utf-8",
     )
-
-
-async def _run_embedded_socket_node(
-    *,
-    sid: str,
-    pid: int,
-    addresses: list[tuple[str, int]],
-    max_rounds: int,
-    transactions_per_node: int,
-    tx_input: TxInputMode,
-    transport_backend: TransportBackend,
-    common: CommonParams,
-    crypto: CryptoParams,
-    config: HBConfig,
-    node_cls: type[HoneyBadgerBFT] | type[DumboBFT],
-    run_node: Callable[
-        [HoneyBadgerBFT | DumboBFT],
-        Coroutine[Any, Any, None],
-    ],
-) -> MultiprocessNodeResult:
-    if transport_backend != "tcp":
-        raise NotImplementedError("Embedded node runtime currently supports only tcp transport")
-
-    METRICS.reset()
-    logger = _build_runner_logger(pid)
-    queue_peaks = {
-        "raw_inbound_messages": 0,
-        "raw_outbound_messages": 0,
-        "transport_inbound": 0,
-        "transport_outbound": 0,
-    }
-
-    def update_peak(name: str, size: int) -> None:
-        if size > queue_peaks[name]:
-            queue_peaks[name] = size
-
-    transport = create_rust_transport(
-        pid=pid,
-        addresses=addresses,
-        poll_seconds=_NATIVE_TRANSPORT_POLL_SECONDS,
-        recv_batch_size=_BRIDGE_BATCH_SIZE,
-    )
-    node = node_cls(common, crypto, transport, config=config)
-    _seed_dummy_transactions(node, pid, transactions_per_node, tx_input)
-
-    async def _monitor_transport() -> None:
-        while True:
-            try:
-                inbound = transport.pending_inbound()
-                outbound = transport.pending_outbound()
-                update_peak("raw_inbound_messages", inbound)
-                update_peak("transport_inbound", inbound)
-                update_peak("raw_outbound_messages", outbound)
-                update_peak("transport_outbound", outbound)
-                await asyncio.sleep(_NATIVE_TRANSPORT_POLL_SECONDS)
-            except asyncio.CancelledError:
-                break
-
-    monitor_task = asyncio.create_task(_monitor_transport())
-
-    try:
-        log_event(logger, logging.INFO, "node_run_start", sid=sid, rounds=max_rounds)
-        with timed_metric("node.run.seconds", node=pid):
-            await run_node(node)
-        log_event(logger, logging.INFO, "node_run_finish", sid=sid, round=node.round)
-        await asyncio.sleep(0.2)
-        return _result_from_node(
-            node,
-            pid,
-            subprotocol_timings=_collect_timing_summaries(),
-            queue_peaks=_queue_peak_snapshot(node, queue_peaks),
-            transport_stats=_transport_stats_snapshot(transport),
-        )
-    except Exception as exc:
-        log_event(logger, logging.ERROR, "node_run_error", sid=sid, error=repr(exc))
-        raise
-    finally:
-        monitor_task.cancel()
-        try:
-            await monitor_task
-        except asyncio.CancelledError:
-            pass
-        await transport.close()
-        log_event(logger, logging.DEBUG, "node_shutdown_complete", sid=sid)
 
 
 async def _run_socket_node(
@@ -1076,7 +1324,6 @@ async def _node_main_socket(
     transactions_per_node: int,
     tx_input: TxInputMode,
     transport_backend: TransportBackend,
-    node_runtime: NodeRuntime,
     enable_broadcast_pool_reuse: bool,
     enable_pool_reference_proposals: bool,
     enable_pool_fetch_fallback: bool,
@@ -1107,21 +1354,6 @@ async def _node_main_socket(
         enable_ledger_persistence=ledger_dir is not None,
         ledger_dir=ledger_dir,
     )
-    if node_runtime == "embedded":
-        return await _run_embedded_socket_node(
-            sid=sid,
-            pid=pid,
-            addresses=addresses,
-            max_rounds=max_rounds,
-            transactions_per_node=transactions_per_node,
-            tx_input=tx_input,
-            transport_backend=transport_backend,
-            common=common,
-            crypto=crypto,
-            config=config,
-            node_cls=HoneyBadgerBFT,
-            run_node=lambda node: node.run(),
-        )
     return await _run_socket_node(
         sid=sid,
         pid=pid,
@@ -1154,7 +1386,6 @@ def _node_worker(
     transactions_per_node: int,
     tx_input: TxInputMode,
     transport_backend: TransportBackend,
-    node_runtime: NodeRuntime,
     enable_broadcast_pool_reuse: bool,
     enable_pool_reference_proposals: bool,
     enable_pool_fetch_fallback: bool,
@@ -1189,7 +1420,6 @@ def _node_worker(
             transactions_per_node,
             tx_input,
             transport_backend,
-            node_runtime,
             enable_broadcast_pool_reuse,
             enable_pool_reference_proposals,
             enable_pool_fetch_fallback,
@@ -1212,7 +1442,6 @@ def run_local_honeybadger_nodes_multiprocess(
     transactions_per_node: int = 1,
     tx_input: TxInputMode = "json_str",
     transport_backend: TransportBackend = "tcp",
-    node_runtime: NodeRuntime = "bridge",
     log_level: str = "WARNING",
     enable_broadcast_pool_reuse: bool = False,
     enable_pool_reference_proposals: bool = False,
@@ -1232,7 +1461,6 @@ def run_local_honeybadger_nodes_multiprocess(
         transactions_per_node=transactions_per_node,
         tx_input=tx_input,
         transport_backend=transport_backend,
-        node_runtime=node_runtime,
         log_level=log_level,
         enable_broadcast_pool_reuse=enable_broadcast_pool_reuse,
         enable_pool_reference_proposals=enable_pool_reference_proposals,
@@ -1255,7 +1483,6 @@ def benchmark_local_honeybadger_nodes_multiprocess(
     transactions_per_node: int = 1,
     tx_input: TxInputMode = "json_str",
     transport_backend: TransportBackend = "tcp",
-    node_runtime: NodeRuntime = "bridge",
     log_level: str = "WARNING",
     enable_broadcast_pool_reuse: bool = False,
     enable_pool_reference_proposals: bool = False,
@@ -1308,7 +1535,6 @@ def benchmark_local_honeybadger_nodes_multiprocess(
                 transactions_per_node,
                 tx_input,
                 transport_backend,
-                node_runtime,
                 enable_broadcast_pool_reuse,
                 enable_pool_reference_proposals,
                 enable_pool_fetch_fallback,
@@ -1362,7 +1588,6 @@ async def _dumbo_node_main_socket(
     transactions_per_node: int,
     tx_input: TxInputMode,
     transport_backend: TransportBackend,
-    node_runtime: NodeRuntime,
     enable_broadcast_pool_reuse: bool,
     enable_pool_reference_proposals: bool,
     enable_pool_fetch_fallback: bool,
@@ -1395,21 +1620,6 @@ async def _dumbo_node_main_socket(
         enable_ledger_persistence=ledger_dir is not None,
         ledger_dir=ledger_dir,
     )
-    if node_runtime == "embedded":
-        return await _run_embedded_socket_node(
-            sid=sid,
-            pid=pid,
-            addresses=addresses,
-            max_rounds=max_rounds,
-            transactions_per_node=transactions_per_node,
-            tx_input=tx_input,
-            transport_backend=transport_backend,
-            common=common,
-            crypto=crypto,
-            config=config,
-            node_cls=DumboBFT,
-            run_node=lambda node: node.run(),
-        )
     return await _run_socket_node(
         sid=sid,
         pid=pid,
@@ -1444,7 +1654,6 @@ def _dumbo_node_worker(
     transactions_per_node: int,
     tx_input: TxInputMode,
     transport_backend: TransportBackend,
-    node_runtime: NodeRuntime,
     enable_broadcast_pool_reuse: bool,
     enable_pool_reference_proposals: bool,
     enable_pool_fetch_fallback: bool,
@@ -1481,7 +1690,6 @@ def _dumbo_node_worker(
             transactions_per_node,
             tx_input,
             transport_backend,
-            node_runtime,
             enable_broadcast_pool_reuse,
             enable_pool_reference_proposals,
             enable_pool_fetch_fallback,
@@ -1504,7 +1712,6 @@ def run_local_dumbo_nodes_multiprocess(
     transactions_per_node: int = 1,
     tx_input: TxInputMode = "json_str",
     transport_backend: TransportBackend = "tcp",
-    node_runtime: NodeRuntime = "bridge",
     log_level: str = "WARNING",
     enable_broadcast_pool_reuse: bool = False,
     enable_pool_reference_proposals: bool = False,
@@ -1524,7 +1731,6 @@ def run_local_dumbo_nodes_multiprocess(
         transactions_per_node=transactions_per_node,
         tx_input=tx_input,
         transport_backend=transport_backend,
-        node_runtime=node_runtime,
         log_level=log_level,
         enable_broadcast_pool_reuse=enable_broadcast_pool_reuse,
         enable_pool_reference_proposals=enable_pool_reference_proposals,
@@ -1547,7 +1753,6 @@ def benchmark_local_dumbo_nodes_multiprocess(
     transactions_per_node: int = 1,
     tx_input: TxInputMode = "json_str",
     transport_backend: TransportBackend = "tcp",
-    node_runtime: NodeRuntime = "bridge",
     log_level: str = "WARNING",
     enable_broadcast_pool_reuse: bool = False,
     enable_pool_reference_proposals: bool = False,
@@ -1604,7 +1809,6 @@ def benchmark_local_dumbo_nodes_multiprocess(
                 transactions_per_node,
                 tx_input,
                 transport_backend,
-                node_runtime,
                 enable_broadcast_pool_reuse,
                 enable_pool_reference_proposals,
                 enable_pool_fetch_fallback,

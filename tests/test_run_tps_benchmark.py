@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from types import SimpleNamespace
 
+import pytest
+
 import run_tps_benchmark as benchmark_module
 from run_tps_benchmark import (
     BenchmarkSummary,
@@ -165,6 +167,7 @@ def _args(*, protocol: str, node_runtime: str) -> argparse.Namespace:
     return argparse.Namespace(
         sid="bench:local:test",
         protocol=protocol,
+        acs_protocol="hb",
         nodes=4,
         faulty=1,
         batch_size=8,
@@ -190,11 +193,15 @@ def _args(*, protocol: str, node_runtime: str) -> argparse.Namespace:
         json=False,
     )
 
+
 def test_select_benchmark_runner_matches_protocol_and_runtime() -> None:
     assert _select_benchmark_runner("hb", "rust") is (
         benchmark_module.benchmark_local_honeybadger_nodes_rust_hosted
     )
-    assert _select_benchmark_runner("hb", "embedded") is (
+    assert _select_benchmark_runner("hb", "rust-driver") is (
+        benchmark_module.benchmark_local_honeybadger_nodes_rust_driven
+    )
+    assert _select_benchmark_runner("hb", "bridge") is (
         benchmark_module.benchmark_local_honeybadger_nodes_multiprocess
     )
     assert _select_benchmark_runner("dumbo", "rust") is (
@@ -219,17 +226,59 @@ def test_build_benchmark_kwargs_for_rust_runtime_omits_node_runtime_only() -> No
     assert kwargs["rust_tx_pool_max_bytes"] == 4096
 
 
-def test_build_benchmark_kwargs_for_explicit_embedded_runtime_keeps_runtime_and_dumbo_flags() -> None:
+def test_build_benchmark_kwargs_for_rust_driver_runtime_omits_node_runtime() -> None:
     kwargs = _build_benchmark_kwargs(
-        _args(protocol="dumbo", node_runtime="embedded"),
-        sid="bench:test:embedded",
+        _args(protocol="hb", node_runtime="rust-driver"),
+        sid="bench:test:rust-driver",
         faulty=1,
         batch_size=8,
         transactions_per_node=24,
     )
 
     assert kwargs["global_timeout"] == 120.0
-    assert kwargs["node_runtime"] == "embedded"
+    assert "node_runtime" not in kwargs
+    assert kwargs["rust_tx_pool_max_bytes"] == 4096
+    assert kwargs["acs_protocol"] == "hb"
+
+
+def test_build_benchmark_kwargs_for_rust_driver_with_dumbo_acs_includes_provider_config() -> None:
+    args = _args(protocol="hb", node_runtime="rust-driver")
+    args.acs_protocol = "dumbo"
+
+    kwargs = _build_benchmark_kwargs(
+        args,
+        sid="bench:test:rust-driver:dumbo-acs",
+        faulty=1,
+        batch_size=8,
+        transactions_per_node=24,
+    )
+
+    assert kwargs["acs_protocol"] == "dumbo"
+    assert kwargs["enable_broadcast_pool_reuse"] is True
+    assert kwargs["pool_grace_ms"] == 250
+
+
+def test_select_benchmark_runner_rejects_rust_driver_for_dumbo() -> None:
+    with pytest.raises(ValueError, match="rust-driver"):
+        _select_benchmark_runner("dumbo", "rust-driver")
+
+
+def test_select_benchmark_runner_rejects_removed_embedded_runtime() -> None:
+    with pytest.raises(ValueError, match="embedded"):
+        _select_benchmark_runner("hb", "embedded")
+
+
+def test_build_benchmark_kwargs_for_bridge_runtime_keeps_dumbo_flags() -> None:
+    kwargs = _build_benchmark_kwargs(
+        _args(protocol="dumbo", node_runtime="bridge"),
+        sid="bench:test:bridge",
+        faulty=1,
+        batch_size=8,
+        transactions_per_node=24,
+    )
+
+    assert kwargs["global_timeout"] == 120.0
+    assert "node_runtime" not in kwargs
     assert kwargs["enable_broadcast_pool_reuse"] is True
     assert kwargs["enable_pool_reference_proposals"] is True
     assert kwargs["enable_pool_fetch_fallback"] is True
