@@ -6,7 +6,7 @@ from typing import Any
 
 from honey.data.broadcast_mempool import BroadcastMempool
 from honey.infra.exceptions import ProtocolInvariantError
-from honey.protocol.messages import Channel, ProtocolMessage
+from honey.protocol.messages import Channel, ProtocolEnvelope, ProtocolMessage
 from honey.protocol.params import CommonParams, CryptoParams
 from honey.runtime.routing.round_router import (
     AbaRecv,
@@ -20,6 +20,8 @@ from honey.subprotocols.common_coin import CoinParams, SharedCoin
 from honey.subprotocols.reliable_broadcast import BroadcastParams, reliablebroadcast
 
 from . import bkr93_core
+
+type HBOutboundSend = Callable[[int, Channel, int | None, ProtocolMessage], Awaitable[None]]
 
 
 @dataclass
@@ -100,6 +102,87 @@ async def run_bkr93_acs(
     output_queue: asyncio.Queue[tuple[bytes | None, ...]],
     logger: logging.LoggerAdapter,
 ) -> None:
+    async def send(
+        recipient: int,
+        channel: Channel,
+        instance_id: int | None,
+        message: ProtocolMessage,
+    ) -> None:
+        await router.transport.send(
+            recipient,
+            ProtocolEnvelope(
+                round_id=round_id,
+                channel=channel,
+                instance_id=instance_id,
+                message=message,
+            ),
+        )
+
+    await run_bkr93_acs_with_send(
+        params=params,
+        crypto=crypto,
+        task_group=task_group,
+        spawn=spawn,
+        coin_recvs=coin_recvs,
+        aba_recvs=aba_recvs,
+        rbc_recvs=rbc_recvs,
+        mempool=mempool,
+        round_id=round_id,
+        my_rbc_input=my_rbc_input,
+        output_queue=output_queue,
+        logger=logger,
+        send=send,
+    )
+
+
+async def _forward_broadcast_queue(
+    queue: asyncio.Queue[ProtocolMessage],
+    *,
+    channel: Channel,
+    instance_id: int,
+    num_nodes: int,
+    send: HBOutboundSend,
+) -> None:
+    try:
+        while True:
+            message = await queue.get()
+            for recipient in range(num_nodes):
+                await send(recipient, channel, instance_id, message)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _forward_point_to_point_queue(
+    queue: asyncio.Queue[PointToPointOutbound],
+    *,
+    channel: Channel,
+    instance_id: int,
+    send: HBOutboundSend,
+) -> None:
+    try:
+        while True:
+            recipient, message = await queue.get()
+            await send(recipient, channel, instance_id, message)
+    except asyncio.CancelledError:
+        pass
+
+
+async def run_bkr93_acs_with_send(
+    *,
+    params: CSParams,
+    crypto: CryptoParams,
+    task_group: asyncio.TaskGroup,
+    spawn: Callable[[Awaitable[Any]], asyncio.Task[Any]],
+    coin_recvs: list[asyncio.Queue[CoinRecv]],
+    aba_recvs: list[asyncio.Queue[AbaRecv]],
+    rbc_recvs: list[asyncio.Queue[RbcRecv]],
+    mempool: BroadcastMempool,
+    round_id: int,
+    my_rbc_input: asyncio.Queue[bytes],
+    output_queue: asyncio.Queue[tuple[bytes | None, ...]],
+    logger: logging.LoggerAdapter,
+    send: HBOutboundSend,
+) -> None:
     n = params.N
     f = params.f
     pid = params.pid
@@ -136,8 +219,12 @@ async def run_bkr93_acs(
         for j in range(n):
             coin_broadcast_queue: asyncio.Queue[ProtocolMessage] = asyncio.Queue()
             spawn(
-                router.route_broadcast_queue(
-                    coin_broadcast_queue, Channel.ACS_COIN, j, broadcast=True
+                _forward_broadcast_queue(
+                    coin_broadcast_queue,
+                    channel=Channel.ACS_COIN,
+                    instance_id=j,
+                    num_nodes=n,
+                    send=send,
                 )
             )
 
@@ -156,7 +243,14 @@ async def run_bkr93_acs(
             coin.start(task_group, coin_recvs[j])
 
             aba_send_queue: asyncio.Queue[PointToPointOutbound] = asyncio.Queue()
-            spawn(router.route_broadcast_queue(aba_send_queue, Channel.ACS_ABA, j, broadcast=False))
+            spawn(
+                _forward_point_to_point_queue(
+                    aba_send_queue,
+                    channel=Channel.ACS_ABA,
+                    instance_id=j,
+                    send=send,
+                )
+            )
             spawn(
                 binaryagreement(
                     BAParams(sid=f"{sid}ABA{j}", pid=pid, N=n, f=f, leader=j),
@@ -170,7 +264,14 @@ async def run_bkr93_acs(
             )
 
             rbc_send_queue: asyncio.Queue[PointToPointOutbound] = asyncio.Queue()
-            spawn(router.route_broadcast_queue(rbc_send_queue, Channel.ACS_RBC, j, broadcast=False))
+            spawn(
+                _forward_point_to_point_queue(
+                    rbc_send_queue,
+                    channel=Channel.ACS_RBC,
+                    instance_id=j,
+                    send=send,
+                )
+            )
             rbc_input = my_rbc_input if j == pid else asyncio.Queue()
             rbc_task = spawn(
                 reliablebroadcast(
