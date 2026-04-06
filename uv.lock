@@ -62,7 +62,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "honey-native", editable = "native/rust" }]
+requires-dist = [{ name = "honey-native", editable = "native/honey-native" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -76,7 +76,7 @@ dev = [
 [[package]]
 name = "honey-native"
 version = "0.1.1"
-source = { editable = "native/rust" }
+source = { editable = "native/honey-native" }
 
 [[package]]
 name = "identify"

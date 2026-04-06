@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 bincode = "1.3"
-honey-native = { path = "../rust" }
+honey-native = { path = "../honey-native" }
 pyo3 = { version = "0.28.2", features = ["auto-initialize"] }
 runtime-core = { path = "../runtime-core" }
 serde = { version = "1.0", features = ["derive"] }
