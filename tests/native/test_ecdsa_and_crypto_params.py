@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from honey.crypto import ecdsa
 from honey.protocol.params import CryptoParams
-from honey.runtime.launch.crypto_material import build_materials
+from honey.host.crypto_material import build_materials
 
 
 def test_ecdsa_api_round_trip_and_threshold_verify() -> None:

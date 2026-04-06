@@ -10,8 +10,8 @@ import honey_native
 
 from honey.crypto import pke
 from honey.protocol.messages import encode_tx, encode_tx_batch
-from honey.runtime.launch.crypto_material import serialize_hb_crypto_payloads_json
-from honey.runtime.launch.local_runner import _build_honey_node_binary
+from honey.host.crypto_material import serialize_hb_crypto_payloads_json
+from honey.runtime.runners import _build_honey_node_binary
 
 
 def _send_worker_command(

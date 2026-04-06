@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from honey.acs.dumbo_vacs import VacsDiffuse, VACSParams, validated_common_subset
+from honey.acs.dumbo.dumbo_vacs import VacsDiffuse, VACSParams, validated_common_subset
 from honey.crypto import sig
 
 

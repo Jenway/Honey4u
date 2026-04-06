@@ -5,7 +5,7 @@ import pytest
 from honey.crypto import pke, sig
 from honey.infra.telemetry import METRICS, normalize_timing_snapshot
 from honey.protocol.messages import BaEst, Channel, ProtocolEnvelope
-from honey.runtime.launch.local_runner import run_local_honeybadger_nodes_deterministic
+from honey.runtime.runners import run_local_honeybadger_nodes_deterministic
 from honey.runtime.simulation import DeterministicNetworkSimulator
 
 

@@ -3,7 +3,7 @@ import os
 import honey_native
 import pytest
 
-from honey.acs.dumbo_acs import DumboProofDiffuse
+from honey.acs.dumbo.dumbo_acs import DumboProofDiffuse
 from honey.crypto import merkle, pke
 from honey.data.pool_reuse import PoolFetchRequest, PoolFetchResponse
 from honey.infra.exceptions import SerializationError

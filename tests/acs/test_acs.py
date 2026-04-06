@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from honey.acs.bkr93 import CSParams, commonsubset
+from honey.acs.hb.bkr93 import CSParams, commonsubset
 
 
 @pytest.mark.asyncio

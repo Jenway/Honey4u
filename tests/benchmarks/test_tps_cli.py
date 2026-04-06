@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import run_tps_benchmark as benchmark_module
-from run_tps_benchmark import (
+from benchmarks.cli import tps as benchmark_module
+from benchmarks.cli.tps import (
     BenchmarkSummary,
     LatencyStats,
     PeakStats,

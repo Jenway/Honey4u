@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from honey.acs.dumbo_acs import DumboACSParams, dumbo_acs
+from honey.acs.dumbo.dumbo_acs import DumboACSParams, dumbo_acs
 from honey.crypto import ecdsa, sig
 
 

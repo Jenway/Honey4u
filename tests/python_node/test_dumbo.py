@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from honey.consensus.dumbo.core import DumboBFT
-from honey.consensus.honeybadger.core import CommittedBlock
+from honey.python_node.dumbo.core import DumboBFT
+from honey.python_node.honeybadger.core import CommittedBlock
 from honey.crypto import ecdsa, pke, sig
 from honey.protocol.messages import decode_block, encode_tx
 from honey.protocol.params import CommonParams, CryptoParams, HBConfig

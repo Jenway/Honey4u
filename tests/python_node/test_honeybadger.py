@@ -3,7 +3,7 @@ from typing import Any, cast
 import honey_native
 import pytest
 
-from honey.consensus.honeybadger.core import CommittedBlock, HoneyBadgerBFT, PendingRoundBatch
+from honey.python_node.honeybadger.core import CommittedBlock, HoneyBadgerBFT, PendingRoundBatch
 from honey.protocol.messages import ProtocolEnvelope, decode_block, encode_tx, encode_tx_batch
 from honey.protocol.params import CommonParams, CryptoParams, HBConfig
 from honey.protocol.results import Result, failure, success
