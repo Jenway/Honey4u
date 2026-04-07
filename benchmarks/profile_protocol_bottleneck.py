@@ -12,13 +12,21 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SRC_ROOTS = (
+    ROOT / "src",
+    ROOT / "packages" / "honey-shared" / "src",
+    ROOT / "packages" / "honey-acs" / "src",
+    ROOT / "packages" / "honey-runtime" / "src",
+    ROOT / "legacy" / "honey-python-node" / "src",
+)
+for path in (str(ROOT), *(str(root) for root in SRC_ROOTS)):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
-from honey.network.hbbft_runner import (  # noqa: E402
+from honey_runtime.runners import (  # noqa: E402
     MultiprocessNodeResult,
-    benchmark_local_dumbo_nodes_multiprocess,
-    benchmark_local_honeybadger_nodes_multiprocess,
+    benchmark_local_dumbo_nodes_rust_hosted,
+    benchmark_local_honeybadger_nodes_rust_hosted,
 )
 
 
@@ -112,9 +120,9 @@ def _run_profile(args: argparse.Namespace) -> dict[str, Any]:
         transactions_per_node = args.batch_size * args.rounds
 
     runner = (
-        benchmark_local_dumbo_nodes_multiprocess
+        benchmark_local_dumbo_nodes_rust_hosted
         if args.protocol == "dumbo"
-        else benchmark_local_honeybadger_nodes_multiprocess
+        else benchmark_local_honeybadger_nodes_rust_hosted
     )
 
     start = time.perf_counter()

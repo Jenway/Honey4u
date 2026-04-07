@@ -13,17 +13,25 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SRC_ROOTS = (
+    ROOT / "src",
+    ROOT / "packages" / "honey-shared" / "src",
+    ROOT / "packages" / "honey-acs" / "src",
+    ROOT / "packages" / "honey-runtime" / "src",
+    ROOT / "legacy" / "honey-python-node" / "src",
+)
+for path in (str(ROOT), *(str(root) for root in SRC_ROOTS)):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
-from honey.network.hbbft_runner import (
-    benchmark_local_honeybadger_nodes_multiprocess,
+from honey_runtime.runners import (
+    benchmark_local_honeybadger_nodes_rust_hosted,
     run_local_honeybadger_nodes_deterministic,
 )
-from honey.support.telemetry import METRICS
+from honey_shared.telemetry import METRICS
 
 
-def _summarize_multiprocess(results: list[Any], outer_elapsed: float) -> dict[str, Any]:
+def _summarize_networked_results(results: list[Any], outer_elapsed: float) -> dict[str, Any]:
     delivered = min(result.delivered for result in results)
     protocol_elapsed = max(sum(result.round_latencies) for result in results)
     wall_elapsed = max(sum(result.round_wall_latencies) for result in results)
@@ -121,8 +129,8 @@ def main() -> None:
         args.transactions_per_node = args.batch_size * args.rounds
 
     start = time.perf_counter()
-    multiprocess = benchmark_local_honeybadger_nodes_multiprocess(
-        sid=f"{args.sid}:socket",
+    rust_hosted = benchmark_local_honeybadger_nodes_rust_hosted(
+        sid=f"{args.sid}:rust-hosted",
         num_nodes=args.nodes,
         faulty=args.faulty,
         batch_size=args.batch_size,
@@ -135,7 +143,9 @@ def main() -> None:
         log_level=args.log_level,
         rust_tx_pool_max_bytes=args.rust_tx_pool_max_bytes,
     )
-    multiprocess_summary = _summarize_multiprocess(multiprocess, time.perf_counter() - start)
+    rust_hosted_summary = _summarize_networked_results(
+        rust_hosted, time.perf_counter() - start
+    )
 
     deterministic_summary = asyncio.run(_run_deterministic(args))
 
@@ -150,7 +160,7 @@ def main() -> None:
             "transport_backend": args.transport_backend,
             "rust_tx_pool_max_bytes": args.rust_tx_pool_max_bytes,
         },
-        "multiprocess_socket": multiprocess_summary,
+        "rust_hosted_network": rust_hosted_summary,
         "deterministic_inprocess": deterministic_summary,
     }
     encoded = json.dumps(payload, indent=2)
