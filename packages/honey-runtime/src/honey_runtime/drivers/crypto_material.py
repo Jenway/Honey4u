@@ -4,9 +4,8 @@ import json
 from typing import cast
 
 import honey_native
-
-from honey.crypto import ecdsa, pke, sig
-from honey.protocol.params import CryptoParams
+from honey_shared.crypto import ecdsa, pke, sig
+from honey_shared.params import CryptoParams
 
 
 def build_materials(num_nodes: int, faulty: int):

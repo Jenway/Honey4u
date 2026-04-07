@@ -11,15 +11,21 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SRC_ROOT = REPO_ROOT / "src"
-for path in (str(REPO_ROOT), str(SRC_ROOT)):
+SRC_ROOTS = (
+    REPO_ROOT / "src",
+    REPO_ROOT / "packages" / "honey-shared" / "src",
+    REPO_ROOT / "packages" / "honey-acs" / "src",
+    REPO_ROOT / "packages" / "honey-runtime" / "src",
+    REPO_ROOT / "legacy" / "honey-python-node" / "src",
+)
+for path in (str(REPO_ROOT), *(str(root) for root in SRC_ROOTS)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from honey.python_node.dumbo.core import DumboBFT  # noqa: E402
-from honey.crypto import ecdsa, pke, sig  # noqa: E402
-from honey.network.transport import QueueTransport  # noqa: E402
-from honey.support.params import CommonParams, CryptoParams, HBConfig  # noqa: E402
+from honey_legacy_node.dumbo.core import DumboBFT  # noqa: E402
+from honey_runtime.transport import QueueTransport  # noqa: E402
+from honey_shared.crypto import ecdsa, pke, sig  # noqa: E402
+from honey_shared.params import CommonParams, CryptoParams, HBConfig  # noqa: E402
 
 
 @dataclass(frozen=True)

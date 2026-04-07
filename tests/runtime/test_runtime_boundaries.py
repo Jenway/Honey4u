@@ -7,18 +7,17 @@ from typing import Any, cast
 
 import honey_native
 import pytest
+from honey_legacy_node.bootstrap import plan_dumbo_node, plan_hb_node, run_hb_node
+from honey_legacy_node.dumbo.core import DumboBFT
+from honey_runtime.routing.mailbox import NodeMailboxRouter
+from honey_runtime.transport import QueueTransport
+from honey_shared.params import CommonParams, CryptoParams, HBConfig
 
-from honey.protocol.params import CommonParams, CryptoParams, HBConfig
-from honey.python_node.bootstrap import plan_dumbo_node, plan_hb_node, run_hb_node
-from honey.python_node.dumbo.core import DumboBFT
-from honey.runtime.routing.mailbox import NodeMailboxRouter
-from honey.runtime.transport import QueueTransport
 
-
-def test_runtime_modules_live_under_honey_namespace() -> None:
-    assert importlib.util.find_spec("honey.runtime.transport") is not None
-    assert importlib.util.find_spec("honey.runtime.runners") is not None
-    assert importlib.util.find_spec("honey.runtime.launch") is None
+def test_runtime_modules_live_under_split_packages() -> None:
+    assert importlib.util.find_spec("honey_runtime.transport") is not None
+    assert importlib.util.find_spec("honey_runtime.runners") is not None
+    assert importlib.util.find_spec("honey_runtime.launch") is None
     assert importlib.util.find_spec("network") is None
 
 
@@ -182,7 +181,7 @@ async def test_run_hb_node_emits_commits_via_commit_sink(monkeypatch: pytest.Mon
         def commit(self, *, round_id: int, payload: bytes, tx_count: int) -> None:
             self.records.append((round_id, payload, tx_count))
 
-    import honey.python_node.bootstrap as node_embed
+    import honey_legacy_node.bootstrap as node_embed
 
     monkeypatch.setattr(node_embed, "HoneyBadgerBFT", FakeHBNode)
     sink = FakeSink()

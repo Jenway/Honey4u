@@ -5,9 +5,9 @@ from collections import deque
 from typing import Any, cast
 
 import honey_native
+from honey_shared.messages import InboundEnvelope, ProtocolEnvelope
 
-from honey.protocol.messages import InboundEnvelope, ProtocolEnvelope
-from honey.runtime.transport import Transport
+from honey_runtime.transport import Transport
 
 
 class RustTransport(Transport):

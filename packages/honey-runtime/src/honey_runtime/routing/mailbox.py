@@ -2,8 +2,9 @@ import asyncio
 import logging
 from collections.abc import Mapping
 
-from honey.protocol.messages import InboundEnvelope
-from honey.runtime.transport import Transport
+from honey_shared.messages import InboundEnvelope
+
+from honey_runtime.transport import Transport
 
 
 class NodeMailboxRouter:

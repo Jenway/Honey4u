@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Protocol
 
-from honey.protocol.messages import InboundEnvelope, OutboundEnvelope, ProtocolEnvelope
+from honey_shared.messages import InboundEnvelope, OutboundEnvelope, ProtocolEnvelope
 
 
 class Transport(Protocol):

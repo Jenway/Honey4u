@@ -10,12 +10,13 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any
 
-from honey.acs.hb.bkr93 import CSParams, run_bkr93_acs
-from honey.acs.dumbo.dumbo_acs import DumboACSParams, dumbo_acs
-from honey.data.broadcast_mempool import BroadcastMempool
-from honey.host.crypto_material import build_dumbo_materials, build_materials
-from honey.runtime.routing.round_router import RoundProtocolRouter
-from honey.runtime.transport import QueueTransport
+from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_acs.dumbo.dumbo_acs import DumboACSParams, dumbo_acs
+from honey_acs.hb.bkr93 import CSParams, run_bkr93_acs_with_send
+from honey_runtime.drivers.crypto_material import build_dumbo_materials, build_materials
+from honey_runtime.routing.round_router import RoundProtocolRouter
+from honey_runtime.transport import QueueTransport
+from honey_shared.messages import Channel, ProtocolEnvelope, ProtocolMessage
 
 
 @dataclass(frozen=True)
@@ -233,8 +234,25 @@ async def _run_bkr93_round(
                 return task
 
             router_task = spawn(router.recv_dispatcher())
+
+            async def send(
+                recipient: int,
+                channel: Channel,
+                instance_id: int | None,
+                message: ProtocolMessage,
+            ) -> None:
+                await transports[pid].send(
+                    recipient,
+                    ProtocolEnvelope(
+                        round_id=0,
+                        channel=channel,
+                        instance_id=instance_id,
+                        message=message,
+                    ),
+                )
+
             acs_task = spawn(
-                run_bkr93_acs(
+                run_bkr93_acs_with_send(
                     params=CSParams(sid=sid, pid=pid, N=num_nodes, f=faulty, leader=pid),
                     crypto=type(
                         "BenchCrypto",
@@ -246,7 +264,6 @@ async def _run_bkr93_round(
                     )(),
                     task_group=task_group,
                     spawn=spawn,
-                    router=router,
                     coin_recvs=coin_recvs,
                     aba_recvs=aba_recvs,
                     rbc_recvs=rbc_recvs,
@@ -255,6 +272,7 @@ async def _run_bkr93_round(
                     my_rbc_input=my_rbc_input,
                     output_queue=output_queue,
                     logger=logger,
+                    send=send,
                 )
             )
 

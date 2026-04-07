@@ -7,10 +7,10 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from honey.python_node.dumbo.core import DumboBFT
-from honey.crypto import ecdsa, pke, sig
-from honey.network.transport import QueueTransport
-from honey.support.params import CommonParams, CryptoParams, HBConfig
+from honey_legacy_node.dumbo.core import DumboBFT
+from honey_runtime.transport import QueueTransport
+from honey_shared.crypto import ecdsa, pke, sig
+from honey_shared.params import CommonParams, CryptoParams, HBConfig
 
 
 @dataclass(frozen=True)

@@ -6,13 +6,13 @@ import time
 from typing import Any, cast
 
 import honey_native
+from honey_legacy_node.dumbo.core import DumboBFT
+from honey_legacy_node.honeybadger.core import HoneyBadgerBFT
+from honey_shared.params import CommonParams, HBConfig
+from honey_shared.telemetry import METRICS, normalize_timing_snapshot, timed_metric
 
-from honey.python_node.dumbo.core import DumboBFT
-from honey.python_node.honeybadger.core import HoneyBadgerBFT
-from honey.infra.telemetry import METRICS, normalize_timing_snapshot, timed_metric
-from honey.protocol.params import CommonParams, HBConfig
-from honey.host.crypto_material import build_crypto_params_from_payload
-from honey.runtime.transport.rust import create_rust_transport
+from honey_runtime.drivers.crypto_material import build_crypto_params_from_payload
+from honey_runtime.transport.rust import create_rust_transport
 
 
 def _seed_transactions(

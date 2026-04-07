@@ -7,8 +7,9 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from honey.protocol.messages import ProtocolEnvelope
-from honey.runtime.transport import QueueTransport
+from honey_shared.messages import ProtocolEnvelope
+
+from honey_runtime.transport import QueueTransport
 
 FaultPredicate = Callable[[int, int, int, ProtocolEnvelope], bool]
 
