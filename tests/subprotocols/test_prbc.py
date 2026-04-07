@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 
 import pytest
-
-from honey.crypto import ecdsa
-from honey.subprotocols.provable_reliable_broadcast import (
+from honey_acs.subprotocols.provable_reliable_broadcast import (
     PRBCParams,
+    PrbcEcho,
     PrbcProof,
+    PrbcReady,
+    PrbcVal,
     provable_reliable_broadcast,
     validate_prbc_proof,
 )
+from honey_shared.crypto import ecdsa, merkle
+
+prbc_module = importlib.import_module("honey_acs.subprotocols.provable_reliable_broadcast")
 
 
 def _network_sender(
@@ -138,3 +143,122 @@ def test_prbc_proof_validation_rejects_bad_signature() -> None:
     )
 
     assert validate_prbc_proof("sid-bad", n, f, ecdsa_pks, proof) is False
+
+
+@pytest.mark.asyncio
+async def test_prbc_skips_self_and_surplus_ready_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+    n = 7
+    f = 2
+    pid = 0
+    leader = 1
+    sid = "test:prbc:skip-ready"
+    value = b"prbc-surplus-ready"
+    ecdsa_pks, ecdsa_sks = ecdsa.generate(n)
+    roothash, stripes, proofs = merkle.encode(value, n - 2 * f, n)
+    digest = b"prbc-ready|" + sid.encode("utf-8") + b"|" + roothash
+
+    verify_calls = 0
+    original_verify = prbc_module.ecdsa.verify
+
+    def counting_verify(pk: bytes, message: bytes, signature: bytes) -> bool:
+        nonlocal verify_calls
+        verify_calls += 1
+        return original_verify(pk, message, signature)
+
+    monkeypatch.setattr(prbc_module.ecdsa, "verify", counting_verify)
+
+    receive_queue: asyncio.Queue[tuple[int, object]] = asyncio.Queue()
+    input_queue: asyncio.Queue[bytes | str] = asyncio.Queue()
+
+    async def send(recipient: int, message: object) -> None:
+        if recipient == pid:
+            await receive_queue.put((pid, message))
+
+    task = asyncio.create_task(
+        provable_reliable_broadcast(
+            PRBCParams(
+                sid=sid,
+                pid=pid,
+                N=n,
+                f=f,
+                leader=leader,
+                ecdsa_pks=ecdsa_pks,
+                ecdsa_sk=ecdsa_sks[pid],
+            ),
+            input_queue,
+            receive_queue,
+            send,
+        )
+    )
+
+    await receive_queue.put(
+        (
+            leader,
+            PrbcVal(
+                leader=leader,
+                roothash=roothash,
+                proof=proofs[pid].to_bytes(),
+                stripe=stripes[pid],
+                stripe_index=pid,
+            ),
+        )
+    )
+    await asyncio.sleep(0)
+
+    for sender in (1, 2, 3):
+        await receive_queue.put(
+            (
+                sender,
+                PrbcReady(
+                    leader=leader,
+                    roothash=roothash,
+                    signature=ecdsa.sign(ecdsa_sks[sender], digest),
+                ),
+            )
+        )
+    await asyncio.sleep(0)
+
+    await receive_queue.put(
+        (
+            4,
+            PrbcReady(
+                leader=leader,
+                roothash=roothash,
+                signature=ecdsa.sign(ecdsa_sks[4], digest),
+            ),
+        )
+    )
+    await asyncio.sleep(0)
+
+    for sender in (5, 6):
+        await receive_queue.put(
+            (
+                sender,
+                PrbcReady(
+                    leader=leader,
+                    roothash=roothash,
+                    signature=ecdsa.sign(ecdsa_sks[sender], digest),
+                ),
+            )
+        )
+    await asyncio.sleep(0)
+
+    for sender in (1, 2):
+        await receive_queue.put(
+            (
+                sender,
+                PrbcEcho(
+                    leader=leader,
+                    roothash=roothash,
+                    proof=proofs[sender].to_bytes(),
+                    stripe=stripes[sender],
+                    stripe_index=sender,
+                ),
+            )
+        )
+
+    result = await asyncio.wait_for(task, timeout=1.0)
+
+    assert result.value == value
+    assert validate_prbc_proof(sid, n, f, ecdsa_pks, result.proof) is True
+    assert verify_calls == 4

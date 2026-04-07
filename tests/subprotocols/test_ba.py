@@ -3,9 +3,8 @@
 import asyncio
 
 import pytest
-
-from honey.subprotocols.binary_agreement import BAParams, binaryagreement
-from honey.subprotocols.common_coin import CoinParams, SharedCoin
+from honey_acs.subprotocols.binary_agreement import BAParams, binaryagreement
+from honey_acs.subprotocols.common_coin import CoinParams, SharedCoin
 
 
 @pytest.fixture

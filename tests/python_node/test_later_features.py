@@ -1,12 +1,11 @@
 import asyncio
 
 import pytest
-
-from honey.crypto import pke, sig
-from honey.infra.telemetry import METRICS, normalize_timing_snapshot
-from honey.protocol.messages import BaEst, Channel, ProtocolEnvelope
-from honey.runtime.runners import run_local_honeybadger_nodes_deterministic
-from honey.runtime.simulation import DeterministicNetworkSimulator
+from honey_runtime.runners import run_local_honeybadger_nodes_deterministic
+from honey_runtime.simulation import DeterministicNetworkSimulator
+from honey_shared.crypto import pke, sig
+from honey_shared.messages import BaEst, Channel, ProtocolEnvelope
+from honey_shared.telemetry import METRICS, normalize_timing_snapshot
 
 
 def test_sig_api_supports_batch_helpers(signing_keys) -> None:

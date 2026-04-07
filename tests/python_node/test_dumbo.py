@@ -4,14 +4,13 @@ import asyncio
 import json
 
 import pytest
-
-from honey.python_node.dumbo.core import DumboBFT
-from honey.python_node.honeybadger.core import CommittedBlock
-from honey.crypto import ecdsa, pke, sig
-from honey.protocol.messages import decode_block, encode_tx
-from honey.protocol.params import CommonParams, CryptoParams, HBConfig
-from honey.protocol.results import Success
-from honey.runtime.transport import QueueTransport
+from honey_legacy_node.dumbo.core import DumboBFT
+from honey_legacy_node.honeybadger.core import CommittedBlock
+from honey_runtime.transport import QueueTransport
+from honey_shared.crypto import ecdsa, pke, sig
+from honey_shared.messages import decode_block, encode_tx
+from honey_shared.params import CommonParams, CryptoParams, HBConfig
+from honey_shared.results import Success
 
 
 class RecordingDumbo(DumboBFT):

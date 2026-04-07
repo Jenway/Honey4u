@@ -7,33 +7,59 @@ name = "honey-cr"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
+    "honey-shared",
+    "honey-acs",
+    "honey-runtime",
+    "honey-legacy-node",
     "honey-native",
 ]
 
 [tool.uv.workspace]
-members = ["native/honey-native"]
+members = [
+    "packages/honey-shared",
+    "packages/honey-acs",
+    "packages/honey-runtime",
+    "legacy/honey-python-node",
+    "native/honey-native",
+]
 
 [tool.uv.sources]
+honey-shared = { workspace = true }
+honey-acs = { workspace = true }
+honey-runtime = { workspace = true }
+honey-legacy-node = { workspace = true }
 honey-native = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/honey"]
+packages = ["src/honey_cr"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "."]
+pythonpath = [
+    "src",
+    "packages/honey-shared/src",
+    "packages/honey-acs/src",
+    "packages/honey-runtime/src",
+    "legacy/honey-python-node/src",
+    ".",
+]
 
 [tool.ty.environment]
-root = ["src"]
+root = [
+    "src",
+    "packages/honey-shared/src",
+    "packages/honey-acs/src",
+    "packages/honey-runtime/src",
+    "legacy/honey-python-node/src",
+]
 
 [tool.ty.src]
 include = [
-    "src/honey/data",
-    "src/honey/protocol",
-    "src/honey/infra",
-    "src/honey/runtime/transport",
-    "src/honey/runtime/routing",
-    "src/honey/host/crypto_material.py",
-    "src/honey/python_node/bootstrap.py",
+    "packages/honey-shared/src/honey_shared",
+    "packages/honey-acs/src/honey_acs",
+    "packages/honey-runtime/src/honey_runtime/transport",
+    "packages/honey-runtime/src/honey_runtime/routing",
+    "packages/honey-runtime/src/honey_runtime/drivers/crypto_material.py",
+    "legacy/honey-python-node/src/honey_legacy_node/bootstrap.py",
     "tests/native/test_ecdsa_and_crypto_params.py",
     "tests/runtime/test_runtime_boundaries.py",
 ]

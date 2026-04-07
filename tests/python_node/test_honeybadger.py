@@ -2,12 +2,11 @@ from typing import Any, cast
 
 import honey_native
 import pytest
-
-from honey.python_node.honeybadger.core import CommittedBlock, HoneyBadgerBFT, PendingRoundBatch
-from honey.protocol.messages import ProtocolEnvelope, decode_block, encode_tx, encode_tx_batch
-from honey.protocol.params import CommonParams, CryptoParams, HBConfig
-from honey.protocol.results import Result, failure, success
-from honey.runtime.transport import QueueTransport
+from honey_legacy_node.honeybadger.core import CommittedBlock, HoneyBadgerBFT, PendingRoundBatch
+from honey_runtime.transport import QueueTransport
+from honey_shared.messages import ProtocolEnvelope, decode_block, encode_tx, encode_tx_batch
+from honey_shared.params import CommonParams, CryptoParams, HBConfig
+from honey_shared.results import Result, failure, success
 
 
 @pytest.mark.asyncio

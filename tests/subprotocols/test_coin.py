@@ -1,8 +1,8 @@
 import asyncio
 
 import pytest
-
-from honey.subprotocols.common_coin import CoinParams, SharedCoin
+from honey_acs.subprotocols.common_coin import CoinParams, SharedCoin
+from honey_shared.messages import CoinShareMessage
 
 
 @pytest.fixture
@@ -61,3 +61,53 @@ async def test_coin_is_consistent_across_rounds(coin_network):
                 task.cancel()
             for c in coins:
                 c.stop()
+
+
+@pytest.mark.asyncio
+async def test_coin_skips_late_and_duplicate_shares_after_decision() -> None:
+    class FakePublicKey:
+        players = 4
+        threshold = 2
+
+        def __init__(self) -> None:
+            self.verify_calls = 0
+
+        def verify_share(self, player_id: int, sig_bin: bytes, msg: bytes) -> bool:
+            del player_id, sig_bin, msg
+            self.verify_calls += 1
+            return True
+
+        def combine_shares(self, shares: list[tuple[int, bytes]], msg: bytes) -> bytes:
+            del shares, msg
+            return b"combined"
+
+    class FakePrivateShare:
+        player_id = 0
+
+        def sign(self, msg: bytes) -> bytes:
+            del msg
+            return b"self-share"
+
+    pk = FakePublicKey()
+    sk = FakePrivateShare()
+    coin = SharedCoin(CoinParams(sid="test:late", pid=0, N=4, f=1, leader=0, PK=pk, SK=sk))
+    receive_queue: asyncio.Queue[tuple[int, object]] = asyncio.Queue()
+    broadcast_queue: asyncio.Queue[CoinShareMessage] = asyncio.Queue()
+
+    async with asyncio.TaskGroup() as tg:
+        coin.start(tg, receive_queue)
+
+        decision_task = asyncio.create_task(coin.get_coin(0, broadcast_queue))
+        await broadcast_queue.get()
+
+        await receive_queue.put((1, CoinShareMessage(round_id=0, signature=b"share-1")))
+        await asyncio.wait_for(decision_task, timeout=1.0)
+
+        assert pk.verify_calls == 1
+
+        await receive_queue.put((1, CoinShareMessage(round_id=0, signature=b"share-1-dup")))
+        await receive_queue.put((2, CoinShareMessage(round_id=0, signature=b"share-2-late")))
+        await asyncio.sleep(0)
+
+        assert pk.verify_calls == 1
+        coin.stop()

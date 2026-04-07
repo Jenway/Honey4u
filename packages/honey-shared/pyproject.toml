@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "honey-shared"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "honey-native",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honey_shared"]

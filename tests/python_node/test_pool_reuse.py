@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import pytest
-
-from honey.python_node.honeybadger.block import _resolve_acs_batches
-from honey.data.broadcast_mempool import BroadcastMempool
-from honey.data.pool_reuse import (
+from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_legacy_node.honeybadger.block import _resolve_acs_batches
+from honey_runtime.data.pool_reuse import (
     PoolReference,
     decode_acs_payload,
     encode_bundle_acs_payload,

@@ -3,9 +3,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
-from honey.acs.dumbo.dumbo_acs import DumboACSParams, dumbo_acs
-from honey.crypto import ecdsa, sig
+from honey_acs.dumbo.dumbo_acs import DumboACSParams, dumbo_acs
+from honey_shared.crypto import ecdsa, sig
 
 
 def _network_sender(

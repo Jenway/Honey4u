@@ -1,11 +1,10 @@
 import pytest
-
-from honey.crypto.pke import PrivateShare as EncPrivateMaterial
-from honey.crypto.pke import PublicKey as EncPublicMaterial
-from honey.crypto.pke import generate as enc_generate
-from honey.crypto.sig import PrivateShare as SigPrivateMaterial
-from honey.crypto.sig import PublicKey as SigPublicMaterial
-from honey.crypto.sig import generate as sig_generate
+from honey_shared.crypto.pke import PrivateShare as EncPrivateMaterial
+from honey_shared.crypto.pke import PublicKey as EncPublicMaterial
+from honey_shared.crypto.pke import generate as enc_generate
+from honey_shared.crypto.sig import PrivateShare as SigPrivateMaterial
+from honey_shared.crypto.sig import PublicKey as SigPublicMaterial
+from honey_shared.crypto.sig import generate as sig_generate
 
 
 @pytest.fixture
