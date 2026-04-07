@@ -78,7 +78,7 @@ def _summary(batch_size: int, measured_tps: float, measured_ratio: float) -> Ben
         queue_backlog={
             "raw_inbound_messages": PeakStats(mean=20.0, p95=30.0, max=batch_size * 2),
         },
-        node_runtime="bridge",
+        node_runtime="rust",
     )
 
 
@@ -94,7 +94,7 @@ def test_sweep_payload_includes_benchmark_points() -> None:
         sid="bench:local:hb",
         tx_input="json_str",
         transport_backend="tcp",
-        node_runtime="bridge",
+        node_runtime="rust",
     )
 
     summaries = [
@@ -107,12 +107,12 @@ def test_sweep_payload_includes_benchmark_points() -> None:
     assert payload["meta"]["num_nodes"] == 10
     assert payload["meta"]["tx_input"] == "json_str"
     assert payload["meta"]["transport_backend"] == "tcp"
-    assert payload["meta"]["node_runtime"] == "bridge"
+    assert payload["meta"]["node_runtime"] == "rust"
     assert len(payload["points"]) == 2
     assert payload["points"][0]["batch_size"] == 128
     assert payload["points"][0]["tx_input"] == "json_str"
     assert payload["points"][0]["transport_backend"] == "tcp"
-    assert payload["points"][0]["node_runtime"] == "bridge"
+    assert payload["points"][0]["node_runtime"] == "rust"
     assert payload["points"][1]["measured_tps"] == 1800.0
     assert payload["points"][1]["measured_protocol_tps"] == 1800.0
     assert payload["points"][1]["measured_delivery_ratio"] == 0.8
@@ -201,14 +201,11 @@ def test_select_benchmark_runner_matches_protocol_and_runtime() -> None:
     assert _select_benchmark_runner("hb", "rust-driver") is (
         benchmark_module.benchmark_local_honeybadger_nodes_rust_driven
     )
-    assert _select_benchmark_runner("hb", "bridge") is (
-        benchmark_module.benchmark_local_honeybadger_nodes_multiprocess
-    )
     assert _select_benchmark_runner("dumbo", "rust") is (
         benchmark_module.benchmark_local_dumbo_nodes_rust_hosted
     )
-    assert _select_benchmark_runner("dumbo", "bridge") is (
-        benchmark_module.benchmark_local_dumbo_nodes_multiprocess
+    assert _select_benchmark_runner("dumbo", "rust-driver") is (
+        benchmark_module.benchmark_local_dumbo_nodes_rust_driven
     )
 
 
@@ -258,9 +255,19 @@ def test_build_benchmark_kwargs_for_rust_driver_with_dumbo_acs_includes_provider
     assert kwargs["pool_grace_ms"] == 250
 
 
-def test_select_benchmark_runner_rejects_rust_driver_for_dumbo() -> None:
-    with pytest.raises(ValueError, match="rust-driver"):
-        _select_benchmark_runner("dumbo", "rust-driver")
+def test_build_benchmark_kwargs_for_dumbo_rust_driver_omits_pool_fetch_only_flags() -> None:
+    kwargs = _build_benchmark_kwargs(
+        _args(protocol="dumbo", node_runtime="rust-driver"),
+        sid="bench:test:dumbo:rust-driver",
+        faulty=1,
+        batch_size=8,
+        transactions_per_node=24,
+    )
+
+    assert kwargs["enable_broadcast_pool_reuse"] is True
+    assert kwargs["pool_grace_ms"] == 250
+    assert "enable_pool_reference_proposals" not in kwargs
+    assert "enable_pool_fetch_fallback" not in kwargs
 
 
 def test_select_benchmark_runner_rejects_removed_embedded_runtime() -> None:
@@ -268,18 +275,6 @@ def test_select_benchmark_runner_rejects_removed_embedded_runtime() -> None:
         _select_benchmark_runner("hb", "embedded")
 
 
-def test_build_benchmark_kwargs_for_bridge_runtime_keeps_dumbo_flags() -> None:
-    kwargs = _build_benchmark_kwargs(
-        _args(protocol="dumbo", node_runtime="bridge"),
-        sid="bench:test:bridge",
-        faulty=1,
-        batch_size=8,
-        transactions_per_node=24,
-    )
-
-    assert kwargs["global_timeout"] == 120.0
-    assert "node_runtime" not in kwargs
-    assert kwargs["enable_broadcast_pool_reuse"] is True
-    assert kwargs["enable_pool_reference_proposals"] is True
-    assert kwargs["enable_pool_fetch_fallback"] is True
-    assert kwargs["pool_grace_ms"] == 250
+def test_select_benchmark_runner_rejects_removed_bridge_runtime() -> None:
+    with pytest.raises(ValueError, match="bridge"):
+        _select_benchmark_runner("hb", "bridge")
