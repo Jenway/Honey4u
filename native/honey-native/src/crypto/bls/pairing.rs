@@ -1,8 +1,8 @@
 use super::g1::G1;
 use super::g2::G2;
 use blst::{
-    BLST_ERROR, blst_core_verify_pk_in_g2, blst_final_exp, blst_fp12, blst_fp12_is_one,
-    blst_fp12_mul, blst_miller_loop, blst_p1_affine, blst_p1_cneg, blst_p1_to_affine,
+    blst_final_exp, blst_fp12, blst_fp12_is_one, blst_fp12_mul, blst_miller_loop, blst_p1_affine,
+    blst_p1_cneg, blst_p1_to_affine,
 };
 
 // ── Pairing ──────────────────────────────────────────────────────────────────
@@ -30,24 +30,4 @@ pub fn verify_pairing_equality(q1: &G2, p1: &G1, q2: &G2, p2: &G1) -> bool {
         blst_final_exp(&mut result, &product);
         blst_fp12_is_one(&result)
     }
-}
-
-/// Verify a BLS signature (min_pk variant: pk in G2, sig in G1).
-pub fn core_verify_pk_in_g2(sig: &G1, pk: &G2, msg: &[u8], dst: &[u8]) -> bool {
-    let sig_aff = sig.to_affine();
-    let pk_aff = pk.to_affine();
-    let err = unsafe {
-        blst_core_verify_pk_in_g2(
-            &pk_aff,
-            &sig_aff,
-            true,
-            msg.as_ptr(),
-            msg.len(),
-            dst.as_ptr(),
-            dst.len(),
-            std::ptr::null(),
-            0,
-        )
-    };
-    err == BLST_ERROR::BLST_SUCCESS
 }

@@ -70,6 +70,15 @@ pub fn partial_open(
     })
 }
 
+/// Compute a partial decryption share for an already-validated ciphertext.
+pub fn partial_open_trusted(share: &PkePrivateKeyShare, ct: &Ciphertext) -> PartialDecryptionShare {
+    let value = ct.u.clone().scalar_mult(&share.secret);
+    PartialDecryptionShare {
+        player_id: share.player_id,
+        value,
+    }
+}
+
 /// Public API to verify ciphertext correctness.
 pub fn verify_ciphertext(_params: &PkePublicParams, ct: &Ciphertext) -> Result<(), CryptoError> {
     if !verify_encapsulation(ct) {
@@ -95,6 +104,30 @@ pub fn open(
         if !verify_share(params, s, ct) {
             return Err(CryptoError::VerificationFailed);
         }
+    }
+
+    let pairs: Vec<(usize, G1)> = shares.iter().map(|s| (s.player_id, s.value)).collect();
+    let recovered = interpolate_at_zero(&pairs)?;
+
+    let mask = hash_g(&recovered);
+    let mut msg = [0u8; 32];
+    for i in 0..32 {
+        msg[i] = ct.v[i] ^ mask[i];
+    }
+    Ok(msg)
+}
+
+/// Combine trusted partial decryption shares without re-verifying them.
+pub fn open_trusted(
+    params: &PkePublicParams,
+    ct: &Ciphertext,
+    shares: &[PartialDecryptionShare],
+) -> Result<[u8; 32], CryptoError> {
+    if shares.len() < params.threshold {
+        return Err(CryptoError::InsufficientShares {
+            need: params.threshold,
+            got: shares.len(),
+        });
     }
 
     let pairs: Vec<(usize, G1)> = shares.iter().map(|s| (s.player_id, s.value)).collect();

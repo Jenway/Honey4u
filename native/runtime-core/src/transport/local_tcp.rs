@@ -11,6 +11,17 @@ use crate::transport::handle::{TransportHandle, WakeupCounter};
 
 type ConnectionMap = Arc<Mutex<HashMap<usize, TcpStream>>>;
 
+struct SenderLoopCtx {
+    stop: Arc<AtomicBool>,
+    addresses: Vec<(String, u16)>,
+    connections: ConnectionMap,
+    outbound_rx: Receiver<(usize, Vec<u8>)>,
+    outbound_len: Arc<AtomicUsize>,
+    sent_frames: Arc<AtomicUsize>,
+    connect_retries: Arc<AtomicUsize>,
+    send_retries: Arc<AtomicUsize>,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TransportStats {
     pub sent_frames: usize,
@@ -86,31 +97,22 @@ fn close_connections(connections: &ConnectionMap) {
     }
 }
 
-fn sender_loop(
-    stop: Arc<AtomicBool>,
-    addresses: Vec<(String, u16)>,
-    connections: ConnectionMap,
-    outbound_rx: Receiver<(usize, Vec<u8>)>,
-    outbound_len: Arc<AtomicUsize>,
-    sent_frames: Arc<AtomicUsize>,
-    connect_retries: Arc<AtomicUsize>,
-    send_retries: Arc<AtomicUsize>,
-) {
-    while !stop.load(Ordering::Relaxed) {
-        let (recipient, payload) = match outbound_rx.recv_timeout(Duration::from_millis(100)) {
+fn sender_loop(ctx: SenderLoopCtx) {
+    while !ctx.stop.load(Ordering::Relaxed) {
+        let (recipient, payload) = match ctx.outbound_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(item) => item,
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         };
-        outbound_len.fetch_sub(1, Ordering::Relaxed);
+        ctx.outbound_len.fetch_sub(1, Ordering::Relaxed);
 
         let mut failures = 0usize;
-        while !stop.load(Ordering::Relaxed) {
-            let mut stream = match get_connection(recipient, &addresses, &connections) {
+        while !ctx.stop.load(Ordering::Relaxed) {
+            let mut stream = match get_connection(recipient, &ctx.addresses, &ctx.connections) {
                 Ok(stream) => stream,
                 Err(_) => {
                     failures += 1;
-                    connect_retries.fetch_add(1, Ordering::Relaxed);
+                    ctx.connect_retries.fetch_add(1, Ordering::Relaxed);
                     if failures >= 1000 {
                         break;
                     }
@@ -121,13 +123,13 @@ fn sender_loop(
 
             match send_frame(&mut stream, &payload) {
                 Ok(()) => {
-                    sent_frames.fetch_add(1, Ordering::Relaxed);
+                    ctx.sent_frames.fetch_add(1, Ordering::Relaxed);
                     break;
                 }
                 Err(_) => {
                     failures += 1;
-                    send_retries.fetch_add(1, Ordering::Relaxed);
-                    drop_connection(recipient, &connections);
+                    ctx.send_retries.fetch_add(1, Ordering::Relaxed);
+                    drop_connection(recipient, &ctx.connections);
                     if failures >= 1000 {
                         break;
                     }
@@ -246,16 +248,16 @@ impl LocalTcpTransport {
             let sender_connect_retries = Arc::clone(&connect_retries);
             let sender_send_retries = Arc::clone(&send_retries);
             move || {
-                sender_loop(
-                    sender_stop,
+                sender_loop(SenderLoopCtx {
+                    stop: sender_stop,
                     addresses,
-                    sender_connections,
+                    connections: sender_connections,
                     outbound_rx,
-                    sender_outbound_len,
-                    sender_sent_frames,
-                    sender_connect_retries,
-                    sender_send_retries,
-                )
+                    outbound_len: sender_outbound_len,
+                    sent_frames: sender_sent_frames,
+                    connect_retries: sender_connect_retries,
+                    send_retries: sender_send_retries,
+                })
             }
         });
 

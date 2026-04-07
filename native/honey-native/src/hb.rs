@@ -1,5 +1,6 @@
 use rand::RngExt;
 use std::collections::{BTreeMap, HashSet};
+use std::thread;
 
 use crate::archive::api::{decode_result, encode_result};
 use crate::archive::crypto_wire::{
@@ -150,11 +151,55 @@ impl BatchDecryptor {
     ) -> Result<Vec<PartialDecryptionShare>, String> {
         let mut shares = Vec::with_capacity(self.states.len());
         for state in &self.states {
-            let share = crypto::threshold::pke::partial_open(share, &state.encrypted_key)
-                .map_err(|err| err.to_string())?;
+            let share = crypto::threshold::pke::partial_open_trusted(share, &state.encrypted_key);
             shares.push(share);
         }
         Ok(shares)
+    }
+
+    pub fn local_runtime_share_bundles(
+        &self,
+        private_shares: &[(usize, PkePrivateKeyShare)],
+    ) -> Result<Vec<(usize, Vec<Option<PartialDecryptionShare>>)>, String> {
+        if private_shares.len() <= 1 {
+            return private_shares
+                .iter()
+                .map(|(pid, private_share)| {
+                    Ok((
+                        *pid,
+                        self.local_runtime_shares(private_share)?
+                            .into_iter()
+                            .map(Some)
+                            .collect::<Vec<_>>(),
+                    ))
+                })
+                .collect();
+        }
+
+        thread::scope(|scope| -> Result<Vec<_>, String> {
+            let handles = private_shares
+                .iter()
+                .map(|(pid, private_share)| {
+                    scope.spawn(move || {
+                        Ok::<_, String>((
+                            *pid,
+                            self.local_runtime_shares(private_share)?
+                                .into_iter()
+                                .map(Some)
+                                .collect::<Vec<_>>(),
+                        ))
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| String::from("HB runtime share worker panicked"))?
+                })
+                .collect()
+        })
     }
 
     pub fn ingest_bundle(
@@ -224,6 +269,65 @@ impl BatchDecryptor {
 
             let shares = state.shares.values().cloned().collect::<Vec<_>>();
             match crypto::threshold::pke::open(&self.params, &state.encrypted_key, &shares) {
+                Ok(opened_key) => match crypto::aes::decrypt(&opened_key, &state.ciphertext) {
+                    Ok(plaintext) => {
+                        state.plaintext = Some(plaintext);
+                        state.needs_open = false;
+                        decrypted.push(index);
+                    }
+                    Err(_) => {
+                        state.needs_open = false;
+                    }
+                },
+                Err(_) => {
+                    state.needs_open = false;
+                }
+            }
+        }
+
+        Ok(decrypted)
+    }
+
+    pub fn ingest_trusted_runtime_bundle(
+        &mut self,
+        sender_id: usize,
+        shares: Vec<Option<PartialDecryptionShare>>,
+    ) -> Result<Vec<usize>, String> {
+        if shares.len() != self.states.len() {
+            return Err(String::from(
+                "share bundle length does not match batch count",
+            ));
+        }
+
+        for (state, maybe_share) in self.states.iter_mut().zip(shares) {
+            if state.plaintext.is_some() || state.shares.contains_key(&sender_id) {
+                continue;
+            }
+
+            let Some(share_payload) = maybe_share else {
+                continue;
+            };
+
+            if share_payload.player_id != sender_id + 1 {
+                continue;
+            }
+
+            state.shares.insert(sender_id, share_payload);
+            state.needs_open = true;
+        }
+
+        let mut decrypted = Vec::new();
+        for (index, state) in self.states.iter_mut().enumerate() {
+            if state.plaintext.is_some()
+                || !state.needs_open
+                || state.shares.len() < self.params.threshold
+            {
+                continue;
+            }
+
+            let shares = state.shares.values().cloned().collect::<Vec<_>>();
+            match crypto::threshold::pke::open_trusted(&self.params, &state.encrypted_key, &shares)
+            {
                 Ok(opened_key) => match crypto::aes::decrypt(&opened_key, &state.ciphertext) {
                     Ok(plaintext) => {
                         state.plaintext = Some(plaintext);

@@ -3,10 +3,13 @@ from __future__ import annotations
 import time
 from typing import Literal, cast
 
-from honey.host.acs_host import PersistentAcsHost, build_persistent_acs_host_from_json
-from honey.host.crypto_material import (
+from honey_runtime.drivers.crypto_material import (
     serialize_dumbo_crypto_payloads_json,
     serialize_hb_crypto_payloads_json,
+)
+from honey_runtime.drivers.python_acs_bridge import (
+    PersistentAcsHost,
+    build_persistent_acs_host_from_json,
 )
 
 
@@ -15,28 +18,32 @@ def _drain_until_decisions(
     *,
     round_id: int,
     timeout: float = 20.0,
-) -> list[tuple[bytes | None, ...]]:
-    decisions: list[tuple[bytes | None, ...] | None] = [None] * len(hosts)
+) -> list[tuple[int, ...]]:
+    decisions: list[tuple[int, ...] | None] = [None] * len(hosts)
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:
         progressed = False
         for pid, host in enumerate(hosts):
-            for event in host.drain_events(512):
+            for event in host.pull_outbound_batch(512):
                 progressed = True
                 kind = str(event["kind"])
                 if kind == "send":
                     recipient = int(event["recipient"])
-                    hosts[recipient].deliver_decoded(
-                        sender=pid,
-                        round_id=round_id,
-                        channel=cast(str, event["channel"]),
-                        instance_id=cast(int | None, event["instance_id"]),
-                        message=event["message"],
+                    hosts[recipient].push_inbound_batch(
+                        [
+                            (
+                                pid,
+                                round_id,
+                                cast(str, event["channel"]),
+                                cast(int | None, event["instance_id"]),
+                                event["message"],
+                            )
+                        ]
                     )
                     continue
                 if kind == "decision":
-                    decisions[pid] = tuple(cast(list[bytes | None], event["values"]))
+                    decisions[pid] = tuple(cast(list[int], event["selected_pids"]))
                     continue
                 if kind == "carryovers":
                     continue
@@ -48,7 +55,7 @@ def _drain_until_decisions(
                 raise AssertionError(f"unexpected ACS host event kind: {kind}")
 
         if all(decision is not None for decision in decisions):
-            return cast(list[tuple[bytes | None, ...]], decisions)
+            return cast(list[tuple[int, ...]], decisions)
         if not progressed:
             time.sleep(0.001)
 
@@ -85,18 +92,16 @@ def test_persistent_hb_acs_host_reuses_worker_threads_across_rounds() -> None:
         assert len(set(worker_idents)) == num_nodes
 
         for round_id in range(2):
-            values = [f"hb-round-{round_id}-node-{pid}".encode() for pid in range(num_nodes)]
             for pid, host in enumerate(hosts):
                 host.start_round(
                     round_id=round_id,
                     sid=f"test:acs-host:hb:{round_id}:",
-                    local_input=values[pid],
+                    proposal_input=f"hb-round-{round_id}-node-{pid}".encode(),
                 )
 
             decisions = _drain_until_decisions(hosts, round_id=round_id)
             assert len(set(decisions)) == 1
-            decided = decisions[0]
-            assert tuple(value for value in decided if value is not None) == tuple(values)
+            assert decisions[0] == tuple(range(num_nodes))
             assert [int(host.stats()["worker_ident"]) for host in hosts] == worker_idents
     finally:
         for host in hosts:
@@ -106,7 +111,6 @@ def test_persistent_hb_acs_host_reuses_worker_threads_across_rounds() -> None:
 def test_persistent_dumbo_acs_host_reaches_consistent_decision() -> None:
     num_nodes = 4
     faulty = 1
-    values = [f"dumbo-node-{pid}".encode() for pid in range(num_nodes)]
     hosts = _build_hosts("dumbo", num_nodes, faulty)
 
     try:
@@ -114,14 +118,14 @@ def test_persistent_dumbo_acs_host_reaches_consistent_decision() -> None:
             host.start_round(
                 round_id=0,
                 sid="test:acs-host:dumbo:",
-                local_input=values[pid],
+                proposal_input=f"dumbo-node-{pid}".encode(),
             )
 
         decisions = _drain_until_decisions(hosts, round_id=0)
         assert len(set(decisions)) == 1
         decided = decisions[0]
-        assert sum(value is not None for value in decided) >= num_nodes - faulty
-        assert all(value is None or value in values for value in decided)
+        assert len(decided) >= num_nodes - faulty
+        assert all(0 <= pid < num_nodes for pid in decided)
     finally:
         for host in hosts:
             host.shutdown()

@@ -4,8 +4,27 @@ use k256::ecdsa::{
 };
 #[allow(unused_imports)]
 use k256::elliptic_curve::sec1::ToEncodedPoint;
+use std::collections::HashMap;
+use std::sync::{LazyLock, RwLock};
 
 use crate::crypto::crypto_error::CryptoError;
+
+static VERIFYING_KEY_CACHE: LazyLock<RwLock<HashMap<[u8; 33], VerifyingKey>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn verifying_key(pub_key: &[u8; 33]) -> Option<VerifyingKey> {
+    if let Ok(cache) = VERIFYING_KEY_CACHE.read()
+        && let Some(key) = cache.get(pub_key)
+    {
+        return Some(key.clone());
+    }
+
+    let key = VerifyingKey::from_sec1_bytes(pub_key).ok()?;
+    if let Ok(mut cache) = VERIFYING_KEY_CACHE.write() {
+        cache.entry(*pub_key).or_insert_with(|| key.clone());
+    }
+    Some(key)
+}
 
 /// Signs `msg` (SHA-256 hash is computed internally) with the given private key.
 /// Returns compact 64-byte signature (r || s).
@@ -30,9 +49,9 @@ pub fn get_public_key(priv_key: &[u8; 32]) -> Result<[u8; 33], CryptoError> {
 
 /// Verifies a compact 64-byte signature against the compressed 33-byte public key.
 pub fn verify(pub_key: &[u8; 33], msg: &[u8], sig_bytes: &[u8; 64]) -> bool {
-    let verifying_key = match VerifyingKey::from_sec1_bytes(pub_key) {
-        Ok(k) => k,
-        Err(_) => return false,
+    let verifying_key = match verifying_key(pub_key) {
+        Some(key) => key,
+        None => return false,
     };
     let sig = match Signature::from_bytes(sig_bytes.into()) {
         Ok(s) => s,

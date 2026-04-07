@@ -1,123 +1,195 @@
 use super::*;
 use crate::py_host::RustDrivenAcsHost;
+use std::collections::BTreeMap;
 
-fn drive_acs_debug_enabled() -> bool {
-    std::env::var_os("HONEY_DEBUG_ACS").is_some()
+type PendingDelivery = (usize, usize, String, Option<usize>, Py<PyAny>);
+type PendingDeliveries = BTreeMap<usize, Vec<PendingDelivery>>;
+
+fn encode_honeybadger_proposal_ref(pid: usize) -> Vec<u8> {
+    (pid as u64).to_be_bytes().to_vec()
 }
 
-fn start_worker_rounds_parallel(
-    workers: &mut [HbWorkerProcess],
-    round_id: usize,
-    round_sid: &str,
-    local_inputs: &[Vec<u8>],
-) -> Result<(), String> {
-    thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(workers.len());
-        for (worker, local_input) in workers.iter_mut().zip(local_inputs) {
-            handles.push(scope.spawn(move || worker.start_round(round_id, round_sid, local_input)));
-        }
-        for handle in handles {
-            handle
-                .join()
-                .map_err(|_| String::from("worker start_round thread panicked"))??;
-        }
-        Ok::<(), String>(())
-    })
+fn encode_dumbo_proposal_ref(pid: usize) -> Vec<u8> {
+    (pid as u64).to_be_bytes().to_vec()
 }
 
-fn collect_worker_stats_parallel(
-    workers: &mut [HbWorkerProcess],
-) -> Result<Vec<(usize, PyAcsHostStats)>, String> {
-    thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(workers.len());
-        for worker in workers.iter_mut() {
-            handles.push(scope.spawn(move || worker.stats().map(|stats| (worker.pid, stats))));
-        }
-
-        let mut stats = Vec::with_capacity(handles.len());
-        for handle in handles {
-            stats.push(
-                handle
-                    .join()
-                    .map_err(|_| String::from("worker stats thread panicked"))??,
-            );
-        }
-        Ok::<Vec<(usize, PyAcsHostStats)>, String>(stats)
-    })
+fn new_driver_phase_stats<T: RustDrivenAcsHost>(hosts: &[T]) -> DriverPhaseStats {
+    DriverPhaseStats {
+        host_stats: hosts
+            .iter()
+            .enumerate()
+            .map(|(pid, host)| {
+                debug_assert_eq!(pid, host.pid());
+                DriverHostPhaseStats {
+                    pid: host.pid(),
+                    ..DriverHostPhaseStats::default()
+                }
+            })
+            .collect(),
+        ..DriverPhaseStats::default()
+    }
 }
 
-fn drain_worker_events_parallel(
-    workers: &mut [HbWorkerProcess],
+fn update_pending_snapshot(stats: &mut DriverPhaseStats, pending_deliveries: &PendingDeliveries) {
+    stats.sweep_count += 1;
+    let pending = pending_deliveries.values().map(Vec::len).sum::<usize>();
+    stats.total_pending_deliveries += pending;
+    stats.max_pending_deliveries = stats.max_pending_deliveries.max(pending);
+}
+
+fn record_push(stats: &mut DriverPhaseStats, pid: usize, batch_len: usize, seconds: f64) {
+    if batch_len == 0 {
+        return;
+    }
+    let host = &mut stats.host_stats[pid];
+    host.push_calls += 1;
+    host.push_items += batch_len;
+    host.max_push_batch = host.max_push_batch.max(batch_len);
+    host.push_seconds += seconds;
+    stats.total_pushed_items += batch_len;
+    stats.total_push_seconds += seconds;
+}
+
+fn record_pull(
+    stats: &mut DriverPhaseStats,
+    pid: usize,
+    event_count: usize,
+    seconds: f64,
     limit: usize,
-) -> Result<Vec<(usize, Vec<HbWorkerEvent>)>, String> {
-    thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(workers.len());
-        for worker in workers.iter_mut() {
-            handles.push(scope.spawn(move || {
-                worker
-                    .drain_events(limit)
-                    .map(|events| (worker.pid, events))
-            }));
-        }
+) {
+    let host = &mut stats.host_stats[pid];
+    host.pull_calls += 1;
+    host.pull_seconds += seconds;
+    host.pulled_events += event_count;
+    host.max_pull_batch = host.max_pull_batch.max(event_count);
+    if event_count == 0 {
+        host.empty_pull_calls += 1;
+    }
+    if event_count >= limit {
+        host.pull_limit_hits += 1;
+        stats.pull_limit_hits += 1;
+    }
+    stats.total_pulled_events += event_count;
+    stats.max_pull_batch = stats.max_pull_batch.max(event_count);
+    stats.total_pull_seconds += seconds;
+}
 
-        let mut drained = Vec::with_capacity(handles.len());
-        for handle in handles {
-            drained.push(
-                handle
-                    .join()
-                    .map_err(|_| String::from("worker drain_events thread panicked"))??,
-            );
-        }
-        Ok::<Vec<(usize, Vec<HbWorkerEvent>)>, String>(drained)
+pub(crate) fn driver_phase_stats_json(stats: &DriverPhaseStats) -> Value {
+    json!({
+        "sweep_count": stats.sweep_count,
+        "active_sweeps": stats.active_sweeps,
+        "idle_sweeps": stats.idle_sweeps,
+        "idle_backoff_count": stats.idle_backoff_count,
+        "total_pending_deliveries": stats.total_pending_deliveries,
+        "max_pending_deliveries": stats.max_pending_deliveries,
+        "total_pushed_items": stats.total_pushed_items,
+        "total_pulled_events": stats.total_pulled_events,
+        "max_pull_batch": stats.max_pull_batch,
+        "pull_limit_hits": stats.pull_limit_hits,
+        "total_push_seconds": stats.total_push_seconds,
+        "total_pull_seconds": stats.total_pull_seconds,
+        "host_stats": stats.host_stats.iter().map(|host| {
+            json!({
+                "pid": host.pid,
+                "push_calls": host.push_calls,
+                "push_items": host.push_items,
+                "max_push_batch": host.max_push_batch,
+                "push_seconds": host.push_seconds,
+                "pull_calls": host.pull_calls,
+                "empty_pull_calls": host.empty_pull_calls,
+                "pulled_events": host.pulled_events,
+                "max_pull_batch": host.max_pull_batch,
+                "pull_limit_hits": host.pull_limit_hits,
+                "pull_seconds": host.pull_seconds,
+            })
+        }).collect::<Vec<_>>(),
     })
 }
 
-fn flush_worker_deliveries_parallel(
-    workers: &mut [HbWorkerProcess],
-    deliveries_by_recipient: &mut [Vec<Vec<u8>>],
-) -> Result<usize, String> {
-    thread::scope(|scope| {
-        let mut handles = Vec::new();
-        for (recipient, worker) in workers.iter_mut().enumerate() {
-            if deliveries_by_recipient[recipient].is_empty() {
-                continue;
+fn collect_exchange_events(
+    pid: usize,
+    round_id: usize,
+    host_count: usize,
+    events: Vec<PyAcsEvent>,
+    pending_deliveries: &mut PendingDeliveries,
+    decisions: &mut [Option<Vec<usize>>],
+) -> Result<(), String> {
+    for event in events {
+        match event {
+            PyAcsEvent::Send {
+                round_id: event_round_id,
+                recipient,
+                channel,
+                instance_id,
+                message,
+            } => {
+                if event_round_id != round_id {
+                    return Err(format!(
+                        "drive-acs round {round_id}: send event carried mismatched round_id {event_round_id}"
+                    ));
+                }
+                if recipient >= host_count {
+                    return Err(format!(
+                        "drive-acs round {round_id}: invalid recipient {recipient}"
+                    ));
+                }
+                pending_deliveries.entry(recipient).or_default().push((
+                    pid,
+                    round_id,
+                    channel,
+                    instance_id,
+                    message,
+                ));
             }
-            let payloads = std::mem::take(&mut deliveries_by_recipient[recipient]);
-            handles.push(scope.spawn(move || worker.deliver_batch(&payloads)));
+            PyAcsEvent::Decision {
+                round_id: event_round_id,
+                selected_pids,
+            } => {
+                if event_round_id != round_id {
+                    return Err(format!(
+                        "drive-acs round {round_id}: decision event carried mismatched round_id {event_round_id}"
+                    ));
+                }
+                debug_drive_acs(&format!("round:decision round={round_id} pid={pid}"));
+                decisions[pid] = Some(selected_pids);
+            }
+            PyAcsEvent::Failure {
+                round_id: event_round_id,
+                error,
+                exception_type,
+            } => {
+                return Err(format!(
+                    "drive-acs round {round_id}: node {pid} failed in event round {event_round_id} with {exception_type}: {error}"
+                ));
+            }
+            PyAcsEvent::Carryovers { round_id: _ } => {}
         }
-
-        let non_empty_recipients = handles.len();
-        for handle in handles {
-            handle
-                .join()
-                .map_err(|_| String::from("worker deliver_batch thread panicked"))??;
-        }
-        Ok::<usize, String>(non_empty_recipients)
-    })
+    }
+    Ok(())
 }
 
-fn run_acs_round<T: RustDrivenAcsHost>(
+pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
     hosts: &[T],
     round_id: usize,
     round_sid: &str,
-    local_inputs: &[Vec<u8>],
+    proposal_inputs: &[Vec<u8>],
     global_timeout: f64,
 ) -> Result<AcsRoundOutcome, String> {
-    if local_inputs.len() != hosts.len() {
+    if proposal_inputs.len() != hosts.len() {
         return Err(format!(
             "round {round_id}: expected {} local ACS inputs, got {}",
             hosts.len(),
-            local_inputs.len()
+            proposal_inputs.len()
         ));
     }
 
     debug_drive_acs(&format!("round:start round={round_id}"));
-    for (host, local_input) in hosts.iter().zip(local_inputs) {
+    for (host, proposal_input) in hosts.iter().zip(proposal_inputs) {
         debug_drive_acs(&format!(
             "round:start_round:call round={round_id} pid={}",
             host.pid()
         ));
-        host.start_round(round_id, round_sid, local_input)?;
+        host.start_round(round_id, round_sid, proposal_input)?;
         debug_drive_acs(&format!(
             "round:start_round:done round={round_id} pid={}",
             host.pid()
@@ -139,219 +211,67 @@ fn run_acs_round<T: RustDrivenAcsHost>(
 
     let deadline = Instant::now() + Duration::from_secs_f64(global_timeout);
     let mut send_events = 0usize;
-    let mut decisions: Vec<Option<Vec<Option<Vec<u8>>>>> = vec![None; hosts.len()];
+    let mut decisions: Vec<Option<Vec<usize>>> = vec![None; hosts.len()];
+    let mut pending_deliveries: PendingDeliveries = BTreeMap::new();
+    let mut drive_stats = new_driver_phase_stats(hosts);
 
     while Instant::now() < deadline {
+        update_pending_snapshot(&mut drive_stats, &pending_deliveries);
         let mut progressed = false;
 
         for (pid, host) in hosts.iter().enumerate() {
-            for event in host.drain_events(512)? {
-                progressed = true;
-                match event {
-                    PyAcsEvent::Send {
-                        round_id: event_round_id,
-                        recipient,
-                        channel,
-                        instance_id,
-                        message,
-                    } => {
-                        if event_round_id != round_id {
-                            return Err(format!(
-                                "drive-acs round {round_id}: send event carried mismatched round_id {event_round_id}"
-                            ));
-                        }
-                        if recipient >= hosts.len() {
-                            return Err(format!(
-                                "drive-acs round {round_id}: invalid recipient {recipient}"
-                            ));
-                        }
-                        hosts[recipient].deliver_decoded(
-                            pid,
-                            round_id,
-                            &channel,
-                            instance_id,
-                            &message,
-                        )?;
-                        send_events += 1;
-                    }
-                    PyAcsEvent::Decision {
-                        round_id: event_round_id,
-                        values,
-                    } => {
-                        if event_round_id != round_id {
-                            return Err(format!(
-                                "drive-acs round {round_id}: decision event carried mismatched round_id {event_round_id}"
-                            ));
-                        }
-                        debug_drive_acs(&format!("round:decision round={round_id} pid={pid}"));
-                        decisions[pid] = Some(values);
-                    }
-                    PyAcsEvent::Failure {
-                        round_id: event_round_id,
-                        error,
-                        exception_type,
-                    } => {
-                        return Err(format!(
-                            "drive-acs round {round_id}: node {pid} failed in event round {event_round_id} with {exception_type}: {error}"
-                        ));
-                    }
-                    PyAcsEvent::Carryovers { round_id: _ } => {}
-                }
+            let inbound = pending_deliveries.remove(&pid).unwrap_or_default();
+            send_events += inbound.len();
+            progressed |= !inbound.is_empty();
+            if !inbound.is_empty() {
+                let push_start = Instant::now();
+                let _ = host.push_inbound_batch(&inbound)?;
+                record_push(
+                    &mut drive_stats,
+                    pid,
+                    inbound.len(),
+                    push_start.elapsed().as_secs_f64(),
+                );
             }
         }
 
-        if decisions.iter().all(Option::is_some) {
-            break;
+        let mut pull_starts = Vec::with_capacity(hosts.len());
+        for host in hosts {
+            pull_starts.push(Instant::now());
+            host.begin_pull_outbound_batch(ACS_PULL_BATCH_LIMIT)?;
         }
-        if !progressed {
-            thread::sleep(ACS_IDLE_BACKOFF);
-        }
-    }
 
-    if decisions.iter().any(Option::is_none) {
-        return Err(format!(
-            "drive-acs timed out after {:.3}s in round {round_id}",
-            global_timeout
-        ));
-    }
-
-    let canonical = decisions[0]
-        .clone()
-        .ok_or_else(|| format!("drive-acs round {round_id}: missing canonical decision"))?;
-    for (pid, decision) in decisions.iter().enumerate().skip(1) {
-        if decision.as_ref() != Some(&canonical) {
-            return Err(format!(
-                "drive-acs round {round_id}: node {pid} decision diverged"
-            ));
-        }
-    }
-
-    settle_acs_round(hosts, round_id, &mut send_events)?;
-    Ok(AcsRoundOutcome {
-        canonical,
-        send_events,
-    })
-}
-
-pub(crate) fn run_acs_round_workers(
-    workers: &mut [HbWorkerProcess],
-    round_id: usize,
-    round_sid: &str,
-    local_inputs: &[Vec<u8>],
-    global_timeout: f64,
-) -> Result<AcsRoundOutcome, String> {
-    if local_inputs.len() != workers.len() {
-        return Err(format!(
-            "round {round_id}: expected {} local ACS inputs, got {}",
-            workers.len(),
-            local_inputs.len()
-        ));
-    }
-
-    debug_drive_acs(&format!("round:start round={round_id}"));
-    for worker in workers.iter() {
-        debug_drive_acs(&format!(
-            "round:start_round:call round={round_id} pid={}",
-            worker.pid
-        ));
-    }
-    start_worker_rounds_parallel(workers, round_id, round_sid, local_inputs)?;
-    for worker in workers.iter() {
-        debug_drive_acs(&format!(
-            "round:start_round:done round={round_id} pid={}",
-            worker.pid
-        ));
-    }
-    if drive_acs_debug_enabled() {
-        for (pid, stats) in collect_worker_stats_parallel(workers)? {
-            debug_drive_acs(&format!(
-                "round:stats round={round_id} pid={} running={} commands={} queue={} started={} finished={} worker_error={:?}",
+        for (pid, host) in hosts.iter().enumerate() {
+            let events = host.finish_pull_outbound_batch()?;
+            let pull_seconds = pull_starts[pid].elapsed().as_secs_f64();
+            let event_count = events.len();
+            progressed |= event_count > 0;
+            record_pull(
+                &mut drive_stats,
                 pid,
-                stats.worker_running,
-                stats.processed_commands,
-                stats.bridge_queue_size,
-                stats.rounds_started,
-                stats.rounds_finished,
-                stats.worker_error
-            ));
-        }
-    }
-
-    let deadline = Instant::now() + Duration::from_secs_f64(global_timeout);
-    let mut send_events = 0usize;
-    let mut decisions: Vec<Option<Vec<Option<Vec<u8>>>>> = vec![None; workers.len()];
-
-    while Instant::now() < deadline {
-        let mut progressed = false;
-        let mut deliveries_by_recipient = vec![Vec::new(); workers.len()];
-
-        for (pid, events) in drain_worker_events_parallel(workers, ACS_EVENT_DRAIN_LIMIT)? {
-            for event in events {
-                progressed = true;
-                match event {
-                    HbWorkerEvent::Send {
-                        round_id: event_round_id,
-                        recipient,
-                        payload,
-                    } => {
-                        if event_round_id != round_id {
-                            return Err(format!(
-                                "drive-acs round {round_id}: send event carried mismatched round_id {event_round_id}"
-                            ));
-                        }
-                        if recipient >= workers.len() {
-                            return Err(format!(
-                                "drive-acs round {round_id}: invalid recipient {recipient}"
-                            ));
-                        }
-                        deliveries_by_recipient[recipient].push(payload);
-                        send_events += 1;
-                    }
-                    HbWorkerEvent::Decision {
-                        round_id: event_round_id,
-                        values,
-                    } => {
-                        if event_round_id != round_id {
-                            return Err(format!(
-                                "drive-acs round {round_id}: decision event carried mismatched round_id {event_round_id}"
-                            ));
-                        }
-                        debug_drive_acs(&format!("round:decision round={round_id} pid={pid}"));
-                        decisions[pid] = Some(values);
-                    }
-                    HbWorkerEvent::Failure {
-                        round_id: event_round_id,
-                        error,
-                        exception_type,
-                    } => {
-                        return Err(format!(
-                            "drive-acs round {round_id}: node {pid} failed in event round {event_round_id} with {exception_type}: {error}"
-                        ));
-                    }
-                    HbWorkerEvent::Carryovers {
-                        round_id: event_round_id,
-                    } => {
-                        if event_round_id != round_id {
-                            return Err(format!(
-                                "drive-acs round {round_id}: carryovers event carried mismatched round_id {event_round_id}"
-                            ));
-                        }
-                    }
-                }
-            }
+                event_count,
+                pull_seconds,
+                ACS_PULL_BATCH_LIMIT,
+            );
+            collect_exchange_events(
+                pid,
+                round_id,
+                hosts.len(),
+                events,
+                &mut pending_deliveries,
+                &mut decisions,
+            )?;
         }
 
-        let delivered_batches =
-            flush_worker_deliveries_parallel(workers, &mut deliveries_by_recipient)?;
-        if delivered_batches > 0 {
-            progressed = true;
+        if !progressed {
+            drive_stats.idle_sweeps += 1;
+            drive_stats.idle_backoff_count += 1;
+            thread::sleep(ACS_IDLE_BACKOFF);
+            continue;
         }
-
+        drive_stats.active_sweeps += 1;
         if decisions.iter().all(Option::is_some) {
             break;
-        }
-        if !progressed {
-            thread::sleep(ACS_IDLE_BACKOFF);
         }
     }
 
@@ -373,10 +293,12 @@ pub(crate) fn run_acs_round_workers(
         }
     }
 
-    settle_acs_round_workers(workers, round_id, &mut send_events)?;
+    let settle_stats = settle_acs_round(hosts, round_id, &mut send_events)?;
     Ok(AcsRoundOutcome {
-        canonical,
+        selected_pids: canonical,
         send_events,
+        drive_stats,
+        settle_stats,
     })
 }
 
@@ -433,29 +355,30 @@ fn drive_acs_rounds(hosts: &[PyAcsHost], args: &DriveAcsArgs) -> Result<String, 
 
     for round_id in 0..args.rounds {
         let round_sid = format!("{}:{round_id}:", args.sid);
-        let local_inputs = hosts
+        let proposal_inputs = hosts
             .iter()
             .map(|host| {
-                Ok(format!(
-                    "{}-round-{round_id}-node-{}",
-                    args.protocol.as_str(),
-                    host.pid
-                )
-                .into_bytes())
+                Ok(match args.protocol {
+                    Protocol::HoneyBadger => encode_honeybadger_proposal_ref(host.pid),
+                    Protocol::Dumbo => encode_dumbo_proposal_ref(host.pid),
+                })
             })
             .collect::<Result<Vec<_>, String>>()?;
         let outcome = run_acs_round(
             hosts,
             round_id,
             &round_sid,
-            &local_inputs,
+            &proposal_inputs,
             args.global_timeout,
         )?;
 
         rounds.push(json!({
             "round_id": round_id,
-            "selected_count": outcome.canonical.iter().filter(|value| value.is_some()).count(),
+            "selected_count": outcome.selected_pids.len(),
+            "selected_pids": outcome.selected_pids,
             "send_events": outcome.send_events,
+            "drive_stats": driver_phase_stats_json(&outcome.drive_stats),
+            "settle_stats": driver_phase_stats_json(&outcome.settle_stats),
         }));
     }
 
@@ -469,9 +392,22 @@ fn drive_acs_rounds(hosts: &[PyAcsHost], args: &DriveAcsArgs) -> Result<String, 
                 "rounds_started": stats.rounds_started,
                 "rounds_finished": stats.rounds_finished,
                 "processed_commands": stats.processed_commands,
+                "start_round_calls": stats.start_round_calls,
+                "push_inbound_batch_calls": stats.push_inbound_batch_calls,
+                "push_inbound_batch_items": stats.push_inbound_batch_items,
+                "exchange_batches_calls": stats.exchange_batches_calls,
+                "exchange_inbound_items": stats.exchange_inbound_items,
+                "exchange_outbound_items": stats.exchange_outbound_items,
+                "pull_outbound_batch_calls": stats.pull_outbound_batch_calls,
+                "pull_outbound_batch_items": stats.pull_outbound_batch_items,
+                "stats_calls": stats.stats_calls,
                 "bridge_queue_size": stats.bridge_queue_size,
                 "worker_running": stats.worker_running,
                 "worker_error": stats.worker_error,
+                "exchange_deliver_seconds": stats.exchange_deliver_seconds,
+                "exchange_pump_seconds": stats.exchange_pump_seconds,
+                "exchange_drain_seconds": stats.exchange_drain_seconds,
+                "exchange_total_seconds": stats.exchange_total_seconds,
             }))
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -485,91 +421,53 @@ fn drive_acs_rounds(hosts: &[PyAcsHost], args: &DriveAcsArgs) -> Result<String, 
     .map_err(|err| err.to_string())
 }
 
-fn settle_acs_round_workers(
-    workers: &mut [HbWorkerProcess],
-    round_id: usize,
-    send_events: &mut usize,
-) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_millis(100);
-    while Instant::now() < deadline {
-        let mut progressed = false;
-        let mut deliveries_by_recipient = vec![Vec::new(); workers.len()];
-
-        for (pid, events) in drain_worker_events_parallel(workers, ACS_EVENT_DRAIN_LIMIT)? {
-            for event in events {
-                progressed = true;
-                match event {
-                    HbWorkerEvent::Send {
-                        round_id: event_round_id,
-                        recipient,
-                        payload,
-                    } => {
-                        if event_round_id != round_id {
-                            return Err(format!(
-                                "drive-acs round {round_id}: send event carried mismatched round_id {event_round_id} during settle"
-                            ));
-                        }
-                        if recipient >= workers.len() {
-                            return Err(format!(
-                                "drive-acs round {round_id}: invalid recipient {recipient} during settle"
-                            ));
-                        }
-                        deliveries_by_recipient[recipient].push(payload);
-                        *send_events += 1;
-                    }
-                    HbWorkerEvent::Failure {
-                        round_id: event_round_id,
-                        error,
-                        exception_type,
-                    } => {
-                        return Err(format!(
-                            "drive-acs round {round_id}: node {pid} failed during settle in event round {event_round_id} with {exception_type}: {error}"
-                        ));
-                    }
-                    HbWorkerEvent::Decision { .. } => {}
-                    HbWorkerEvent::Carryovers {
-                        round_id: event_round_id,
-                    } => {
-                        if event_round_id != round_id {
-                            return Err(format!(
-                                "drive-acs round {round_id}: carryovers event carried mismatched round_id {event_round_id} during settle"
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        let delivered_batches =
-            flush_worker_deliveries_parallel(workers, &mut deliveries_by_recipient)?;
-        if delivered_batches > 0 {
-            progressed = true;
-        }
-
-        if !progressed {
-            let queues_empty = collect_worker_stats_parallel(workers)?
-                .into_iter()
-                .all(|(_pid, stats)| stats.bridge_queue_size == 0);
-            if queues_empty {
-                break;
-            }
-        }
-        thread::sleep(ACS_IDLE_BACKOFF);
-    }
-    Ok(())
-}
-
 fn settle_acs_round<T: RustDrivenAcsHost>(
     hosts: &[T],
     round_id: usize,
     send_events: &mut usize,
-) -> Result<(), String> {
+) -> Result<DriverPhaseStats, String> {
     let deadline = Instant::now() + Duration::from_millis(100);
+    let mut pending_deliveries: PendingDeliveries = BTreeMap::new();
+    let mut settle_stats = new_driver_phase_stats(hosts);
     while Instant::now() < deadline {
+        update_pending_snapshot(&mut settle_stats, &pending_deliveries);
         let mut progressed = false;
+
         for (pid, host) in hosts.iter().enumerate() {
-            for event in host.drain_events(512)? {
-                progressed = true;
+            let inbound = pending_deliveries.remove(&pid).unwrap_or_default();
+            *send_events += inbound.len();
+            progressed |= !inbound.is_empty();
+            if !inbound.is_empty() {
+                let push_start = Instant::now();
+                let _ = host.push_inbound_batch(&inbound)?;
+                record_push(
+                    &mut settle_stats,
+                    pid,
+                    inbound.len(),
+                    push_start.elapsed().as_secs_f64(),
+                );
+            }
+        }
+
+        let mut pull_starts = Vec::with_capacity(hosts.len());
+        for host in hosts {
+            pull_starts.push(Instant::now());
+            host.begin_pull_outbound_batch(ACS_PULL_BATCH_LIMIT)?;
+        }
+
+        for (pid, host) in hosts.iter().enumerate() {
+            let events = host.finish_pull_outbound_batch()?;
+            let pull_seconds = pull_starts[pid].elapsed().as_secs_f64();
+            let event_count = events.len();
+            progressed |= event_count > 0;
+            record_pull(
+                &mut settle_stats,
+                pid,
+                event_count,
+                pull_seconds,
+                ACS_PULL_BATCH_LIMIT,
+            );
+            for event in events {
                 match event {
                     PyAcsEvent::Send {
                         round_id: event_round_id,
@@ -588,14 +486,13 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                                 "drive-acs round {round_id}: invalid recipient {recipient} during settle"
                             ));
                         }
-                        hosts[recipient].deliver_decoded(
+                        pending_deliveries.entry(recipient).or_default().push((
                             pid,
                             round_id,
-                            &channel,
+                            channel,
                             instance_id,
-                            &message,
-                        )?;
-                        *send_events += 1;
+                            message,
+                        ));
                     }
                     PyAcsEvent::Failure {
                         round_id: event_round_id,
@@ -606,21 +503,37 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                             "drive-acs round {round_id}: node {pid} failed during settle in event round {event_round_id} with {exception_type}: {error}"
                         ));
                     }
-                    PyAcsEvent::Decision { .. } | PyAcsEvent::Carryovers { .. } => {}
+                    PyAcsEvent::Decision { .. } => {}
+                    PyAcsEvent::Carryovers {
+                        round_id: event_round_id,
+                    } => {
+                        if event_round_id != round_id {
+                            return Err(format!(
+                                "drive-acs round {round_id}: carryovers event carried mismatched round_id {event_round_id} during settle"
+                            ));
+                        }
+                    }
                 }
             }
         }
 
-        let queues_empty = hosts
-            .iter()
-            .map(|host| host.stats())
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .all(|stats| stats.bridge_queue_size == 0);
-        if !progressed && queues_empty {
-            break;
+        if !progressed {
+            let queues_empty = hosts
+                .iter()
+                .map(RustDrivenAcsHost::stats)
+                .collect::<Result<Vec<_>, String>>()?
+                .into_iter()
+                .all(|stats| stats.bridge_queue_size == 0);
+            if queues_empty {
+                break;
+            }
+            settle_stats.idle_sweeps += 1;
+            settle_stats.idle_backoff_count += 1;
+            thread::sleep(ACS_IDLE_BACKOFF);
+            continue;
         }
+        settle_stats.active_sweeps += 1;
         thread::sleep(ACS_IDLE_BACKOFF);
     }
-    Ok(())
+    Ok(settle_stats)
 }

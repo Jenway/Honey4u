@@ -2,12 +2,17 @@ import os
 
 import honey_native
 import pytest
-
-from honey.acs.dumbo.dumbo_acs import DumboProofDiffuse
-from honey.crypto import merkle, pke
-from honey.data.pool_reuse import PoolFetchRequest, PoolFetchResponse
-from honey.infra.exceptions import SerializationError
-from honey.protocol.messages import (
+from honey_acs.dumbo.dumbo_acs import DumboProofDiffuse
+from honey_acs.subprotocols.dumbo_mvba import (
+    MvbaAbaMessage,
+    MvbaRcPrepare,
+    ThresholdShareProof,
+)
+from honey_acs.subprotocols.provable_reliable_broadcast import PrbcProof, PrbcReady
+from honey_runtime.data.pool_reuse import PoolFetchRequest, PoolFetchResponse
+from honey_shared.crypto import merkle, pke
+from honey_shared.exceptions import SerializationError
+from honey_shared.messages import (
     BaConf,
     BaEst,
     Channel,
@@ -22,12 +27,6 @@ from honey.protocol.messages import (
     encode_tx_batch,
     tx_dedup_key,
 )
-from honey.subprotocols.dumbo_mvba import (
-    MvbaAbaMessage,
-    MvbaRcPrepare,
-    ThresholdShareProof,
-)
-from honey.subprotocols.provable_reliable_broadcast import PrbcProof, PrbcReady
 
 
 def test_protocol_envelope_round_trip() -> None:

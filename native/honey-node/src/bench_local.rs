@@ -4,7 +4,7 @@ pub(crate) fn run_rust_hosted_node(args: RunNodeArgs) -> Result<(), String> {
     Python::attach(|py| -> PyResult<()> {
         prepend_python_paths(py)?;
 
-        let rust_host = PyModule::import(py, "honey.host.rust_host")?;
+        let rust_host = PyModule::import(py, "honey_runtime.drivers.rust_hosted")?;
         let result = rust_host.getattr("run_protocol_node")?.call1((
             args.protocol.as_str(),
             args.sid,

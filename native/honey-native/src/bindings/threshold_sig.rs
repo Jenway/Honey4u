@@ -112,6 +112,31 @@ impl SigPublicKey {
         })
     }
 
+    fn combine_trusted_shares(
+        &self,
+        py: Python<'_>,
+        shares: Vec<(usize, Vec<u8>)>,
+        msg: &[u8],
+    ) -> PyResult<Vec<u8>> {
+        let mut partial_sigs = Vec::with_capacity(shares.len());
+        for (player_id, sig_bytes) in shares {
+            let value =
+                g1_from_bytes(&sig_bytes).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            partial_sigs.push(crypto::threshold::keygen::PartialSignature {
+                player_id: player_id + 1,
+                value,
+            });
+        }
+
+        let msg = msg.to_vec();
+        py.detach(move || {
+            match crypto::threshold::sig::combine_trusted(&self.inner, &msg, &partial_sigs) {
+                Ok(combined_sig) => Ok(g1_to_bytes(&combined_sig)),
+                Err(e) => Err(e.into()),
+            }
+        })
+    }
+
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
         let wire = SigPublicParamsWire::from_runtime(&self.inner);
         py.detach(move || archive_api::encode(&wire))

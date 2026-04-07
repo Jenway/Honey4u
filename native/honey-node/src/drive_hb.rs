@@ -1,5 +1,6 @@
 use super::*;
-use crate::drive_acs::run_acs_round_workers;
+use crate::drive_acs::{driver_phase_stats_json, run_acs_round};
+use crate::py_host::RustDrivenAcsHost;
 
 fn parse_honeybadger_public_key(payloads: &[String]) -> Result<HbPkePublicParams, String> {
     let mut canonical_public_key: Option<Vec<u8>> = None;
@@ -37,9 +38,13 @@ fn build_honeybadger_round_batch(
     encode_hb_tx_batch(items)
 }
 
-fn drive_honeybadger_block_round_workers(
+fn encode_honeybadger_proposal_ref(pid: usize) -> Vec<u8> {
+    (pid as u64).to_be_bytes().to_vec()
+}
+
+fn drive_honeybadger_block_round(
     public_key: &HbPkePublicParams,
-    workers: &mut [HbWorkerProcess],
+    runtimes: &[HbNodeRuntime],
     selected_batches: &[Vec<u8>],
 ) -> Result<HbBlockOutcome, String> {
     if selected_batches.is_empty() {
@@ -47,32 +52,18 @@ fn drive_honeybadger_block_round_workers(
     }
 
     let local_share_start = Instant::now();
-    let share_bundles = thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(workers.len());
-        for worker in workers.iter_mut() {
-            handles.push(scope.spawn(move || {
-                worker
-                    .tpke_local_bundle(selected_batches)
-                    .map(|(bundle, _elapsed_seconds)| (worker.pid, bundle))
-            }));
-        }
-
-        let mut bundles = Vec::with_capacity(handles.len());
-        for handle in handles {
-            let bundle = handle
-                .join()
-                .map_err(|_| String::from("HoneyBadger tpke_local_bundle worker panicked"))??;
-            bundles.push(bundle);
-        }
-        Ok::<Vec<(usize, HbShareBundle)>, String>(bundles)
-    })?;
+    let runtime_inputs = runtimes
+        .iter()
+        .map(|runtime| (runtime.acs_host.pid, runtime.tpke_private_share().clone()))
+        .collect::<Vec<_>>();
+    let mut decryptor = HbBatchDecryptor::new(public_key.clone(), selected_batches.to_vec())?;
+    let share_bundles = decryptor.local_runtime_share_bundles(&runtime_inputs)?;
     let local_share_seconds = local_share_start.elapsed().as_secs_f64();
 
     let combine_start = Instant::now();
-    let mut decryptor = HbBatchDecryptor::new(public_key.clone(), selected_batches.to_vec())?;
     let mut tpke_bundle_events = 0usize;
     for (sender_id, bundle) in share_bundles {
-        decryptor.ingest_bundle(sender_id, bundle)?;
+        decryptor.ingest_trusted_runtime_bundle(sender_id, bundle)?;
         tpke_bundle_events += 1;
     }
 
@@ -112,41 +103,46 @@ pub(crate) fn run_drive_honeybadger(args: DriveHoneyBadgerArgs) -> Result<(), St
         debug_drive_acs("serialize_acs_crypto_payloads:done");
         payloads
     };
-    let binary_path = std::env::current_exe()
-        .map_err(|err| format!("failed to resolve honey-node path: {err}"))?;
-    let mut workers = Vec::with_capacity(args.nodes);
 
+    let mut runtimes: Vec<HbNodeRuntime> = Vec::with_capacity(args.nodes);
     for pid in 0..args.nodes {
         debug_drive_acs(&format!("host:new:start pid={pid}"));
-        match HbWorkerProcess::spawn(HbWorkerSpawnArgs {
-            binary_path: &binary_path,
+        let host = match PyAcsHost::new(
+            args.acs_protocol,
             pid,
-            nodes: args.nodes,
-            faulty: args.faulty,
-            acs_protocol: args.acs_protocol,
-            acs_crypto_json: &acs_crypto_payloads[pid],
-            hb_crypto_json: &hb_crypto_payloads[pid],
-            config_json: &args.config_json,
-        }) {
-            Ok(worker) => {
-                debug_drive_acs(&format!("host:new:done pid={pid}"));
-                workers.push(worker);
-            }
+            args.nodes,
+            args.faulty,
+            &acs_crypto_payloads[pid],
+            &args.config_json,
+        ) {
+            Ok(host) => host,
             Err(err) => {
-                for worker in &mut workers {
-                    let _ = worker.shutdown();
+                for runtime in &runtimes {
+                    let _ = runtime.shutdown();
                 }
                 return Err(err);
             }
-        }
+        };
+        let (_, private_share) = match parse_honeybadger_crypto_payload(&hb_crypto_payloads[pid]) {
+            Ok(crypto) => crypto,
+            Err(err) => {
+                let _ = host.shutdown();
+                for runtime in &runtimes {
+                    let _ = runtime.shutdown();
+                }
+                return Err(err);
+            }
+        };
+        debug_drive_acs(&format!("host:new:done pid={pid}"));
+        runtimes.push(HbNodeRuntime::new(host, private_share));
     }
 
-    let result = drive_honeybadger_rounds_workers(&mut workers, &args, &public_key);
+    let result = drive_honeybadger_rounds(&runtimes, &args, &public_key);
 
     let mut shutdown_errors = Vec::new();
-    for worker in &mut workers {
-        if let Err(err) = worker.shutdown() {
-            shutdown_errors.push(format!("pid={}: {err}", worker.pid));
+    for runtime in &runtimes {
+        if let Err(err) = runtime.shutdown() {
+            shutdown_errors.push(format!("pid={}: {err}", runtime.acs_host.pid));
         }
     }
 
@@ -161,8 +157,8 @@ pub(crate) fn run_drive_honeybadger(args: DriveHoneyBadgerArgs) -> Result<(), St
     write_output(args.result_path.as_deref(), &rendered)
 }
 
-fn drive_honeybadger_rounds_workers(
-    workers: &mut [HbWorkerProcess],
+fn drive_honeybadger_rounds(
+    runtimes: &[HbNodeRuntime],
     args: &DriveHoneyBadgerArgs,
     public_key: &HbPkePublicParams,
 ) -> Result<String, String> {
@@ -174,35 +170,44 @@ fn drive_honeybadger_rounds_workers(
         let round_wall_start = Instant::now();
         let round_sid = format!("{}:{round_id}:", args.sid);
         let round_build_start = Instant::now();
-        let local_inputs = workers
+        let sealed_batches = runtimes
             .iter()
-            .map(|worker| {
-                let batch = build_honeybadger_round_batch(round_id, worker.pid, args.batch_size)?;
+            .map(|runtime| {
+                let batch =
+                    build_honeybadger_round_batch(round_id, runtime.acs_host.pid, args.batch_size)?;
                 seal_hb_encrypted_batch(public_key, &batch)
             })
             .collect::<Result<Vec<_>, String>>()?;
+        let proposal_refs = runtimes
+            .iter()
+            .map(|runtime| encode_honeybadger_proposal_ref(runtime.acs_host.pid))
+            .collect::<Vec<_>>();
         let build_seconds = round_build_start.elapsed().as_secs_f64();
+
         let acs_start = Instant::now();
-        let outcome = run_acs_round_workers(
-            workers,
+        let outcome = run_acs_round(
+            runtimes,
             round_id,
             &round_sid,
-            &local_inputs,
+            &proposal_refs,
             args.global_timeout,
         )?;
         let acs_seconds = acs_start.elapsed().as_secs_f64();
-        let selected_batches = outcome
-            .canonical
+        let AcsRoundOutcome {
+            selected_pids,
+            send_events,
+            drive_stats,
+            settle_stats,
+        } = outcome;
+        let selected_batches = selected_pids
             .iter()
-            .flatten()
-            .cloned()
-            .collect::<Vec<_>>();
-        let selected_pids = outcome
-            .canonical
-            .iter()
-            .enumerate()
-            .filter_map(|(pid, value)| value.as_ref().map(|_| pid))
-            .collect::<Vec<_>>();
+            .map(|pid| {
+                sealed_batches
+                    .get(*pid)
+                    .cloned()
+                    .ok_or_else(|| format!("drive-hb round {round_id}: invalid selected pid {pid}"))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
 
         if selected_batches.len() < args.nodes - args.faulty {
             return Err(format!(
@@ -213,8 +218,7 @@ fn drive_honeybadger_rounds_workers(
         }
 
         let tpke_start = Instant::now();
-        let block_outcome =
-            drive_honeybadger_block_round_workers(public_key, workers, &selected_batches)?;
+        let block_outcome = drive_honeybadger_block_round(public_key, runtimes, &selected_batches)?;
         let tpke_seconds = tpke_start.elapsed().as_secs_f64();
         let protocol_seconds = acs_seconds + tpke_seconds;
         let wall_seconds = round_wall_start.elapsed().as_secs_f64();
@@ -227,7 +231,9 @@ fn drive_honeybadger_rounds_workers(
             "round_id": round_id,
             "selected_count": selected_batches.len(),
             "selected_pids": selected_pids,
-            "acs_send_events": outcome.send_events,
+            "acs_send_events": send_events,
+            "acs_drive_stats": driver_phase_stats_json(&drive_stats),
+            "acs_settle_stats": driver_phase_stats_json(&settle_stats),
             "tpke_bundle_events": block_outcome.tpke_bundle_events,
             "delivered_count": delivered_count,
             "block_size": block_outcome.block_payload.len(),
@@ -243,19 +249,32 @@ fn drive_honeybadger_rounds_workers(
         }));
     }
 
-    let nodes = workers
-        .iter_mut()
-        .map(|worker| {
-            let stats = worker.stats()?;
+    let nodes = runtimes
+        .iter()
+        .map(|runtime| {
+            let stats = runtime.stats()?;
             Ok(json!({
-                "pid": worker.pid,
+                "pid": runtime.acs_host.pid,
                 "worker_ident": stats.worker_ident,
                 "rounds_started": stats.rounds_started,
                 "rounds_finished": stats.rounds_finished,
                 "processed_commands": stats.processed_commands,
+                "start_round_calls": stats.start_round_calls,
+                "push_inbound_batch_calls": stats.push_inbound_batch_calls,
+                "push_inbound_batch_items": stats.push_inbound_batch_items,
+                "exchange_batches_calls": stats.exchange_batches_calls,
+                "exchange_inbound_items": stats.exchange_inbound_items,
+                "exchange_outbound_items": stats.exchange_outbound_items,
+                "pull_outbound_batch_calls": stats.pull_outbound_batch_calls,
+                "pull_outbound_batch_items": stats.pull_outbound_batch_items,
+                "stats_calls": stats.stats_calls,
                 "bridge_queue_size": stats.bridge_queue_size,
                 "worker_running": stats.worker_running,
                 "worker_error": stats.worker_error,
+                "exchange_deliver_seconds": stats.exchange_deliver_seconds,
+                "exchange_pump_seconds": stats.exchange_pump_seconds,
+                "exchange_drain_seconds": stats.exchange_drain_seconds,
+                "exchange_total_seconds": stats.exchange_total_seconds,
             }))
         })
         .collect::<Result<Vec<_>, String>>()?;

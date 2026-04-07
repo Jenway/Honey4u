@@ -8,12 +8,10 @@ use honey_native::hb::{
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::types::{PyList, PyModule};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -24,7 +22,7 @@ mod bench_local;
 mod cli;
 mod drive_acs;
 mod drive_hb;
-mod hb_worker;
+mod network_driver;
 mod py_host;
 
 #[derive(Clone, Copy)]
@@ -50,29 +48,13 @@ impl Protocol {
     }
 }
 
-impl HbWorkerIpcMode {
-    fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "json" => Ok(Self::Json),
-            "binary" => Ok(Self::Binary),
-            _ => Err(format!("unsupported hb-worker ipc mode: {value}")),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Json => "json",
-            Self::Binary => "binary",
-        }
-    }
-}
-
 enum CliCommand {
     RunNode(RunNodeArgs),
     BenchLocal(BenchLocalArgs),
+    RunDriverNode(RunDriverNodeArgs),
+    BenchDriver(BenchDriverArgs),
     DriveAcs(DriveAcsArgs),
     DriveHoneyBadger(DriveHoneyBadgerArgs),
-    HbWorker(HbWorkerArgs),
 }
 
 struct RunNodeArgs {
@@ -107,6 +89,35 @@ struct BenchLocalArgs {
     result_path: Option<String>,
 }
 
+struct RunDriverNodeArgs {
+    pid: usize,
+    sid: String,
+    acs_protocol: Protocol,
+    nodes: usize,
+    faulty: usize,
+    rounds: usize,
+    batch_size: usize,
+    global_timeout: f64,
+    addresses_json: String,
+    hb_crypto_json: String,
+    acs_crypto_json: String,
+    config_json: String,
+    start_at_ms: Option<u64>,
+    result_path: Option<String>,
+}
+
+struct BenchDriverArgs {
+    sid: String,
+    acs_protocol: Protocol,
+    nodes: usize,
+    faulty: usize,
+    rounds: usize,
+    batch_size: usize,
+    global_timeout: f64,
+    config_json: String,
+    result_path: Option<String>,
+}
+
 struct DriveAcsArgs {
     protocol: Protocol,
     sid: String,
@@ -130,17 +141,6 @@ struct DriveHoneyBadgerArgs {
     result_path: Option<String>,
 }
 
-struct HbWorkerArgs {
-    pid: usize,
-    nodes: usize,
-    faulty: usize,
-    acs_protocol: Protocol,
-    acs_crypto_json: String,
-    hb_crypto_json: String,
-    config_json: String,
-    ipc_mode: HbWorkerIpcMode,
-}
-
 struct SpawnedNode {
     pid: usize,
     child: std::process::Child,
@@ -158,30 +158,6 @@ struct HbNodeRuntime {
     tpke_private_share: HbPkePrivateKeyShare,
 }
 
-struct HbWorkerProcess {
-    pid: usize,
-    child: std::process::Child,
-    stdin: std::process::ChildStdin,
-    stdout: BufReader<std::process::ChildStdout>,
-}
-
-struct HbWorkerSpawnArgs<'a> {
-    binary_path: &'a Path,
-    pid: usize,
-    nodes: usize,
-    faulty: usize,
-    acs_protocol: Protocol,
-    acs_crypto_json: &'a str,
-    hb_crypto_json: &'a str,
-    config_json: &'a str,
-}
-
-#[derive(Clone, Copy)]
-enum HbWorkerIpcMode {
-    Json,
-    Binary,
-}
-
 struct PyAcsHostStats {
     worker_ident: u64,
     rounds_started: usize,
@@ -190,6 +166,23 @@ struct PyAcsHostStats {
     bridge_queue_size: usize,
     worker_running: bool,
     worker_error: Option<String>,
+    start_round_calls: usize,
+    push_inbound_batch_calls: usize,
+    push_inbound_batch_items: usize,
+    push_inbound_wire_batch_calls: usize,
+    push_inbound_wire_batch_items: usize,
+    exchange_batches_calls: usize,
+    exchange_inbound_items: usize,
+    exchange_outbound_items: usize,
+    pull_outbound_batch_calls: usize,
+    pull_outbound_batch_items: usize,
+    pull_outbound_wire_batch_calls: usize,
+    pull_outbound_wire_batch_items: usize,
+    stats_calls: usize,
+    exchange_deliver_seconds: f64,
+    exchange_pump_seconds: f64,
+    exchange_drain_seconds: f64,
+    exchange_total_seconds: f64,
 }
 
 enum PyAcsEvent {
@@ -202,7 +195,7 @@ enum PyAcsEvent {
     },
     Decision {
         round_id: usize,
-        values: Vec<Option<Vec<u8>>>,
+        selected_pids: Vec<usize>,
     },
     Failure {
         round_id: isize,
@@ -214,7 +207,7 @@ enum PyAcsEvent {
     },
 }
 
-enum HbWorkerEvent {
+enum PyAcsWireEvent {
     Send {
         round_id: usize,
         recipient: usize,
@@ -222,7 +215,7 @@ enum HbWorkerEvent {
     },
     Decision {
         round_id: usize,
-        values: Vec<Option<Vec<u8>>>,
+        selected_pids: Vec<usize>,
     },
     Failure {
         round_id: isize,
@@ -231,76 +224,14 @@ enum HbWorkerEvent {
     },
     Carryovers {
         round_id: usize,
-    },
-}
-
-#[derive(Serialize, Deserialize)]
-enum HbWorkerRequest {
-    Stats,
-    StartRound {
-        round_id: usize,
-        sid: String,
-        local_input: Vec<u8>,
-    },
-    DeliverBatch {
-        payloads: Vec<Vec<u8>>,
-    },
-    DrainEvents {
-        limit: usize,
-    },
-    TpkeLocalBundle {
-        selected_batches: Vec<Vec<u8>>,
-    },
-    Shutdown,
-}
-
-#[derive(Serialize, Deserialize)]
-struct HbWorkerStatsPayload {
-    pid: usize,
-    worker_ident: u64,
-    rounds_started: usize,
-    rounds_finished: usize,
-    processed_commands: usize,
-    bridge_queue_size: usize,
-    worker_running: bool,
-    worker_error: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-enum HbWorkerEventPayload {
-    Send {
-        round_id: usize,
-        recipient: usize,
-        payload: Vec<u8>,
-    },
-    Decision {
-        round_id: usize,
-        values: Vec<Option<Vec<u8>>>,
-    },
-    Failure {
-        round_id: isize,
-        error: String,
-        exception_type: String,
-    },
-    Carryovers {
-        round_id: usize,
-    },
-}
-
-#[derive(Serialize, Deserialize)]
-enum HbWorkerResponse {
-    Ack,
-    Stats(HbWorkerStatsPayload),
-    Events(Vec<HbWorkerEventPayload>),
-    TpkeLocalBundle {
-        bundle: HbShareBundle,
-        elapsed_seconds: f64,
     },
 }
 
 struct AcsRoundOutcome {
-    canonical: Vec<Option<Vec<u8>>>,
+    selected_pids: Vec<usize>,
     send_events: usize,
+    drive_stats: DriverPhaseStats,
+    settle_stats: DriverPhaseStats,
 }
 
 struct HbBlockOutcome {
@@ -310,57 +241,56 @@ struct HbBlockOutcome {
     combine_seconds: f64,
 }
 
-type HbShareBundle = Vec<Option<Vec<u8>>>;
-
 const GENESIS_CHAIN_DIGEST: [u8; 32] = [0; 32];
 const ACS_IDLE_BACKOFF: Duration = Duration::from_micros(50);
-const ACS_EVENT_DRAIN_LIMIT: usize = 4096;
+const ACS_PULL_BATCH_LIMIT: usize = 512;
 
-fn write_bincode_frame<W, T>(writer: &mut W, value: &T) -> Result<(), String>
-where
-    W: Write,
-    T: Serialize,
-{
-    let payload = bincode::serialize(value).map_err(|err| err.to_string())?;
-    let len = u32::try_from(payload.len()).map_err(|_| String::from("IPC frame too large"))?;
-    writer
-        .write_all(&len.to_le_bytes())
-        .and_then(|_| writer.write_all(&payload))
-        .and_then(|_| writer.flush())
-        .map_err(|err| err.to_string())
+#[derive(Clone, Default)]
+struct DriverHostPhaseStats {
+    pid: usize,
+    push_calls: usize,
+    push_items: usize,
+    max_push_batch: usize,
+    push_seconds: f64,
+    pull_calls: usize,
+    empty_pull_calls: usize,
+    pulled_events: usize,
+    max_pull_batch: usize,
+    pull_limit_hits: usize,
+    pull_seconds: f64,
 }
 
-fn read_bincode_frame<R, T>(reader: &mut R) -> Result<Option<T>, String>
-where
-    R: Read,
-    T: for<'de> Deserialize<'de>,
-{
-    let mut len_bytes = [0u8; 4];
-    match reader.read_exact(&mut len_bytes) {
-        Ok(()) => {}
-        Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(err) => return Err(err.to_string()),
-    }
-
-    let len = u32::from_le_bytes(len_bytes) as usize;
-    let mut payload = vec![0u8; len];
-    reader
-        .read_exact(&mut payload)
-        .map_err(|err| err.to_string())?;
-    let value = bincode::deserialize(&payload).map_err(|err| err.to_string())?;
-    Ok(Some(value))
+#[derive(Clone, Default)]
+struct DriverPhaseStats {
+    sweep_count: usize,
+    active_sweeps: usize,
+    idle_sweeps: usize,
+    idle_backoff_count: usize,
+    total_pending_deliveries: usize,
+    max_pending_deliveries: usize,
+    total_pushed_items: usize,
+    total_pulled_events: usize,
+    max_pull_batch: usize,
+    pull_limit_hits: usize,
+    total_push_seconds: f64,
+    total_pull_seconds: f64,
+    host_stats: Vec<DriverHostPhaseStats>,
 }
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let command = cli::parse_cli(std::env::args())?;
     match command {
         CliCommand::RunNode(args) => bench_local::run_rust_hosted_node(args).map_err(Into::into),
         CliCommand::BenchLocal(args) => bench_local::run_bench_local(args).map_err(Into::into),
+        CliCommand::RunDriverNode(args) => {
+            network_driver::run_rust_driver_node(args).map_err(Into::into)
+        }
+        CliCommand::BenchDriver(args) => {
+            network_driver::run_bench_rust_driver(args).map_err(Into::into)
+        }
         CliCommand::DriveAcs(args) => drive_acs::run_drive_acs(args).map_err(Into::into),
         CliCommand::DriveHoneyBadger(args) => {
             drive_hb::run_drive_honeybadger(args).map_err(Into::into)
         }
-        CliCommand::HbWorker(args) => hb_worker::run_hb_worker(args).map_err(Into::into),
     }
 }
 
@@ -405,6 +335,9 @@ where
 fn prepend_python_paths(py: Python<'_>) -> PyResult<()> {
     let sys = PyModule::import(py, "sys")?;
     let path = sys.getattr("path")?.cast_into::<PyList>()?;
+    path.insert(0, "packages/honey-shared/src")?;
+    path.insert(0, "packages/honey-acs/src")?;
+    path.insert(0, "packages/honey-runtime/src")?;
     for candidate in venv_site_packages_candidates() {
         path.insert(0, candidate)?;
     }
@@ -429,21 +362,13 @@ fn parse_acs_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsEvent> {
             message: dict_item(&dict, "message")?.unbind(),
         }),
         "decision" => {
-            let values = dict_item(&dict, "values")?;
-            let parsed = values
+            let selected_pids = dict_item(&dict, "selected_pids")?
                 .try_iter()?
-                .map(|item| {
-                    let value = item?;
-                    if value.is_none() {
-                        Ok(None)
-                    } else {
-                        value.extract::<Vec<u8>>().map(Some)
-                    }
-                })
+                .map(|item| item?.extract::<usize>())
                 .collect::<PyResult<Vec<_>>>()?;
             Ok(PyAcsEvent::Decision {
                 round_id: dict_item(&dict, "round_id")?.extract()?,
-                values: parsed,
+                selected_pids,
             })
         }
         "failure" => Ok(PyAcsEvent::Failure {
@@ -460,55 +385,35 @@ fn parse_acs_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsEvent> {
     }
 }
 
-fn stats_payload_from_stats(pid: usize, stats: PyAcsHostStats) -> HbWorkerStatsPayload {
-    HbWorkerStatsPayload {
-        pid,
-        worker_ident: stats.worker_ident,
-        rounds_started: stats.rounds_started,
-        rounds_finished: stats.rounds_finished,
-        processed_commands: stats.processed_commands,
-        bridge_queue_size: stats.bridge_queue_size,
-        worker_running: stats.worker_running,
-        worker_error: stats.worker_error,
-    }
-}
-
-fn stats_from_payload(payload: HbWorkerStatsPayload) -> PyAcsHostStats {
-    PyAcsHostStats {
-        worker_ident: payload.worker_ident,
-        rounds_started: payload.rounds_started,
-        rounds_finished: payload.rounds_finished,
-        processed_commands: payload.processed_commands,
-        bridge_queue_size: payload.bridge_queue_size,
-        worker_running: payload.worker_running,
-        worker_error: payload.worker_error,
-    }
-}
-
-fn worker_event_from_payload(payload: HbWorkerEventPayload) -> HbWorkerEvent {
-    match payload {
-        HbWorkerEventPayload::Send {
-            round_id,
-            recipient,
-            payload,
-        } => HbWorkerEvent::Send {
-            round_id,
-            recipient,
-            payload,
-        },
-        HbWorkerEventPayload::Decision { round_id, values } => {
-            HbWorkerEvent::Decision { round_id, values }
+fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
+    let kind = dict_item(&dict, "kind")?.extract::<String>()?;
+    match kind.as_str() {
+        "send" => Ok(PyAcsWireEvent::Send {
+            round_id: dict_item(&dict, "round_id")?.extract()?,
+            recipient: dict_item(&dict, "recipient")?.extract()?,
+            payload: dict_item(&dict, "payload")?.extract()?,
+        }),
+        "decision" => {
+            let selected_pids = dict_item(&dict, "selected_pids")?
+                .try_iter()?
+                .map(|item| item?.extract::<usize>())
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(PyAcsWireEvent::Decision {
+                round_id: dict_item(&dict, "round_id")?.extract()?,
+                selected_pids,
+            })
         }
-        HbWorkerEventPayload::Failure {
-            round_id,
-            error,
-            exception_type,
-        } => HbWorkerEvent::Failure {
-            round_id,
-            error,
-            exception_type,
-        },
-        HbWorkerEventPayload::Carryovers { round_id } => HbWorkerEvent::Carryovers { round_id },
+        "failure" => Ok(PyAcsWireEvent::Failure {
+            round_id: dict_item(&dict, "round_id")?.extract()?,
+            error: dict_item(&dict, "error")?.extract()?,
+            exception_type: dict_item(&dict, "exception_type")?.extract()?,
+        }),
+        "carryovers" => Ok(PyAcsWireEvent::Carryovers {
+            round_id: dict_item(&dict, "round_id")?.extract()?,
+        }),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown ACS wire event kind: {kind}"
+        ))),
     }
 }
 
@@ -568,28 +473,6 @@ fn json_string_field<'a>(value: &'a Value, key: &str) -> Result<&'a str, String>
         .ok_or_else(|| format!("missing string field: {key}"))
 }
 
-fn json_usize_field(value: &Value, key: &str) -> Result<usize, String> {
-    value
-        .get(key)
-        .and_then(Value::as_u64)
-        .map(|value| value as usize)
-        .ok_or_else(|| format!("missing usize field: {key}"))
-}
-
-fn json_string_list_field(value: &Value, key: &str) -> Result<Vec<String>, String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .ok_or_else(|| format!("missing list field: {key}"))?
-        .iter()
-        .map(|item| {
-            item.as_str()
-                .map(String::from)
-                .ok_or_else(|| format!("non-string item in field: {key}"))
-        })
-        .collect()
-}
-
 fn parse_honeybadger_crypto_payload(
     payload: &str,
 ) -> Result<(HbPkePublicParams, HbPkePrivateKeyShare), String> {
@@ -600,28 +483,6 @@ fn parse_honeybadger_crypto_payload(
         decode_pke_public_params(&public_key)?,
         decode_pke_private_share(&private_share)?,
     ))
-}
-
-fn encode_protocol_envelope(
-    sender: usize,
-    round_id: usize,
-    channel: &str,
-    instance_id: Option<usize>,
-    message: &Py<PyAny>,
-) -> Result<Vec<u8>, String> {
-    Python::attach(|py| -> PyResult<Vec<u8>> {
-        prepend_python_paths(py)?;
-        let module = PyModule::import(py, "honey.protocol.messages")?;
-        let channel_enum = module.getattr("Channel")?.getattr(channel)?;
-        let envelope = module.getattr("ProtocolEnvelope")?.call1((
-            round_id,
-            channel_enum,
-            instance_id,
-            message.bind(py),
-        ))?;
-        envelope.call_method1("to_bytes", (sender,))?.extract()
-    })
-    .map_err(|err| err.to_string())
 }
 
 fn debug_drive_acs(message: &str) {
@@ -637,7 +498,7 @@ fn serialize_crypto_payloads(
 ) -> Result<Vec<String>, String> {
     Python::attach(|py| -> PyResult<Vec<String>> {
         prepend_python_paths(py)?;
-        let materials = PyModule::import(py, "honey.host.crypto_material")?;
+        let materials = PyModule::import(py, "honey_runtime.drivers.crypto_material")?;
         let function_name = match protocol {
             Protocol::HoneyBadger => "serialize_hb_crypto_payloads_json",
             Protocol::Dumbo => "serialize_dumbo_crypto_payloads_json",

@@ -1,12 +1,30 @@
 use crate::crypto::crypto_error::CryptoError;
 
-use crate::crypto::bls::{g1::G1, pairing::core_verify_pk_in_g2};
+use crate::crypto::bls::{g1::G1, g2::G2, pairing::verify_pairing_equality};
+use std::collections::HashMap;
+use std::sync::{LazyLock, RwLock};
 
 use super::keygen::{PartialSignature, SigPrivateKeyShare, SigPublicParams};
 
 use crate::crypto::bls::interpolate::interpolate_at_zero;
 
 const DST_SIG: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
+static HASH_TO_G1_CACHE: LazyLock<RwLock<HashMap<Vec<u8>, G1>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn hashed_message(msg: &[u8]) -> G1 {
+    if let Ok(cache) = HASH_TO_G1_CACHE.read()
+        && let Some(value) = cache.get(msg)
+    {
+        return *value;
+    }
+
+    let hashed = G1::hash_to_g1(msg, DST_SIG);
+    if let Ok(mut cache) = HASH_TO_G1_CACHE.write() {
+        cache.entry(msg.to_vec()).or_insert(hashed);
+    }
+    hashed
+}
 
 /// Produce a partial BLS signature from a key share.
 pub fn sign(share: &SigPrivateKeyShare, msg: &[u8]) -> PartialSignature {
@@ -32,7 +50,8 @@ pub fn verify_share(
         )));
     }
     let ver_key = &params.verification_vector[id - 1];
-    if !core_verify_pk_in_g2(&partial_sig.value, ver_key, msg, DST_SIG) {
+    let h = hashed_message(msg);
+    if !verify_pairing_equality(ver_key, &h, &G2::generator(), &partial_sig.value) {
         return Err(CryptoError::VerificationFailed);
     }
     Ok(())
@@ -40,7 +59,8 @@ pub fn verify_share(
 
 /// Verify a combined threshold signature against the master verification key.
 pub fn verify_combined(params: &SigPublicParams, sig: &G1, msg: &[u8]) -> Result<(), CryptoError> {
-    if !core_verify_pk_in_g2(sig, &params.master_public_key, msg, DST_SIG) {
+    let h = hashed_message(msg);
+    if !verify_pairing_equality(&params.master_public_key, &h, &G2::generator(), sig) {
         return Err(CryptoError::VerificationFailed);
     }
     Ok(())
@@ -72,6 +92,39 @@ pub fn combine_with_verify(
 
     let combined = interpolate_at_zero(&share_pairs)?;
 
+    verify_combined(params, &combined, msg)?;
+    Ok(combined)
+}
+
+/// Combine shares that have already been individually verified by the caller.
+/// Still verifies the final combined signature before returning it.
+pub fn combine_trusted(
+    params: &SigPublicParams,
+    msg: &[u8],
+    partial_sigs: &[PartialSignature],
+) -> Result<G1, CryptoError> {
+    if partial_sigs.len() != params.threshold {
+        return Err(CryptoError::InsufficientShares {
+            need: params.threshold,
+            got: partial_sigs.len(),
+        });
+    }
+
+    let mut seen = std::collections::HashSet::with_capacity(partial_sigs.len());
+    let share_pairs: Vec<(usize, G1)> = partial_sigs
+        .iter()
+        .map(|ps| {
+            if !seen.insert(ps.player_id) {
+                return Err(CryptoError::InvalidArgument(format!(
+                    "duplicate player_id {}",
+                    ps.player_id
+                )));
+            }
+            Ok((ps.player_id, ps.value))
+        })
+        .collect::<Result<_, _>>()?;
+
+    let combined = interpolate_at_zero(&share_pairs)?;
     verify_combined(params, &combined, msg)?;
     Ok(combined)
 }
