@@ -13,10 +13,11 @@ from typing import Any
 from honey_acs.data.broadcast_mempool import BroadcastMempool
 from honey_acs.dumbo.dumbo_acs import DumboACSParams, dumbo_acs
 from honey_acs.hb.bkr93 import CSParams, run_bkr93_acs_with_send
-from honey_runtime.drivers.crypto_material import build_dumbo_materials, build_materials
-from honey_runtime.routing.round_router import RoundProtocolRouter
-from honey_runtime.transport import QueueTransport
-from honey_shared.messages import Channel, ProtocolEnvelope, ProtocolMessage
+from honey_acs.host_crypto import build_dumbo_materials, build_materials
+from honey_acs.messages import Channel, ProtocolEnvelope, ProtocolMessage
+
+from benchmarks.support.round_router import RoundProtocolRouter
+from benchmarks.support.transport import QueueTransport
 
 
 @dataclass(frozen=True)

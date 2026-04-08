@@ -1,6 +1,6 @@
 from typing import Any
 
-from honey_runtime.runners import (
+from benchmarks.support.runners import (
     benchmark_local_dumbo_nodes_rust_driven,
     benchmark_local_honeybadger_nodes_rust_driven,
     run_local_dumbo_acs_rust_driven,

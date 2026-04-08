@@ -157,49 +157,11 @@ struct PyAcsHostStats {
     worker_running: bool,
     worker_error: Option<String>,
     start_round_calls: usize,
-    push_inbound_batch_calls: usize,
-    push_inbound_batch_items: usize,
     push_inbound_wire_batch_calls: usize,
     push_inbound_wire_batch_items: usize,
-    exchange_batches_calls: usize,
-    exchange_inbound_items: usize,
-    exchange_outbound_items: usize,
-    pull_outbound_batch_calls: usize,
-    pull_outbound_batch_items: usize,
     pull_outbound_wire_batch_calls: usize,
     pull_outbound_wire_batch_items: usize,
     stats_calls: usize,
-    exchange_deliver_seconds: f64,
-    exchange_pump_seconds: f64,
-    exchange_drain_seconds: f64,
-    exchange_total_seconds: f64,
-}
-
-enum PyAcsEvent {
-    Send {
-        round_id: usize,
-        recipient: usize,
-        channel: String,
-        instance_id: Option<usize>,
-        message: Py<PyAny>,
-    },
-    Decision {
-        round_id: usize,
-        /// Set when `output_mode = "selected_pids"` (HB / bench mode).
-        selected_pids: Vec<usize>,
-        /// Set when `output_mode = "payloads"` (Dumbo drive mode).
-        selected_payloads: Option<Vec<Option<Vec<u8>>>>,
-    },
-    Failure {
-        round_id: isize,
-        error: String,
-        exception_type: String,
-    },
-    Carryovers {
-        round_id: usize,
-        /// Populated when pool reuse is enabled in the Dumbo ACS service.
-        items: Vec<CarryoverItem>,
-    },
 }
 
 enum PyAcsWireEvent {
@@ -340,9 +302,7 @@ where
 fn prepend_python_paths(py: Python<'_>) -> PyResult<()> {
     let sys = PyModule::import(py, "sys")?;
     let path = sys.getattr("path")?.cast_into::<PyList>()?;
-    path.insert(0, "packages/honey-shared/src")?;
     path.insert(0, "packages/honey-acs/src")?;
-    path.insert(0, "packages/honey-runtime/src")?;
     for candidate in venv_site_packages_candidates() {
         path.insert(0, candidate)?;
     }
@@ -354,79 +314,6 @@ fn prepend_python_paths(py: Python<'_>) -> PyResult<()> {
 fn dict_item<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
     dict.get_item(key)?
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("missing key: {key}")))
-}
-
-fn parse_acs_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsEvent> {
-    let kind = dict_item(&dict, "kind")?.extract::<String>()?;
-    match kind.as_str() {
-        "send" => Ok(PyAcsEvent::Send {
-            round_id: dict_item(&dict, "round_id")?.extract()?,
-            recipient: dict_item(&dict, "recipient")?.extract()?,
-            channel: dict_item(&dict, "channel")?.extract()?,
-            instance_id: dict_item(&dict, "instance_id")?.extract()?,
-            message: dict_item(&dict, "message")?.unbind(),
-        }),
-        "decision" => {
-            let round_id = dict_item(&dict, "round_id")?.extract()?;
-            // `selected_pids` is present in HB / "selected_pids" output mode
-            let selected_pids = if let Some(pids_val) = dict.get_item("selected_pids")? {
-                pids_val
-                    .try_iter()?
-                    .map(|item| item?.extract::<usize>())
-                    .collect::<PyResult<Vec<_>>>()?
-            } else {
-                Vec::new()
-            };
-            // `selected_payloads` is present in Dumbo / "payloads" output mode
-            let selected_payloads =
-                if let Some(payloads_val) = dict.get_item("selected_payloads")? {
-                    Some(
-                        payloads_val
-                            .try_iter()?
-                            .map(|item| item?.extract::<Option<Vec<u8>>>())
-                            .collect::<PyResult<Vec<_>>>()?,
-                    )
-                } else {
-                    None
-                };
-            Ok(PyAcsEvent::Decision {
-                round_id,
-                selected_pids,
-                selected_payloads,
-            })
-        }
-        "failure" => Ok(PyAcsEvent::Failure {
-            round_id: dict_item(&dict, "round_id")?.extract()?,
-            error: dict_item(&dict, "error")?.extract()?,
-            exception_type: dict_item(&dict, "exception_type")?.extract()?,
-        }),
-        "carryovers" => {
-            let round_id = dict_item(&dict, "round_id")?.extract()?;
-            let items = if let Some(items_val) = dict.get_item("items")? {
-                items_val
-                    .try_iter()?
-                    .map(|item| {
-                        let item = item?;
-                        let d = item.downcast::<PyDict>().map_err(|_| {
-                            pyo3::exceptions::PyTypeError::new_err("carryover item must be a dict")
-                        })?;
-                        Ok(CarryoverItem {
-                            leader: dict_item(d, "leader")?.extract()?,
-                            value: dict_item(d, "value")?.extract()?,
-                            roothash: dict_item(d, "roothash")?.extract()?,
-                            proof_payload: dict_item(d, "proof_payload")?.extract()?,
-                        })
-                    })
-                    .collect::<PyResult<Vec<_>>>()?
-            } else {
-                Vec::new()
-            };
-            Ok(PyAcsEvent::Carryovers { round_id, items })
-        }
-        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "unknown ACS event kind: {kind}"
-        ))),
-    }
 }
 
 fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
@@ -583,7 +470,7 @@ fn serialize_crypto_payloads(
 ) -> Result<Vec<String>, String> {
     Python::attach(|py| -> PyResult<Vec<String>> {
         prepend_python_paths(py)?;
-        let materials = PyModule::import(py, "honey_runtime.drivers.crypto_material")?;
+        let materials = PyModule::import(py, "honey_acs.host_crypto")?;
         let function_name = match protocol {
             Protocol::HoneyBadger => "serialize_hb_crypto_payloads_json",
             Protocol::Dumbo => "serialize_dumbo_crypto_payloads_json",

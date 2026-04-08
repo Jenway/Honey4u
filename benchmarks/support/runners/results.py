@@ -1,4 +1,4 @@
-from honey_runtime.runners._core import (
+from benchmarks.support.runners._core import (
     MetricTimingSummary,
     MultiprocessNodeResult,
     NodeQueuePeaks,

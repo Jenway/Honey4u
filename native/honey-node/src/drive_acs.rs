@@ -2,7 +2,7 @@ use super::*;
 use crate::py_host::RustDrivenAcsHost;
 use std::collections::BTreeMap;
 
-type PendingDelivery = (usize, usize, String, Option<usize>, Py<PyAny>);
+type PendingDelivery = Vec<u8>;
 type PendingDeliveries = BTreeMap<usize, Vec<PendingDelivery>>;
 
 fn encode_honeybadger_proposal_ref(pid: usize) -> Vec<u8> {
@@ -118,18 +118,16 @@ fn collect_exchange_events(
     pid: usize,
     round_id: usize,
     host_count: usize,
-    events: Vec<PyAcsEvent>,
+    events: Vec<PyAcsWireEvent>,
     pending_deliveries: &mut PendingDeliveries,
     decisions: &mut [Option<Vec<usize>>],
 ) -> Result<(), String> {
     for event in events {
         match event {
-            PyAcsEvent::Send {
+            PyAcsWireEvent::Send {
                 round_id: event_round_id,
                 recipient,
-                channel,
-                instance_id,
-                message,
+                payload,
             } => {
                 if event_round_id != round_id {
                     return Err(format!(
@@ -141,15 +139,9 @@ fn collect_exchange_events(
                         "drive-acs round {round_id}: invalid recipient {recipient}"
                     ));
                 }
-                pending_deliveries.entry(recipient).or_default().push((
-                    pid,
-                    round_id,
-                    channel,
-                    instance_id,
-                    message,
-                ));
+                pending_deliveries.entry(recipient).or_default().push(payload);
             }
-            PyAcsEvent::Decision {
+            PyAcsWireEvent::Decision {
                 round_id: event_round_id,
                 selected_pids,
                 selected_payloads: _,
@@ -162,7 +154,7 @@ fn collect_exchange_events(
                 debug_drive_acs(&format!("round:decision round={round_id} pid={pid}"));
                 decisions[pid] = Some(selected_pids);
             }
-            PyAcsEvent::Failure {
+            PyAcsWireEvent::Failure {
                 round_id: event_round_id,
                 error,
                 exception_type,
@@ -171,7 +163,7 @@ fn collect_exchange_events(
                     "drive-acs round {round_id}: node {pid} failed in event round {event_round_id} with {exception_type}: {error}"
                 ));
             }
-            PyAcsEvent::Carryovers {
+            PyAcsWireEvent::Carryovers {
                 round_id: _,
                 items: _,
             } => {}
@@ -237,7 +229,7 @@ pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
             progressed |= !inbound.is_empty();
             if !inbound.is_empty() {
                 let push_start = Instant::now();
-                let _ = host.push_inbound_batch(&inbound)?;
+                let _ = host.push_inbound_wire_batch(&inbound)?;
                 record_push(
                     &mut drive_stats,
                     pid,
@@ -250,11 +242,11 @@ pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
         let mut pull_starts = Vec::with_capacity(hosts.len());
         for host in hosts {
             pull_starts.push(Instant::now());
-            host.begin_pull_outbound_batch(ACS_PULL_BATCH_LIMIT)?;
+            host.begin_pull_outbound_wire_batch(ACS_PULL_BATCH_LIMIT)?;
         }
 
         for (pid, host) in hosts.iter().enumerate() {
-            let events = host.finish_pull_outbound_batch()?;
+            let events = host.finish_pull_outbound_wire_batch()?;
             let pull_seconds = pull_starts[pid].elapsed().as_secs_f64();
             let event_count = events.len();
             progressed |= event_count > 0;
@@ -407,21 +399,14 @@ fn drive_acs_rounds(hosts: &[PyAcsHost], args: &DriveAcsArgs) -> Result<String, 
                 "rounds_finished": stats.rounds_finished,
                 "processed_commands": stats.processed_commands,
                 "start_round_calls": stats.start_round_calls,
-                "push_inbound_batch_calls": stats.push_inbound_batch_calls,
-                "push_inbound_batch_items": stats.push_inbound_batch_items,
-                "exchange_batches_calls": stats.exchange_batches_calls,
-                "exchange_inbound_items": stats.exchange_inbound_items,
-                "exchange_outbound_items": stats.exchange_outbound_items,
-                "pull_outbound_batch_calls": stats.pull_outbound_batch_calls,
-                "pull_outbound_batch_items": stats.pull_outbound_batch_items,
+                "push_inbound_wire_batch_calls": stats.push_inbound_wire_batch_calls,
+                "push_inbound_wire_batch_items": stats.push_inbound_wire_batch_items,
+                "pull_outbound_wire_batch_calls": stats.pull_outbound_wire_batch_calls,
+                "pull_outbound_wire_batch_items": stats.pull_outbound_wire_batch_items,
                 "stats_calls": stats.stats_calls,
                 "bridge_queue_size": stats.bridge_queue_size,
                 "worker_running": stats.worker_running,
                 "worker_error": stats.worker_error,
-                "exchange_deliver_seconds": stats.exchange_deliver_seconds,
-                "exchange_pump_seconds": stats.exchange_pump_seconds,
-                "exchange_drain_seconds": stats.exchange_drain_seconds,
-                "exchange_total_seconds": stats.exchange_total_seconds,
             }))
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -453,7 +438,7 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
             progressed |= !inbound.is_empty();
             if !inbound.is_empty() {
                 let push_start = Instant::now();
-                let _ = host.push_inbound_batch(&inbound)?;
+                let _ = host.push_inbound_wire_batch(&inbound)?;
                 record_push(
                     &mut settle_stats,
                     pid,
@@ -466,11 +451,11 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
         let mut pull_starts = Vec::with_capacity(hosts.len());
         for host in hosts {
             pull_starts.push(Instant::now());
-            host.begin_pull_outbound_batch(ACS_PULL_BATCH_LIMIT)?;
+            host.begin_pull_outbound_wire_batch(ACS_PULL_BATCH_LIMIT)?;
         }
 
         for (pid, host) in hosts.iter().enumerate() {
-            let events = host.finish_pull_outbound_batch()?;
+            let events = host.finish_pull_outbound_wire_batch()?;
             let pull_seconds = pull_starts[pid].elapsed().as_secs_f64();
             let event_count = events.len();
             progressed |= event_count > 0;
@@ -483,12 +468,10 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
             );
             for event in events {
                 match event {
-                    PyAcsEvent::Send {
+                    PyAcsWireEvent::Send {
                         round_id: event_round_id,
                         recipient,
-                        channel,
-                        instance_id,
-                        message,
+                        payload,
                     } => {
                         if event_round_id != round_id {
                             return Err(format!(
@@ -500,15 +483,9 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                                 "drive-acs round {round_id}: invalid recipient {recipient} during settle"
                             ));
                         }
-                        pending_deliveries.entry(recipient).or_default().push((
-                            pid,
-                            round_id,
-                            channel,
-                            instance_id,
-                            message,
-                        ));
+                        pending_deliveries.entry(recipient).or_default().push(payload);
                     }
-                    PyAcsEvent::Failure {
+                    PyAcsWireEvent::Failure {
                         round_id: event_round_id,
                         error,
                         exception_type,
@@ -517,8 +494,8 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                             "drive-acs round {round_id}: node {pid} failed during settle in event round {event_round_id} with {exception_type}: {error}"
                         ));
                     }
-                    PyAcsEvent::Decision { .. } => {}
-                    PyAcsEvent::Carryovers {
+                    PyAcsWireEvent::Decision { .. } => {}
+                    PyAcsWireEvent::Carryovers {
                         round_id: event_round_id,
                         items: _,
                     } => {

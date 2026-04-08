@@ -6,10 +6,10 @@ import sys
 import traceback
 from typing import cast
 
-from honey_shared.exceptions import UnknownTagError
-from honey_shared.messages import Channel, InboundEnvelope, ProtocolEnvelope, ProtocolMessage
+from honey_acs.exceptions import UnknownTagError
+from honey_acs.messages import Channel, InboundEnvelope, ProtocolEnvelope, ProtocolMessage
 
-from honey_runtime.transport import Transport
+from benchmarks.support.transport import Transport
 
 CoinRecv = tuple[int, ProtocolMessage]
 AbaRecv = tuple[int, ProtocolMessage]

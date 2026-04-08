@@ -1,7 +1,7 @@
 //! BroadcastMempool and Pool Reuse serialization.
 //!
 //! This module is a Rust port of `honey_acs.data.broadcast_mempool` and
-//! `honey_runtime.data.pool_reuse`.  The serialization format is
+//! `honey_acs.pool_reuse`.  The serialization format is
 //! **byte-for-byte compatible** with the Python implementations so that
 //! proposal payloads created here can be decoded by Python nodes and vice versa.
 //!

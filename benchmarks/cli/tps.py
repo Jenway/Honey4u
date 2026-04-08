@@ -9,7 +9,7 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any
 
-from honey_runtime.runners import (
+from benchmarks.support.runners import (
     benchmark_local_dumbo_nodes_rust_driven,
     benchmark_local_honeybadger_nodes_rust_driven,
 )

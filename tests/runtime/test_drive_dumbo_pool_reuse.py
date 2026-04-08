@@ -7,7 +7,7 @@ building, and carryover processing entirely in Rust.
 
 from __future__ import annotations
 
-from honey_runtime.runners import (
+from benchmarks.support.runners import (
     RustDrivenDumboRunResult,
     run_local_dumbo_new_driver,
 )
@@ -175,5 +175,5 @@ def test_drive_dumbo_new_driver_node_stats_are_non_zero() -> None:
 
     for node in result.nodes:
         assert node.start_round_calls == 1, f"node {node.pid}: start_round_calls should be 1"
-        assert node.push_inbound_batch_calls >= 0
-        assert node.pull_outbound_batch_calls >= 0
+        assert node.push_inbound_wire_batch_calls >= 0
+        assert node.pull_outbound_wire_batch_calls >= 0

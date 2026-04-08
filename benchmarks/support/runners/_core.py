@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
-
-from honey_runtime.infra.logging import setup_logging
 
 _HONEY_NODE_BINARY: Path | None = None
 TxInputMode = Literal["json_str", "bytes"]
@@ -66,21 +65,14 @@ class RustDrivenAcsNodeResult:
     rounds_finished: int
     processed_commands: int = 0
     start_round_calls: int = 0
-    push_inbound_batch_calls: int = 0
-    push_inbound_batch_items: int = 0
-    exchange_batches_calls: int = 0
-    exchange_inbound_items: int = 0
-    exchange_outbound_items: int = 0
-    pull_outbound_batch_calls: int = 0
-    pull_outbound_batch_items: int = 0
+    push_inbound_wire_batch_calls: int = 0
+    push_inbound_wire_batch_items: int = 0
+    pull_outbound_wire_batch_calls: int = 0
+    pull_outbound_wire_batch_items: int = 0
     stats_calls: int = 0
     bridge_queue_size: int = 0
     worker_running: bool = False
     worker_error: str | None = None
-    exchange_deliver_seconds: float = 0.0
-    exchange_pump_seconds: float = 0.0
-    exchange_drain_seconds: float = 0.0
-    exchange_total_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -194,21 +186,14 @@ class RustDrivenDumboNodeResult:
     rounds_finished: int
     processed_commands: int = 0
     start_round_calls: int = 0
-    push_inbound_batch_calls: int = 0
-    push_inbound_batch_items: int = 0
-    pull_outbound_batch_calls: int = 0
-    pull_outbound_batch_items: int = 0
-    exchange_batches_calls: int = 0
-    exchange_inbound_items: int = 0
-    exchange_outbound_items: int = 0
+    push_inbound_wire_batch_calls: int = 0
+    push_inbound_wire_batch_items: int = 0
+    pull_outbound_wire_batch_calls: int = 0
+    pull_outbound_wire_batch_items: int = 0
     stats_calls: int = 0
     bridge_queue_size: int = 0
     worker_running: bool = False
     worker_error: str | None = None
-    exchange_deliver_seconds: float = 0.0
-    exchange_pump_seconds: float = 0.0
-    exchange_drain_seconds: float = 0.0
-    exchange_total_seconds: float = 0.0
     mempool_size: int = 0
 
 
@@ -316,23 +301,36 @@ def _decode_rust_driven_acs_payload(value: dict[str, Any]) -> RustDrivenAcsRunRe
                 rounds_finished=int(node["rounds_finished"]),
                 processed_commands=int(node.get("processed_commands", 0)),
                 start_round_calls=int(node.get("start_round_calls", 0)),
-                push_inbound_batch_calls=int(node.get("push_inbound_batch_calls", 0)),
-                push_inbound_batch_items=int(node.get("push_inbound_batch_items", 0)),
-                exchange_batches_calls=int(node.get("exchange_batches_calls", 0)),
-                exchange_inbound_items=int(node.get("exchange_inbound_items", 0)),
-                exchange_outbound_items=int(node.get("exchange_outbound_items", 0)),
-                pull_outbound_batch_calls=int(node.get("pull_outbound_batch_calls", 0)),
-                pull_outbound_batch_items=int(node.get("pull_outbound_batch_items", 0)),
+                push_inbound_wire_batch_calls=int(
+                    node.get(
+                        "push_inbound_wire_batch_calls",
+                        node.get("push_inbound_batch_calls", 0),
+                    )
+                ),
+                push_inbound_wire_batch_items=int(
+                    node.get(
+                        "push_inbound_wire_batch_items",
+                        node.get("push_inbound_batch_items", 0),
+                    )
+                ),
+                pull_outbound_wire_batch_calls=int(
+                    node.get(
+                        "pull_outbound_wire_batch_calls",
+                        node.get("pull_outbound_batch_calls", 0),
+                    )
+                ),
+                pull_outbound_wire_batch_items=int(
+                    node.get(
+                        "pull_outbound_wire_batch_items",
+                        node.get("pull_outbound_batch_items", 0),
+                    )
+                ),
                 stats_calls=int(node.get("stats_calls", 0)),
                 bridge_queue_size=int(node.get("bridge_queue_size", 0)),
                 worker_running=bool(node.get("worker_running", False)),
                 worker_error=(
                     str(node["worker_error"]) if node.get("worker_error") is not None else None
                 ),
-                exchange_deliver_seconds=float(node.get("exchange_deliver_seconds", 0.0)),
-                exchange_pump_seconds=float(node.get("exchange_pump_seconds", 0.0)),
-                exchange_drain_seconds=float(node.get("exchange_drain_seconds", 0.0)),
-                exchange_total_seconds=float(node.get("exchange_total_seconds", 0.0)),
             )
             for node in value.get("nodes", ())
         ),
@@ -370,23 +368,36 @@ def _decode_rust_driven_honeybadger_payload(
                 rounds_finished=int(node["rounds_finished"]),
                 processed_commands=int(node.get("processed_commands", 0)),
                 start_round_calls=int(node.get("start_round_calls", 0)),
-                push_inbound_batch_calls=int(node.get("push_inbound_batch_calls", 0)),
-                push_inbound_batch_items=int(node.get("push_inbound_batch_items", 0)),
-                exchange_batches_calls=int(node.get("exchange_batches_calls", 0)),
-                exchange_inbound_items=int(node.get("exchange_inbound_items", 0)),
-                exchange_outbound_items=int(node.get("exchange_outbound_items", 0)),
-                pull_outbound_batch_calls=int(node.get("pull_outbound_batch_calls", 0)),
-                pull_outbound_batch_items=int(node.get("pull_outbound_batch_items", 0)),
+                push_inbound_wire_batch_calls=int(
+                    node.get(
+                        "push_inbound_wire_batch_calls",
+                        node.get("push_inbound_batch_calls", 0),
+                    )
+                ),
+                push_inbound_wire_batch_items=int(
+                    node.get(
+                        "push_inbound_wire_batch_items",
+                        node.get("push_inbound_batch_items", 0),
+                    )
+                ),
+                pull_outbound_wire_batch_calls=int(
+                    node.get(
+                        "pull_outbound_wire_batch_calls",
+                        node.get("pull_outbound_batch_calls", 0),
+                    )
+                ),
+                pull_outbound_wire_batch_items=int(
+                    node.get(
+                        "pull_outbound_wire_batch_items",
+                        node.get("pull_outbound_batch_items", 0),
+                    )
+                ),
                 stats_calls=int(node.get("stats_calls", 0)),
                 bridge_queue_size=int(node.get("bridge_queue_size", 0)),
                 worker_running=bool(node.get("worker_running", False)),
                 worker_error=(
                     str(node["worker_error"]) if node.get("worker_error") is not None else None
                 ),
-                exchange_deliver_seconds=float(node.get("exchange_deliver_seconds", 0.0)),
-                exchange_pump_seconds=float(node.get("exchange_pump_seconds", 0.0)),
-                exchange_drain_seconds=float(node.get("exchange_drain_seconds", 0.0)),
-                exchange_total_seconds=float(node.get("exchange_total_seconds", 0.0)),
             )
             for node in value.get("nodes", ())
         ),
@@ -421,7 +432,11 @@ def _decode_rust_driven_honeybadger_payload(
 
 
 def _configure_logging(log_level: str) -> None:
-    setup_logging(log_level)
+    level = getattr(logging, str(log_level).upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
 
 
 def _build_honey_node_binary() -> Path:
@@ -600,23 +615,36 @@ def _decode_rust_driven_dumbo_payload(value: dict[str, Any]) -> RustDrivenDumboR
                 rounds_finished=int(node["rounds_finished"]),
                 processed_commands=int(node.get("processed_commands", 0)),
                 start_round_calls=int(node.get("start_round_calls", 0)),
-                push_inbound_batch_calls=int(node.get("push_inbound_batch_calls", 0)),
-                push_inbound_batch_items=int(node.get("push_inbound_batch_items", 0)),
-                pull_outbound_batch_calls=int(node.get("pull_outbound_batch_calls", 0)),
-                pull_outbound_batch_items=int(node.get("pull_outbound_batch_items", 0)),
-                exchange_batches_calls=int(node.get("exchange_batches_calls", 0)),
-                exchange_inbound_items=int(node.get("exchange_inbound_items", 0)),
-                exchange_outbound_items=int(node.get("exchange_outbound_items", 0)),
+                push_inbound_wire_batch_calls=int(
+                    node.get(
+                        "push_inbound_wire_batch_calls",
+                        node.get("push_inbound_batch_calls", 0),
+                    )
+                ),
+                push_inbound_wire_batch_items=int(
+                    node.get(
+                        "push_inbound_wire_batch_items",
+                        node.get("push_inbound_batch_items", 0),
+                    )
+                ),
+                pull_outbound_wire_batch_calls=int(
+                    node.get(
+                        "pull_outbound_wire_batch_calls",
+                        node.get("pull_outbound_batch_calls", 0),
+                    )
+                ),
+                pull_outbound_wire_batch_items=int(
+                    node.get(
+                        "pull_outbound_wire_batch_items",
+                        node.get("pull_outbound_batch_items", 0),
+                    )
+                ),
                 stats_calls=int(node.get("stats_calls", 0)),
                 bridge_queue_size=int(node.get("bridge_queue_size", 0)),
                 worker_running=bool(node.get("worker_running", False)),
                 worker_error=(
                     str(node["worker_error"]) if node.get("worker_error") is not None else None
                 ),
-                exchange_deliver_seconds=float(node.get("exchange_deliver_seconds", 0.0)),
-                exchange_pump_seconds=float(node.get("exchange_pump_seconds", 0.0)),
-                exchange_drain_seconds=float(node.get("exchange_drain_seconds", 0.0)),
-                exchange_total_seconds=float(node.get("exchange_total_seconds", 0.0)),
                 mempool_size=int(node.get("mempool_size", 0)),
             )
             for node in value.get("nodes", ())
