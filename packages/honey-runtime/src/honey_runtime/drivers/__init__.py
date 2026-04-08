@@ -12,7 +12,6 @@ from honey_runtime.drivers.python_acs_bridge import (
     PersistentAcsHost,
     build_persistent_acs_host_from_json,
 )
-from honey_runtime.drivers.rust_hosted import run_protocol_node
 
 __all__ = [
     "PersistentAcsHost",
@@ -21,7 +20,6 @@ __all__ = [
     "build_dumbo_materials",
     "build_materials",
     "build_persistent_acs_host_from_json",
-    "run_protocol_node",
     "serialize_dumbo_crypto_payloads",
     "serialize_dumbo_crypto_payloads_json",
     "serialize_hb_crypto_payloads",

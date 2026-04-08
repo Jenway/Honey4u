@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
+from typing import cast
 
 from honey_shared.exceptions import ProtocolInvariantError
 from honey_shared.messages import Channel
@@ -10,7 +11,7 @@ from honey_shared.params import CryptoParams, HBConfig
 
 from honey_acs.data.broadcast_mempool import BroadcastMempool
 from honey_acs.dumbo.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
-from honey_acs.service.base import AcsService
+from honey_acs.service.base import AcsOutputMode, AcsService
 from honey_acs.subprotocols.dumbo_mvba import (
     MvbaAbaCoinShare,
     MvbaAbaMessage,
@@ -53,7 +54,7 @@ class DumboRoundState:
     round_id: int
     sid: str
     input_queue: asyncio.Queue[bytes]
-    decide_queue: asyncio.Queue[tuple[int | None, ...]]
+    decide_queue: asyncio.Queue[tuple[int | bytes | None, ...]]
     receive_queue: asyncio.Queue[tuple[int, object]]
     task: asyncio.Task[None] | None = None
 
@@ -79,6 +80,7 @@ class DumboAcsService(AcsService):
         config: HBConfig | None = None,
         mempool: BroadcastMempool | None = None,
         event_notifier: Callable[[], None] | None = None,
+        output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
         super().__init__(
             protocol="dumbo",
@@ -90,6 +92,7 @@ class DumboAcsService(AcsService):
             mempool=mempool,
             logger_name="honey.acs.dumbo.service",
             event_notifier=event_notifier,
+            output_mode=output_mode,
         )
         self._rounds: dict[int, DumboRoundState] = {}
 
@@ -220,14 +223,27 @@ class DumboAcsService(AcsService):
                 state.receive_queue,
                 send,
                 carryover_queue=carryover_queue,
+                output_mode=self.output_mode,
             )
-            self.emit_event(
-                {
-                    "kind": "decision",
-                    "round_id": state.round_id,
-                    "selected_pids": [pid for pid in await state.decide_queue.get() if pid is not None],
-                }
-            )
+            decision = await state.decide_queue.get()
+            if self.output_mode == "payloads":
+                self.emit_event(
+                    {
+                        "kind": "decision",
+                        "round_id": state.round_id,
+                        "selected_payloads": list(cast(tuple[bytes | None, ...], decision)),
+                    }
+                )
+            else:
+                self.emit_event(
+                    {
+                        "kind": "decision",
+                        "round_id": state.round_id,
+                        "selected_pids": [
+                            pid for pid in cast(tuple[int | None, ...], decision) if pid is not None
+                        ],
+                    }
+                )
             if carryover_queue is not None:
                 carryovers = await carryover_queue.get()
                 self.emit_event(

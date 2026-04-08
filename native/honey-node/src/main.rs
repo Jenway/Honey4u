@@ -18,11 +18,13 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-mod bench_local;
 mod cli;
 mod drive_acs;
+mod drive_dumbo;
 mod drive_hb;
 mod network_driver;
+mod pool_reuse;
+mod prbc_proof;
 mod py_host;
 
 #[derive(Clone, Copy)]
@@ -49,44 +51,11 @@ impl Protocol {
 }
 
 enum CliCommand {
-    RunNode(RunNodeArgs),
-    BenchLocal(BenchLocalArgs),
     RunDriverNode(RunDriverNodeArgs),
     BenchDriver(BenchDriverArgs),
     DriveAcs(DriveAcsArgs),
     DriveHoneyBadger(DriveHoneyBadgerArgs),
-}
-
-struct RunNodeArgs {
-    protocol: Protocol,
-    pid: usize,
-    nodes: usize,
-    faulty: usize,
-    sid: String,
-    addresses_json: String,
-    crypto_json: String,
-    config_json: String,
-    transactions_per_node: usize,
-    tx_input: String,
-    start_at_ms: Option<u64>,
-    result_path: Option<String>,
-}
-
-struct BenchLocalArgs {
-    protocol: Protocol,
-    sid: String,
-    nodes: usize,
-    faulty: usize,
-    rounds: usize,
-    batch_size: usize,
-    round_timeout: f64,
-    global_timeout: f64,
-    transactions_per_node: usize,
-    tx_input: String,
-    transport_backend: String,
-    log_level: String,
-    config_json: String,
-    result_path: Option<String>,
+    DriveDumbo(DriveDumboArgs),
 }
 
 struct RunDriverNodeArgs {
@@ -141,6 +110,32 @@ struct DriveHoneyBadgerArgs {
     result_path: Option<String>,
 }
 
+struct DriveDumboArgs {
+    sid: String,
+    nodes: usize,
+    faulty: usize,
+    rounds: usize,
+    batch_size: usize,
+    global_timeout: f64,
+    config_json: String,
+    result_path: Option<String>,
+    /// Directory to write per-round ledger block files (optional).
+    ledger_dir: Option<String>,
+    /// JSON-encoded per-node transaction lists: `[[tx, ...], ...]`.
+    /// Index 0 = node 0's transactions, consumed `batch_size` per round.
+    /// If absent, deterministic dummy transactions are generated.
+    tx_json: Option<String>,
+}
+
+/// A single carry-over item from a Dumbo ACS round (PRBC outputs not included in
+/// the ACS decision but eligible for reuse in the next round).
+struct CarryoverItem {
+    pub leader: u32,
+    pub value: Vec<u8>,
+    pub roothash: Vec<u8>,
+    pub proof_payload: Vec<u8>,
+}
+
 struct SpawnedNode {
     pid: usize,
     child: std::process::Child,
@@ -151,11 +146,6 @@ struct SpawnedNode {
 struct PyAcsHost {
     pid: usize,
     inner: Py<PyAny>,
-}
-
-struct HbNodeRuntime {
-    acs_host: PyAcsHost,
-    tpke_private_share: HbPkePrivateKeyShare,
 }
 
 struct PyAcsHostStats {
@@ -195,7 +185,10 @@ enum PyAcsEvent {
     },
     Decision {
         round_id: usize,
+        /// Set when `output_mode = "selected_pids"` (HB / bench mode).
         selected_pids: Vec<usize>,
+        /// Set when `output_mode = "payloads"` (Dumbo drive mode).
+        selected_payloads: Option<Vec<Option<Vec<u8>>>>,
     },
     Failure {
         round_id: isize,
@@ -204,6 +197,8 @@ enum PyAcsEvent {
     },
     Carryovers {
         round_id: usize,
+        /// Populated when pool reuse is enabled in the Dumbo ACS service.
+        items: Vec<CarryoverItem>,
     },
 }
 
@@ -215,7 +210,10 @@ enum PyAcsWireEvent {
     },
     Decision {
         round_id: usize,
+        /// Set when `output_mode = "selected_pids"` (HB / bench mode).
         selected_pids: Vec<usize>,
+        /// Set when `output_mode = "payloads"` (Dumbo drive mode with pool reuse).
+        selected_payloads: Option<Vec<Option<Vec<u8>>>>,
     },
     Failure {
         round_id: isize,
@@ -224,11 +222,19 @@ enum PyAcsWireEvent {
     },
     Carryovers {
         round_id: usize,
+        /// Carry-over items from Dumbo with pool reuse enabled.
+        items: Vec<CarryoverItem>,
     },
 }
 
 struct AcsRoundOutcome {
     selected_pids: Vec<usize>,
+    /// Raw payloads from a Dumbo `"payloads"` output-mode decision event.
+    /// Empty when running in `"selected_pids"` mode (HB).
+    selected_payloads: Vec<Option<Vec<u8>>>,
+    /// Carry-over items from Dumbo with pool reuse enabled.
+    /// Empty when pool reuse is disabled or when running HB.
+    carryovers: Vec<CarryoverItem>,
     send_events: usize,
     drive_stats: DriverPhaseStats,
     settle_stats: DriverPhaseStats,
@@ -279,8 +285,6 @@ struct DriverPhaseStats {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let command = cli::parse_cli(std::env::args())?;
     match command {
-        CliCommand::RunNode(args) => bench_local::run_rust_hosted_node(args).map_err(Into::into),
-        CliCommand::BenchLocal(args) => bench_local::run_bench_local(args).map_err(Into::into),
         CliCommand::RunDriverNode(args) => {
             network_driver::run_rust_driver_node(args).map_err(Into::into)
         }
@@ -291,6 +295,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         CliCommand::DriveHoneyBadger(args) => {
             drive_hb::run_drive_honeybadger(args).map_err(Into::into)
         }
+        CliCommand::DriveDumbo(args) => drive_dumbo::run_drive_dumbo(args).map_err(Into::into),
     }
 }
 
@@ -362,13 +367,32 @@ fn parse_acs_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsEvent> {
             message: dict_item(&dict, "message")?.unbind(),
         }),
         "decision" => {
-            let selected_pids = dict_item(&dict, "selected_pids")?
-                .try_iter()?
-                .map(|item| item?.extract::<usize>())
-                .collect::<PyResult<Vec<_>>>()?;
+            let round_id = dict_item(&dict, "round_id")?.extract()?;
+            // `selected_pids` is present in HB / "selected_pids" output mode
+            let selected_pids = if let Some(pids_val) = dict.get_item("selected_pids")? {
+                pids_val
+                    .try_iter()?
+                    .map(|item| item?.extract::<usize>())
+                    .collect::<PyResult<Vec<_>>>()?
+            } else {
+                Vec::new()
+            };
+            // `selected_payloads` is present in Dumbo / "payloads" output mode
+            let selected_payloads =
+                if let Some(payloads_val) = dict.get_item("selected_payloads")? {
+                    Some(
+                        payloads_val
+                            .try_iter()?
+                            .map(|item| item?.extract::<Option<Vec<u8>>>())
+                            .collect::<PyResult<Vec<_>>>()?,
+                    )
+                } else {
+                    None
+                };
             Ok(PyAcsEvent::Decision {
-                round_id: dict_item(&dict, "round_id")?.extract()?,
+                round_id,
                 selected_pids,
+                selected_payloads,
             })
         }
         "failure" => Ok(PyAcsEvent::Failure {
@@ -376,9 +400,29 @@ fn parse_acs_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsEvent> {
             error: dict_item(&dict, "error")?.extract()?,
             exception_type: dict_item(&dict, "exception_type")?.extract()?,
         }),
-        "carryovers" => Ok(PyAcsEvent::Carryovers {
-            round_id: dict_item(&dict, "round_id")?.extract()?,
-        }),
+        "carryovers" => {
+            let round_id = dict_item(&dict, "round_id")?.extract()?;
+            let items = if let Some(items_val) = dict.get_item("items")? {
+                items_val
+                    .try_iter()?
+                    .map(|item| {
+                        let item = item?;
+                        let d = item.downcast::<PyDict>().map_err(|_| {
+                            pyo3::exceptions::PyTypeError::new_err("carryover item must be a dict")
+                        })?;
+                        Ok(CarryoverItem {
+                            leader: dict_item(d, "leader")?.extract()?,
+                            value: dict_item(d, "value")?.extract()?,
+                            roothash: dict_item(d, "roothash")?.extract()?,
+                            proof_payload: dict_item(d, "proof_payload")?.extract()?,
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?
+            } else {
+                Vec::new()
+            };
+            Ok(PyAcsEvent::Carryovers { round_id, items })
+        }
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "unknown ACS event kind: {kind}"
         ))),
@@ -394,13 +438,33 @@ fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
             payload: dict_item(&dict, "payload")?.extract()?,
         }),
         "decision" => {
-            let selected_pids = dict_item(&dict, "selected_pids")?
-                .try_iter()?
-                .map(|item| item?.extract::<usize>())
-                .collect::<PyResult<Vec<_>>>()?;
+            let round_id = dict_item(&dict, "round_id")?.extract()?;
+            // `selected_pids` is present in HB / "selected_pids" output mode.
+            // In Dumbo "payloads" mode this key may be absent.
+            let selected_pids = if let Some(pids_val) = dict.get_item("selected_pids")? {
+                pids_val
+                    .try_iter()?
+                    .map(|item| item?.extract::<usize>())
+                    .collect::<PyResult<Vec<_>>>()?
+            } else {
+                Vec::new()
+            };
+            // `selected_payloads` is present in Dumbo "payloads" output mode.
+            let selected_payloads =
+                if let Some(payloads_val) = dict.get_item("selected_payloads")? {
+                    Some(
+                        payloads_val
+                            .try_iter()?
+                            .map(|item| item?.extract::<Option<Vec<u8>>>())
+                            .collect::<PyResult<Vec<_>>>()?,
+                    )
+                } else {
+                    None
+                };
             Ok(PyAcsWireEvent::Decision {
-                round_id: dict_item(&dict, "round_id")?.extract()?,
+                round_id,
                 selected_pids,
+                selected_payloads,
             })
         }
         "failure" => Ok(PyAcsWireEvent::Failure {
@@ -408,9 +472,30 @@ fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
             error: dict_item(&dict, "error")?.extract()?,
             exception_type: dict_item(&dict, "exception_type")?.extract()?,
         }),
-        "carryovers" => Ok(PyAcsWireEvent::Carryovers {
-            round_id: dict_item(&dict, "round_id")?.extract()?,
-        }),
+        "carryovers" => {
+            let round_id = dict_item(&dict, "round_id")?.extract()?;
+            // `items` is present when pool reuse is enabled.
+            let items = if let Some(items_val) = dict.get_item("items")? {
+                items_val
+                    .try_iter()?
+                    .map(|item| {
+                        let item = item?;
+                        let d = item.downcast::<PyDict>().map_err(|_| {
+                            pyo3::exceptions::PyTypeError::new_err("carryover item must be a dict")
+                        })?;
+                        Ok(CarryoverItem {
+                            leader: dict_item(d, "leader")?.extract()?,
+                            value: dict_item(d, "value")?.extract()?,
+                            roothash: dict_item(d, "roothash")?.extract()?,
+                            proof_payload: dict_item(d, "proof_payload")?.extract()?,
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?
+            } else {
+                Vec::new()
+            };
+            Ok(PyAcsWireEvent::Carryovers { round_id, items })
+        }
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "unknown ACS wire event kind: {kind}"
         ))),

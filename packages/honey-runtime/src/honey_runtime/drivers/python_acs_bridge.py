@@ -9,13 +9,21 @@ import os
 import pstats
 import threading
 import time
+import warnings
 from dataclasses import dataclass
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from queue import Queue
 from typing import cast
 
 import honey_native
-from honey_acs.service import AcsProtocol, AcsService, DumboAcsService, HoneyBadgerAcsService
+from honey_acs.service import (
+    AcsOutputMode,
+    AcsProtocol,
+    AcsService,
+    DumboAcsService,
+    HoneyBadgerAcsService,
+)
 from honey_shared.messages import Channel, ProtocolEnvelope
 from honey_shared.params import HBConfig
 
@@ -41,6 +49,7 @@ class PersistentAcsHost:
         faulty: int,
         crypto,
         config: HBConfig | None = None,
+        output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
         self._protocol = protocol
         self._pid = pid
@@ -48,6 +57,7 @@ class PersistentAcsHost:
         self._faulty = faulty
         self._crypto = crypto
         self._config = config
+        self._output_mode = output_mode
         self._service: AcsService | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
@@ -82,6 +92,10 @@ class PersistentAcsHost:
         self._worker_ready = threading.Event()
         self._worker_stopped = threading.Event()
         self._outbound_ready = threading.Event()
+        self._outbound_signal_lock = threading.Lock()
+        self._outbound_signal_pending = False
+        self._outbound_signal_enabled = False
+        self._outbound_rfd, self._outbound_wfd = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
         self._worker = threading.Thread(
             target=self._worker_main,
             name=f"honey-acs-host-{protocol}-{pid}",
@@ -115,6 +129,7 @@ class PersistentAcsHost:
                 crypto=self._crypto,
                 config=self._config,
                 event_notifier=self._mark_outbound_ready,
+                output_mode=self._output_mode,
             )
         if self._protocol == "dumbo":
             return DumboAcsService(
@@ -124,6 +139,7 @@ class PersistentAcsHost:
                 crypto=self._crypto,
                 config=self._config,
                 event_notifier=self._mark_outbound_ready,
+                output_mode=self._output_mode,
             )
         raise ValueError(f"unsupported ACS protocol: {self._protocol}")
 
@@ -255,12 +271,44 @@ class PersistentAcsHost:
 
     def _mark_outbound_ready(self) -> None:
         self._outbound_ready.set()
+        if not self._outbound_signal_enabled:
+            return
+        if self._outbound_signal_pending:
+            return
+        with self._outbound_signal_lock:
+            if self._outbound_signal_pending:
+                return
+            try:
+                os.write(self._outbound_wfd, b"\x01")
+            except BlockingIOError:
+                return
+            except OSError:
+                return
+            self._outbound_signal_pending = True
+
+    def _clear_outbound_signal(self) -> None:
+        if not self._outbound_signal_enabled:
+            return
+        with self._outbound_signal_lock:
+            if not self._outbound_signal_pending:
+                return
+            while True:
+                try:
+                    drained = os.read(self._outbound_rfd, 4096)
+                except BlockingIOError:
+                    break
+                except OSError:
+                    break
+                if not drained or len(drained) < 4096:
+                    break
+            self._outbound_signal_pending = False
 
     def _drain_service_events(self, limit: int) -> list[dict[str, object]]:
         assert self._service is not None
         drained = self._service.drain_events(limit)
         if self._service.event_backlog() == 0:
             self._outbound_ready.clear()
+            self._clear_outbound_signal()
         return drained
 
     def _submit_command[T](
@@ -373,6 +421,30 @@ class PersistentAcsHost:
             )
         return encoded
 
+    def _push_inbound_decoded_batch(
+        self,
+        items: list[tuple[int, int, str, int | None, object]],
+    ) -> int:
+        self._command_counts["push_inbound_batch"] += 1
+        self._batch_item_counts["push_inbound_batch_items"] += len(items)
+        if not items:
+            return 0
+        self._submit_command("push_inbound_batch", items, wait=False)
+        return len(items)
+
+    def _pull_outbound_decoded_batch(self, limit: int = 128) -> list[dict[str, object]]:
+        self._command_counts["pull_outbound_batch"] += 1
+        if self._pending_pull is not None:
+            raise RuntimeError("pull_outbound_batch is already pending")
+        pending_pull = self._submit_async_command("pull_outbound_batch", limit)
+        try:
+            drained = cast(list[dict[str, object]], pending_pull.result())
+        except Exception as exc:
+            self._fail(exc)
+            raise
+        self._batch_item_counts["pull_outbound_batch_items"] += len(drained)
+        return drained
+
     def start_round(self, *, round_id: int, sid: str, proposal_input: bytes | str) -> None:
         self._command_counts["start_round"] += 1
         payload = (
@@ -409,12 +481,12 @@ class PersistentAcsHost:
         self,
         items: list[tuple[int, int, str, int | None, object]],
     ) -> int:
-        self._command_counts["push_inbound_batch"] += 1
-        self._batch_item_counts["push_inbound_batch_items"] += len(items)
-        if not items:
-            return 0
-        self._submit_command("push_inbound_batch", items, wait=False)
-        return len(items)
+        warnings.warn(
+            "push_inbound_batch() is deprecated; use push_inbound_wire_batch()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._push_inbound_decoded_batch(items)
 
     def push_inbound_wire_batch(self, items: list[bytes]) -> int:
         self._command_counts["push_inbound_wire_batch"] += 1
@@ -436,19 +508,30 @@ class PersistentAcsHost:
         return drained
 
     def pull_outbound_batch(self, limit: int = 128) -> list[dict[str, object]]:
-        self._command_counts["pull_outbound_batch"] += 1
-        drained = self._submit_command("pull_outbound_batch", limit)
-        drained = cast(list[dict[str, object]], drained)
-        self._batch_item_counts["pull_outbound_batch_items"] += len(drained)
-        return drained
+        warnings.warn(
+            "pull_outbound_batch() is deprecated; use finish_pull_outbound_wire_batch()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._pull_outbound_decoded_batch(limit)
 
     def begin_pull_outbound_batch(self, limit: int = 128) -> None:
+        warnings.warn(
+            "begin_pull_outbound_batch() is deprecated; use begin_pull_outbound_wire_batch()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._command_counts["pull_outbound_batch"] += 1
         if self._pending_pull is not None:
             raise RuntimeError("pull_outbound_batch is already pending")
         self._pending_pull = self._submit_async_command("pull_outbound_batch", limit)
 
     def finish_pull_outbound_batch(self) -> list[dict[str, object]]:
+        warnings.warn(
+            "finish_pull_outbound_batch() is deprecated; use finish_pull_outbound_wire_batch()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if self._pending_pull is None:
             raise RuntimeError("pull_outbound_batch was not started")
         pending_pull = self._pending_pull
@@ -516,6 +599,10 @@ class PersistentAcsHost:
     def outbound_ready(self) -> bool:
         return self._outbound_ready.is_set()
 
+    def outbound_wait_fd(self) -> int:
+        self._outbound_signal_enabled = True
+        return self._outbound_rfd
+
     def shutdown(self) -> None:
         if self._closed:
             return
@@ -525,8 +612,11 @@ class PersistentAcsHost:
         finally:
             self._closed = True
             self._outbound_ready.clear()
+            self._clear_outbound_signal()
             self._worker_stopped.wait()
             self._worker.join(timeout=1.0)
+            os.close(self._outbound_rfd)
+            os.close(self._outbound_wfd)
 
 
 def build_persistent_acs_host_from_json(
@@ -537,8 +627,17 @@ def build_persistent_acs_host_from_json(
     faulty: int,
     crypto_json: str,
     config_json: str | None = None,
+    output_mode: AcsOutputMode = "selected_pids",
 ) -> PersistentAcsHost:
     config_payload = cast(dict[str, object], json.loads(config_json)) if config_json else {}
+    # Allow config_json to carry "output_mode" (used by the Rust drive-dumbo driver
+    # which cannot pass it as a separate kwarg).  Pop it before forwarding to HBConfig.
+    if "output_mode" in config_payload:
+        output_mode = cast(AcsOutputMode, config_payload.pop("output_mode"))
+    # Strip any keys that HBConfig doesn't recognise (e.g. Rust-only keys like
+    # "pool_mempool_max" that are consumed by the Rust driver but are not Python params).
+    valid_hbconfig_fields = {f.name for f in dataclass_fields(HBConfig)}
+    config_payload = {k: v for k, v in config_payload.items() if k in valid_hbconfig_fields}
     return PersistentAcsHost(
         protocol=protocol,
         pid=pid,
@@ -546,4 +645,5 @@ def build_persistent_acs_host_from_json(
         faulty=faulty,
         crypto=build_crypto_params_from_json(protocol, crypto_json),
         config=HBConfig(**config_payload),
+        output_mode=output_mode,
     )

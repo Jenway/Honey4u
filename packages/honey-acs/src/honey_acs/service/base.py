@@ -12,6 +12,7 @@ from honey_shared.params import CryptoParams, HBConfig
 from honey_acs.data.broadcast_mempool import BroadcastMempool
 
 type AcsProtocol = Literal["hb", "dumbo"]
+type AcsOutputMode = Literal["selected_pids", "payloads"]
 type AcsEvent = dict[str, object]
 
 
@@ -30,6 +31,7 @@ class AcsService(ABC):
         mempool: BroadcastMempool | None = None,
         logger_name: str,
         event_notifier: Callable[[], None] | None = None,
+        output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
         self.protocol = protocol
         self.pid = pid
@@ -37,6 +39,7 @@ class AcsService(ABC):
         self.faulty = faulty
         self.crypto = crypto
         self.config = config or HBConfig()
+        self.output_mode = output_mode
         self.mempool = mempool or BroadcastMempool(
             max_size=1000,
             expire_rounds=self.config.pool_expire_rounds,
@@ -73,6 +76,7 @@ class AcsService(ABC):
             "pid": self.pid,
             "nodes": self.nodes,
             "faulty": self.faulty,
+            "output_mode": self.output_mode,
             "active_rounds": sorted(self.active_round_ids()),
             "rounds_started": self._rounds_started,
             "rounds_finished": self._rounds_finished,

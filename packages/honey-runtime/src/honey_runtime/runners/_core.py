@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -171,6 +172,65 @@ class RustDrivenHoneyBadgerRunResult:
     nodes: tuple[RustDrivenAcsNodeResult, ...]
     rounds: tuple[RustDrivenHoneyBadgerRoundResult, ...]
     acs_protocol: str = "hb"
+
+
+@dataclass(frozen=True)
+class RustDrivenDumboRoundResult:
+    round_id: int
+    selected_count: int
+    selected_pids: tuple[int, ...]
+    acs_send_events: int
+    block_size: int
+    block_digest: str
+    chain_digest: str
+    acs_seconds: float
+    block_resolve_seconds: float
+    wall_seconds: float
+    # TPKE outer-shell fields (non-zero when has_tpke=True in driver output)
+    delivered_count: int = 0
+    tpke_seconds: float = 0.0
+    tpke_bundle_events: int = 0
+    build_seconds: float = 0.0
+    acs_drive_stats: RustDrivenDriverPhaseStats = field(default_factory=RustDrivenDriverPhaseStats)
+    acs_settle_stats: RustDrivenDriverPhaseStats = field(default_factory=RustDrivenDriverPhaseStats)
+
+
+@dataclass(frozen=True)
+class RustDrivenDumboNodeResult:
+    pid: int
+    worker_ident: int
+    rounds_started: int
+    rounds_finished: int
+    processed_commands: int = 0
+    start_round_calls: int = 0
+    push_inbound_batch_calls: int = 0
+    push_inbound_batch_items: int = 0
+    pull_outbound_batch_calls: int = 0
+    pull_outbound_batch_items: int = 0
+    exchange_batches_calls: int = 0
+    exchange_inbound_items: int = 0
+    exchange_outbound_items: int = 0
+    stats_calls: int = 0
+    bridge_queue_size: int = 0
+    worker_running: bool = False
+    worker_error: str | None = None
+    exchange_deliver_seconds: float = 0.0
+    exchange_pump_seconds: float = 0.0
+    exchange_drain_seconds: float = 0.0
+    exchange_total_seconds: float = 0.0
+    mempool_size: int = 0
+
+
+@dataclass(frozen=True)
+class RustDrivenDumboRunResult:
+    protocol: str
+    sid: str
+    nodes_count: int
+    faulty: int
+    enable_pool_reuse: bool
+    chain_digest: str | None
+    nodes: tuple[RustDrivenDumboNodeResult, ...]
+    rounds: tuple[RustDrivenDumboRoundResult, ...]
 
 
 def _decode_result_payload(pid: int, value: dict[str, Any]) -> MultiprocessNodeResult:
@@ -368,6 +428,7 @@ def _decode_rust_driven_honeybadger_payload(
         ),
     )
 
+
 def _configure_logging(log_level: str) -> None:
     setup_logging(log_level)
 
@@ -406,81 +467,26 @@ def _seed_dummy_transactions(
             continue
         raise ValueError(f"Unsupported tx input mode: {tx_input}")
 
+
 def _build_honey_node_binary() -> Path:
     global _HONEY_NODE_BINARY
     if _HONEY_NODE_BINARY is not None and _HONEY_NODE_BINARY.exists():
         return _HONEY_NODE_BINARY
-    subprocess.run(
-        ["cargo", "build", "--manifest-path", "native/honey-node/Cargo.toml"],
-        check=True,
-    )
-    _HONEY_NODE_BINARY = Path("native/target/debug/honey-node")
+    # Allow an explicit override via environment variable (useful for release builds).
+    env_override = os.environ.get("HONEY_NODE_BINARY")
+    if env_override:
+        override_path = Path(env_override)
+        if override_path.exists():
+            _HONEY_NODE_BINARY = override_path
+            return _HONEY_NODE_BINARY
+    use_release = os.environ.get("HONEY_NODE_RELEASE", "").lower() in ("1", "true", "yes")
+    build_args = ["cargo", "build", "--manifest-path", "native/Cargo.toml", "-p", "honey-node"]
+    if use_release:
+        build_args.append("--release")
+    subprocess.run(build_args, check=True)
+    profile = "release" if use_release else "debug"
+    _HONEY_NODE_BINARY = Path(f"native/target/{profile}/honey-node")
     return _HONEY_NODE_BINARY
-
-
-def _benchmark_rust_hosted_nodes(
-    *,
-    protocol: str,
-    sid: str,
-    num_nodes: int,
-    faulty: int,
-    batch_size: int,
-    max_rounds: int,
-    round_timeout: float,
-    global_timeout: float,
-    transactions_per_node: int,
-    tx_input: TxInputMode,
-    transport_backend: TransportBackend,
-    log_level: str,
-    config_payload: dict[str, Any],
-) -> list[MultiprocessNodeResult]:
-    _configure_logging(log_level)
-    binary = _build_honey_node_binary()
-    command = [
-        str(binary),
-        "bench-local",
-        "--protocol",
-        protocol,
-        "--sid",
-        sid,
-        "--nodes",
-        str(num_nodes),
-        "--faulty",
-        str(faulty),
-        "--batch-size",
-        str(batch_size),
-        "--rounds",
-        str(max_rounds),
-        "--round-timeout",
-        str(round_timeout),
-        "--global-timeout",
-        str(global_timeout),
-        "--transactions-per-node",
-        str(transactions_per_node),
-        "--tx-input",
-        tx_input,
-        "--transport-backend",
-        transport_backend,
-        "--log-level",
-        log_level,
-        "--config-json",
-        json.dumps(config_payload, separators=(",", ":")),
-    ]
-    completed = subprocess.run(
-        command,
-        cwd=Path.cwd(),
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
-        raise RuntimeError(f"Rust-hosted benchmark failed: {error_text}")
-
-    payload = completed.stdout.strip()
-    if not payload:
-        raise RuntimeError("Rust-hosted benchmark produced no output")
-    decoded = cast(list[dict[str, Any]], json.loads(payload))
-    return [_decode_result_payload(pid, value) for pid, value in enumerate(decoded)]
 
 
 def _benchmark_rust_driver_nodes(
@@ -622,6 +628,122 @@ def _run_rust_driven_honeybadger(
     return _decode_rust_driven_honeybadger_payload(cast(dict[str, Any], json.loads(payload)))
 
 
+def _decode_rust_driven_dumbo_payload(value: dict[str, Any]) -> RustDrivenDumboRunResult:
+    return RustDrivenDumboRunResult(
+        protocol=str(value.get("protocol", "dumbo")),
+        sid=str(value["sid"]),
+        nodes_count=int(value.get("nodes_count", 0)),
+        faulty=int(value.get("faulty", 0)),
+        enable_pool_reuse=bool(value.get("enable_pool_reuse", False)),
+        chain_digest=str(value["chain_digest"]) if value.get("chain_digest") is not None else None,
+        nodes=tuple(
+            RustDrivenDumboNodeResult(
+                pid=int(node["pid"]),
+                worker_ident=int(node["worker_ident"]),
+                rounds_started=int(node["rounds_started"]),
+                rounds_finished=int(node["rounds_finished"]),
+                processed_commands=int(node.get("processed_commands", 0)),
+                start_round_calls=int(node.get("start_round_calls", 0)),
+                push_inbound_batch_calls=int(node.get("push_inbound_batch_calls", 0)),
+                push_inbound_batch_items=int(node.get("push_inbound_batch_items", 0)),
+                pull_outbound_batch_calls=int(node.get("pull_outbound_batch_calls", 0)),
+                pull_outbound_batch_items=int(node.get("pull_outbound_batch_items", 0)),
+                exchange_batches_calls=int(node.get("exchange_batches_calls", 0)),
+                exchange_inbound_items=int(node.get("exchange_inbound_items", 0)),
+                exchange_outbound_items=int(node.get("exchange_outbound_items", 0)),
+                stats_calls=int(node.get("stats_calls", 0)),
+                bridge_queue_size=int(node.get("bridge_queue_size", 0)),
+                worker_running=bool(node.get("worker_running", False)),
+                worker_error=(
+                    str(node["worker_error"]) if node.get("worker_error") is not None else None
+                ),
+                exchange_deliver_seconds=float(node.get("exchange_deliver_seconds", 0.0)),
+                exchange_pump_seconds=float(node.get("exchange_pump_seconds", 0.0)),
+                exchange_drain_seconds=float(node.get("exchange_drain_seconds", 0.0)),
+                exchange_total_seconds=float(node.get("exchange_total_seconds", 0.0)),
+                mempool_size=int(node.get("mempool_size", 0)),
+            )
+            for node in value.get("nodes", ())
+        ),
+        rounds=tuple(
+            RustDrivenDumboRoundResult(
+                round_id=int(round_data["round_id"]),
+                selected_count=int(round_data["selected_count"]),
+                selected_pids=tuple(int(pid) for pid in round_data.get("selected_pids", ())),
+                acs_send_events=int(round_data.get("acs_send_events", 0)),
+                block_size=int(round_data.get("block_size", 0)),
+                block_digest=str(round_data.get("block_digest", "")),
+                chain_digest=str(round_data.get("chain_digest", "")),
+                acs_seconds=float(round_data.get("acs_seconds", 0.0)),
+                block_resolve_seconds=float(round_data.get("block_resolve_seconds", 0.0)),
+                wall_seconds=float(round_data.get("wall_seconds", 0.0)),
+                delivered_count=int(round_data.get("delivered_count", 0)),
+                tpke_seconds=float(round_data.get("tpke_seconds", 0.0)),
+                tpke_bundle_events=int(round_data.get("tpke_bundle_events", 0)),
+                build_seconds=float(round_data.get("build_seconds", 0.0)),
+                acs_drive_stats=_decode_rust_driven_driver_phase_stats(
+                    cast(dict[str, Any], round_data.get("acs_drive_stats", {}))
+                ),
+                acs_settle_stats=_decode_rust_driven_driver_phase_stats(
+                    cast(dict[str, Any], round_data.get("acs_settle_stats", {}))
+                ),
+            )
+            for round_data in value.get("rounds", ())
+        ),
+    )
+
+
+def _run_rust_driven_dumbo(
+    *,
+    sid: str,
+    num_nodes: int,
+    faulty: int,
+    batch_size: int,
+    max_rounds: int,
+    global_timeout: float,
+    config_payload: dict[str, Any] | None = None,
+    ledger_dir: str | None = None,
+    tx_payload: list[list[str]] | None = None,
+) -> RustDrivenDumboRunResult:
+    binary = _build_honey_node_binary()
+    cmd = [
+        str(binary),
+        "drive-dumbo",
+        "--sid",
+        sid,
+        "--nodes",
+        str(num_nodes),
+        "--faulty",
+        str(faulty),
+        "--rounds",
+        str(max_rounds),
+        "--batch-size",
+        str(batch_size),
+        "--global-timeout",
+        str(global_timeout),
+        "--config-json",
+        json.dumps(config_payload or {}, separators=(",", ":")),
+    ]
+    if ledger_dir is not None:
+        cmd += ["--ledger-dir", ledger_dir]
+    if tx_payload is not None:
+        cmd += ["--tx-json", json.dumps(tx_payload, separators=(",", ":"))]
+    completed = subprocess.run(
+        cmd,
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+        raise RuntimeError(f"Rust-driven Dumbo (new driver) run failed: {error_text}")
+
+    payload = completed.stdout.strip()
+    if not payload:
+        raise RuntimeError("Rust-driven Dumbo (new driver) run produced no output")
+    return _decode_rust_driven_dumbo_payload(cast(dict[str, Any], json.loads(payload)))
+
+
 def _timing_summary(
     samples: tuple[float, ...], *, total_seconds: float | None = None
 ) -> MetricTimingSummary:
@@ -708,47 +830,6 @@ def _relabel_rust_driven_protocol(
     )
 
 
-def benchmark_local_honeybadger_nodes_rust_hosted(
-    sid: str,
-    num_nodes: int,
-    faulty: int,
-    batch_size: int = 1,
-    max_rounds: int = 1,
-    round_timeout: float = 10.0,
-    global_timeout: float = 30.0,
-    transactions_per_node: int = 1,
-    tx_input: TxInputMode = "json_str",
-    transport_backend: TransportBackend = "tcp",
-    log_level: str = "WARNING",
-    rust_tx_pool_max_bytes: int = 0,
-    ledger_dir: str | None = None,
-) -> list[MultiprocessNodeResult]:
-    config_payload: dict[str, Any] = {
-        "batch_size": batch_size,
-        "rust_tx_pool_max_bytes": rust_tx_pool_max_bytes,
-        "max_rounds": max_rounds,
-        "round_timeout": round_timeout,
-        "log_level": log_level,
-        "enable_ledger_persistence": ledger_dir is not None,
-        "ledger_dir": ledger_dir,
-    }
-    return _benchmark_rust_hosted_nodes(
-        protocol="hb",
-        sid=sid,
-        num_nodes=num_nodes,
-        faulty=faulty,
-        batch_size=batch_size,
-        max_rounds=max_rounds,
-        round_timeout=round_timeout,
-        global_timeout=global_timeout,
-        transactions_per_node=transactions_per_node,
-        tx_input=tx_input,
-        transport_backend=transport_backend,
-        log_level=log_level,
-        config_payload=config_payload,
-    )
-
-
 def benchmark_local_honeybadger_nodes_rust_driven(
     sid: str,
     num_nodes: int,
@@ -767,11 +848,13 @@ def benchmark_local_honeybadger_nodes_rust_driven(
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
 ) -> list[MultiprocessNodeResult]:
-    del round_timeout, transport_backend, log_level, rust_tx_pool_max_bytes
+    del round_timeout, log_level, rust_tx_pool_max_bytes
     if tx_input != "json_str":
         raise ValueError(
             "Rust-driven HoneyBadger benchmark currently supports only tx_input='json_str'"
         )
+    if transport_backend != "tcp":
+        raise ValueError("Rust-driven HoneyBadger benchmark supports only transport_backend='tcp'")
     expected_transactions_per_node = batch_size * max_rounds
     if transactions_per_node != expected_transactions_per_node:
         raise ValueError(
@@ -818,13 +901,12 @@ def benchmark_local_dumbo_nodes_rust_driven(
     ledger_dir: str | None = None,
 ) -> list[MultiprocessNodeResult]:
     del round_timeout
-    del transport_backend
     del log_level
-    del enable_pool_reference_proposals
-    del enable_pool_fetch_fallback
     del rust_tx_pool_max_bytes
     if tx_input != "json_str":
         raise ValueError("Rust-driven Dumbo benchmark currently supports only tx_input='json_str'")
+    if transport_backend != "tcp":
+        raise ValueError("Rust-driven Dumbo benchmark supports only transport_backend='tcp'")
     expected_transactions_per_node = batch_size * max_rounds
     if transactions_per_node != expected_transactions_per_node:
         raise ValueError(
@@ -842,6 +924,8 @@ def benchmark_local_dumbo_nodes_rust_driven(
         acs_protocol="dumbo",
         config_payload={
             "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
+            "enable_pool_reference_proposals": enable_pool_reference_proposals,
+            "enable_pool_fetch_fallback": enable_pool_fetch_fallback,
             "pool_grace_ms": pool_grace_ms,
         },
     )
@@ -902,71 +986,18 @@ def run_local_dumbo_rust_driven(
     global_timeout: float = 30.0,
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
-) -> RustDrivenHoneyBadgerRunResult:
-    return _relabel_rust_driven_protocol(
-        _run_rust_driven_honeybadger(
-            sid=sid,
-            num_nodes=num_nodes,
-            faulty=faulty,
-            batch_size=batch_size,
-            max_rounds=max_rounds,
-            global_timeout=global_timeout,
-            acs_protocol="dumbo",
-            acs_config_payload={
-                "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
-                "pool_grace_ms": pool_grace_ms,
-            },
-        ),
-        protocol="dumbo",
-    )
-
-
-def benchmark_local_dumbo_nodes_rust_hosted(
-    sid: str,
-    num_nodes: int,
-    faulty: int,
-    batch_size: int = 1,
-    max_rounds: int = 1,
-    round_timeout: float = 10.0,
-    global_timeout: float = 30.0,
-    transactions_per_node: int = 1,
-    tx_input: TxInputMode = "json_str",
-    transport_backend: TransportBackend = "tcp",
-    log_level: str = "WARNING",
-    enable_broadcast_pool_reuse: bool = False,
-    enable_pool_reference_proposals: bool = False,
-    enable_pool_fetch_fallback: bool = False,
-    pool_grace_ms: int = 200,
-    rust_tx_pool_max_bytes: int = 0,
-    ledger_dir: str | None = None,
-) -> list[MultiprocessNodeResult]:
-    del rust_tx_pool_max_bytes
-    config_payload: dict[str, Any] = {
-        "batch_size": batch_size,
-        "max_rounds": max_rounds,
-        "round_timeout": round_timeout,
-        "log_level": log_level,
-        "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
-        "enable_pool_reference_proposals": enable_pool_reference_proposals,
-        "enable_pool_fetch_fallback": enable_pool_fetch_fallback,
-        "pool_grace_ms": pool_grace_ms,
-        "enable_ledger_persistence": ledger_dir is not None,
-        "ledger_dir": ledger_dir,
-    }
-    return _benchmark_rust_hosted_nodes(
-        protocol="dumbo",
+) -> RustDrivenDumboRunResult:
+    return _run_rust_driven_dumbo(
         sid=sid,
         num_nodes=num_nodes,
         faulty=faulty,
         batch_size=batch_size,
         max_rounds=max_rounds,
-        round_timeout=round_timeout,
         global_timeout=global_timeout,
-        transactions_per_node=transactions_per_node,
-        tx_input=tx_input,
-        transport_backend=transport_backend,
-        log_level=log_level,
-        config_payload=config_payload,
+        config_payload={
+            "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
+            "pool_grace_ms": pool_grace_ms,
+        },
     )
 
 
@@ -991,6 +1022,57 @@ def run_local_dumbo_acs_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         config_payload=config_payload,
+    )
+
+
+def run_local_dumbo_new_driver(
+    sid: str,
+    num_nodes: int,
+    faulty: int,
+    batch_size: int = 1,
+    max_rounds: int = 1,
+    global_timeout: float = 30.0,
+    enable_broadcast_pool_reuse: bool = False,
+    enable_pool_reference_proposals: bool = False,
+    enable_pool_fetch_fallback: bool = False,
+    pool_grace_ms: int = 200,
+    pool_reuse_limit_per_round: int = 4,
+    pool_expire_rounds: int = 10,
+    pool_mempool_max: int = 1024,
+    ledger_dir: str | None = None,
+    tx_payload: list[list[str]] | None = None,
+) -> RustDrivenDumboRunResult:
+    """Run the Dumbo BFT protocol using the new Rust-native ``drive-dumbo`` driver.
+
+    Unlike ``benchmark_local_dumbo_nodes_rust_driven`` which wraps ``bench-driver``,
+    this function invokes the new ``drive-dumbo`` command that manages BroadcastMempool,
+    PoolReference building, and carryover processing fully in Rust.
+
+    Args:
+        ledger_dir: Optional path to write per-round ledger block JSON files.
+        tx_payload: Optional per-node transaction lists ``[[tx, ...], ...]``.
+            If ``None``, deterministic dummy transactions are generated.
+            Each inner list must contain at least ``batch_size * max_rounds`` entries.
+    """
+    config_payload: dict[str, Any] = {
+        "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
+        "enable_pool_reference_proposals": enable_pool_reference_proposals,
+        "enable_pool_fetch_fallback": enable_pool_fetch_fallback,
+        "pool_grace_ms": pool_grace_ms,
+        "pool_reuse_limit_per_round": pool_reuse_limit_per_round,
+        "pool_expire_rounds": pool_expire_rounds,
+        "pool_mempool_max": pool_mempool_max,
+    }
+    return _run_rust_driven_dumbo(
+        sid=sid,
+        num_nodes=num_nodes,
+        faulty=faulty,
+        batch_size=batch_size,
+        max_rounds=max_rounds,
+        global_timeout=global_timeout,
+        config_payload=config_payload,
+        ledger_dir=ledger_dir,
+        tx_payload=tx_payload,
     )
 
 

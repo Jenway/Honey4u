@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from honey_shared.exceptions import ProtocolInvariantError
 from honey_shared.messages import Channel, ProtocolMessage
@@ -11,7 +11,7 @@ from honey_shared.params import CryptoParams, HBConfig
 
 from honey_acs.data.broadcast_mempool import BroadcastMempool
 from honey_acs.hb.bkr93 import CSParams, run_bkr93_acs_with_send
-from honey_acs.service.base import AcsService
+from honey_acs.service.base import AcsOutputMode, AcsService
 
 
 @dataclass(slots=True)
@@ -36,6 +36,7 @@ class HoneyBadgerAcsService(AcsService):
         config: HBConfig | None = None,
         mempool: BroadcastMempool | None = None,
         event_notifier: Callable[[], None] | None = None,
+        output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
         super().__init__(
             protocol="hb",
@@ -47,6 +48,7 @@ class HoneyBadgerAcsService(AcsService):
             mempool=mempool,
             logger_name="honey.acs.hb.service",
             event_notifier=event_notifier,
+            output_mode=output_mode,
         )
         self._rounds: dict[int, HBRoundState] = {}
 
@@ -170,7 +172,7 @@ class HoneyBadgerAcsService(AcsService):
 
     async def _run_round(self, state: HBRoundState) -> None:
         tasks: list[asyncio.Task[Any]] = []
-        output_queue: asyncio.Queue[tuple[int | None, ...]] = asyncio.Queue(1)
+        output_queue: asyncio.Queue[tuple[int | bytes | None, ...]] = asyncio.Queue(1)
 
         async def send(
             recipient: int,
@@ -217,18 +219,27 @@ class HoneyBadgerAcsService(AcsService):
                     output_queue=output_queue,
                     logger=self.logger,
                     send=send,
+                    output_mode=self.output_mode,
                 )
                 for task in tasks:
                     if not task.done():
                         task.cancel()
 
+            decision = await output_queue.get()
+            if self.output_mode == "payloads":
+                self.emit_event(
+                    {
+                        "kind": "decision",
+                        "round_id": state.round_id,
+                        "selected_payloads": list(cast(tuple[bytes | None, ...], decision)),
+                    }
+                )
+                return
             self.emit_event(
                 {
                     "kind": "decision",
                     "round_id": state.round_id,
-                    "selected_pids": [
-                        pid for pid in await output_queue.get() if pid is not None
-                    ],
+                    "selected_pids": [pid for pid in decision if pid is not None],
                 }
             )
         except asyncio.CancelledError:

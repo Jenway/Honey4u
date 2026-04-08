@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 
 from honey_runtime.infra.logging import setup_logging
-from honey_runtime.runners import benchmark_local_honeybadger_nodes_rust_hosted
+from honey_runtime.runners import benchmark_local_honeybadger_nodes_rust_driven
 
 setup_logging("DEBUG")
 
@@ -26,7 +26,7 @@ def main() -> None:
 
     try:
         args = _parse_args()
-        results = benchmark_local_honeybadger_nodes_rust_hosted(
+        results = benchmark_local_honeybadger_nodes_rust_driven(
             sid=args.sid,
             num_nodes=args.N,
             faulty=args.f,

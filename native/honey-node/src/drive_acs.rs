@@ -30,14 +30,22 @@ fn new_driver_phase_stats<T: RustDrivenAcsHost>(hosts: &[T]) -> DriverPhaseStats
     }
 }
 
-fn update_pending_snapshot(stats: &mut DriverPhaseStats, pending_deliveries: &PendingDeliveries) {
+pub(crate) fn update_pending_snapshot(
+    stats: &mut DriverPhaseStats,
+    pending_deliveries: &PendingDeliveries,
+) {
     stats.sweep_count += 1;
     let pending = pending_deliveries.values().map(Vec::len).sum::<usize>();
     stats.total_pending_deliveries += pending;
     stats.max_pending_deliveries = stats.max_pending_deliveries.max(pending);
 }
 
-fn record_push(stats: &mut DriverPhaseStats, pid: usize, batch_len: usize, seconds: f64) {
+pub(crate) fn record_push(
+    stats: &mut DriverPhaseStats,
+    pid: usize,
+    batch_len: usize,
+    seconds: f64,
+) {
     if batch_len == 0 {
         return;
     }
@@ -50,7 +58,7 @@ fn record_push(stats: &mut DriverPhaseStats, pid: usize, batch_len: usize, secon
     stats.total_push_seconds += seconds;
 }
 
-fn record_pull(
+pub(crate) fn record_pull(
     stats: &mut DriverPhaseStats,
     pid: usize,
     event_count: usize,
@@ -144,6 +152,7 @@ fn collect_exchange_events(
             PyAcsEvent::Decision {
                 round_id: event_round_id,
                 selected_pids,
+                selected_payloads: _,
             } => {
                 if event_round_id != round_id {
                     return Err(format!(
@@ -162,7 +171,10 @@ fn collect_exchange_events(
                     "drive-acs round {round_id}: node {pid} failed in event round {event_round_id} with {exception_type}: {error}"
                 ));
             }
-            PyAcsEvent::Carryovers { round_id: _ } => {}
+            PyAcsEvent::Carryovers {
+                round_id: _,
+                items: _,
+            } => {}
         }
     }
     Ok(())
@@ -296,6 +308,8 @@ pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
     let settle_stats = settle_acs_round(hosts, round_id, &mut send_events)?;
     Ok(AcsRoundOutcome {
         selected_pids: canonical,
+        selected_payloads: Vec::new(),
+        carryovers: Vec::new(),
         send_events,
         drive_stats,
         settle_stats,
@@ -506,6 +520,7 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                     PyAcsEvent::Decision { .. } => {}
                     PyAcsEvent::Carryovers {
                         round_id: event_round_id,
+                        items: _,
                     } => {
                         if event_round_id != round_id {
                             return Err(format!(

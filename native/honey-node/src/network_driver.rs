@@ -1,6 +1,7 @@
 use super::*;
+use crate::drive_acs::{driver_phase_stats_json, record_pull, record_push};
 use bincode::{deserialize, serialize};
-use runtime_core::transport::LocalTcpTransport;
+use honey_native::transport::LocalTcpTransport;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -66,6 +67,25 @@ struct DriverRoundOutcome {
     selected_pids: Vec<usize>,
     delivered_count: usize,
     block_payload: Vec<u8>,
+    driver_stats: DriverPhaseStats,
+}
+
+struct DriverNodeRoundTelemetry {
+    selected_pids: Vec<usize>,
+    block_digest: String,
+    block_size: usize,
+    chain_digest: String,
+    build_seconds: f64,
+    acs_seconds: f64,
+    tpke_seconds: f64,
+    protocol_seconds: f64,
+    wall_seconds: f64,
+    delivered_count: usize,
+    tpke_partial_open_seconds: f64,
+    tpke_combine_seconds: f64,
+    acs_outbound_events: usize,
+    tpke_combine_calls: usize,
+    driver_phase_stats: DriverPhaseStats,
 }
 
 struct DriverRoundCtx<'a> {
@@ -96,6 +116,16 @@ struct DriverNodeResult {
     tpke_combine_calls: Vec<usize>,
     stale_acs_frames_dropped: Vec<usize>,
     chain_digest: String,
+    /// Per-round selected PIDs (BFT consensus output); index = round_id.
+    per_round_selected_pids: Vec<Vec<usize>>,
+    /// Per-round SHA-256 hex of the decrypted block payload; index = round_id.
+    per_round_block_digests: Vec<String>,
+    /// Per-round block payload sizes in bytes; index = round_id.
+    per_round_block_sizes: Vec<usize>,
+    /// Per-round cumulative chain_digest (hex); index = round_id.
+    per_round_chain_digests: Vec<String>,
+    /// Rich per-round telemetry used by the multi-process drive-hb coordinator.
+    round_details: Vec<DriverNodeRoundTelemetry>,
 }
 
 fn encode_driver_frame(frame: &DriverWireFrame) -> Result<Vec<u8>, String> {
@@ -282,6 +312,29 @@ fn build_node_result_json(
             "exchange_total_seconds": host_stats.exchange_total_seconds,
         },
         "batch_size": batch_size,
+        "per_round_selected_pids": run_result.per_round_selected_pids,
+        "per_round_block_digests": run_result.per_round_block_digests,
+        "per_round_block_sizes": run_result.per_round_block_sizes,
+        "per_round_chain_digests": run_result.per_round_chain_digests,
+        "round_details": run_result.round_details.iter().map(|round| {
+            json!({
+                "selected_pids": round.selected_pids,
+                "block_digest": round.block_digest,
+                "block_size": round.block_size,
+                "chain_digest": round.chain_digest,
+                "build_seconds": round.build_seconds,
+                "acs_seconds": round.acs_seconds,
+                "tpke_seconds": round.tpke_seconds,
+                "protocol_seconds": round.protocol_seconds,
+                "wall_seconds": round.wall_seconds,
+                "delivered_count": round.delivered_count,
+                "tpke_partial_open_seconds": round.tpke_partial_open_seconds,
+                "tpke_combine_seconds": round.tpke_combine_seconds,
+                "acs_outbound_events": round.acs_outbound_events,
+                "tpke_combine_calls": round.tpke_combine_calls,
+                "driver_phase_stats": driver_phase_stats_json(&round.driver_phase_stats),
+            })
+        }).collect::<Vec<_>>(),
     }))
     .map_err(|err| err.to_string())
 }
@@ -429,8 +482,23 @@ fn run_driver_round(
     let mut acs_outbound_events = 0usize;
     let mut tpke_combine_calls = 0usize;
     let mut stale_acs_frames_dropped = 0usize;
+    let mut driver_stats = DriverPhaseStats {
+        host_stats: (0..ctx.args.nodes)
+            .map(|pid| DriverHostPhaseStats {
+                pid,
+                ..DriverHostPhaseStats::default()
+            })
+            .collect(),
+        ..DriverPhaseStats::default()
+    };
 
     while Instant::now() < deadline {
+        driver_stats.sweep_count += 1;
+        let pending_deliveries =
+            ctx.transport.pending_inbound() + inbound_acs_wire.len() + pending_share_bundles.len();
+        driver_stats.total_pending_deliveries += pending_deliveries;
+        driver_stats.max_pending_deliveries =
+            driver_stats.max_pending_deliveries.max(pending_deliveries);
         let mut progressed = false;
         let frame_count = drain_transport_into_round(
             ctx.transport,
@@ -451,7 +519,14 @@ fn run_driver_round(
                 let batch = std::mem::take(&mut inbound_acs_wire);
                 acs_inbound_wire_batches += 1;
                 acs_inbound_wire_items += batch.len();
+                let push_start = Instant::now();
                 ctx.host.push_inbound_wire_batch(&batch)?;
+                record_push(
+                    &mut driver_stats,
+                    ctx.args.pid,
+                    batch.len(),
+                    push_start.elapsed().as_secs_f64(),
+                );
                 pushed_inbound = true;
                 progressed = true;
             }
@@ -461,8 +536,16 @@ fn run_driver_round(
                 ctx.host
                     .begin_pull_outbound_wire_batch(DRIVER_NETWORK_BATCH_LIMIT)?;
                 let events = ctx.host.finish_pull_outbound_wire_batch()?;
-                acs_pull_seconds += pull_start.elapsed().as_secs_f64();
+                let pull_seconds = pull_start.elapsed().as_secs_f64();
+                acs_pull_seconds += pull_seconds;
                 acs_pull_calls += 1;
+                record_pull(
+                    &mut driver_stats,
+                    ctx.args.pid,
+                    events.len(),
+                    pull_seconds,
+                    DRIVER_NETWORK_BATCH_LIMIT,
+                );
                 if !events.is_empty() {
                     progressed = true;
                 } else {
@@ -490,6 +573,7 @@ fn run_driver_round(
                         PyAcsWireEvent::Decision {
                             round_id: event_round_id,
                             selected_pids,
+                            selected_payloads: _,
                         } => {
                             if event_round_id != round_id {
                                 return Err(format!(
@@ -512,6 +596,7 @@ fn run_driver_round(
                         }
                         PyAcsWireEvent::Carryovers {
                             round_id: event_round_id,
+                            items: _,
                         } => {
                             if event_round_id != round_id {
                                 return Err(format!(
@@ -610,6 +695,7 @@ fn run_driver_round(
                         .unwrap_or(0.0);
                     let protocol_seconds = (wall_seconds - build_seconds).max(0.0);
                     let tpke_seconds = (protocol_seconds - acs_seconds).max(0.0);
+                    driver_stats.active_sweeps += 1;
                     return Ok(DriverRoundOutcome {
                         build_seconds,
                         acs_seconds,
@@ -629,14 +715,19 @@ fn run_driver_round(
                         selected_pids: selected_pids.clone(),
                         delivered_count,
                         block_payload,
+                        driver_stats,
                     });
                 }
             }
         }
 
         if !progressed {
+            driver_stats.idle_sweeps += 1;
+            driver_stats.idle_backoff_count += 1;
             thread::sleep(DRIVER_IDLE_BACKOFF);
+            continue;
         }
+        driver_stats.active_sweeps += 1;
     }
 
     Err(format!(
@@ -673,6 +764,11 @@ fn run_driver_rounds(
     let mut tpke_combine_calls = Vec::with_capacity(args.rounds);
     let mut stale_acs_frames_dropped = Vec::with_capacity(args.rounds);
     let mut chain_digest = GENESIS_CHAIN_DIGEST;
+    let mut per_round_selected_pids = Vec::with_capacity(args.rounds);
+    let mut per_round_block_digests = Vec::with_capacity(args.rounds);
+    let mut per_round_block_sizes = Vec::with_capacity(args.rounds);
+    let mut per_round_chain_digests = Vec::with_capacity(args.rounds);
+    let mut round_details = Vec::with_capacity(args.rounds);
     let ctx = DriverRoundCtx {
         host,
         transport,
@@ -700,11 +796,35 @@ fn run_driver_rounds(
         acs_outbound_events.push(round_outcome.acs_outbound_events);
         tpke_combine_calls.push(round_outcome.tpke_combine_calls);
         stale_acs_frames_dropped.push(round_outcome.stale_acs_frames_dropped);
+        per_round_selected_pids.push(round_outcome.selected_pids.clone());
+        let block_digest = sha256_hex(&round_outcome.block_payload);
+        let block_size = round_outcome.block_payload.len();
+        per_round_block_digests.push(block_digest.clone());
+        per_round_block_sizes.push(block_size);
         chain_digest = compute_chain_digest(&chain_digest, round_id, &round_outcome.block_payload);
+        let chain_digest_hex = hex_encode(&chain_digest);
+        per_round_chain_digests.push(chain_digest_hex.clone());
         origin_tx_latencies_by_round.push(if round_outcome.selected_pids.contains(&args.pid) {
             vec![round_outcome.wall_seconds; args.batch_size]
         } else {
             Vec::new()
+        });
+        round_details.push(DriverNodeRoundTelemetry {
+            selected_pids: round_outcome.selected_pids,
+            block_digest,
+            block_size,
+            chain_digest: chain_digest_hex,
+            build_seconds: round_outcome.build_seconds,
+            acs_seconds: round_outcome.acs_seconds,
+            tpke_seconds: round_outcome.tpke_seconds,
+            protocol_seconds: round_outcome.protocol_seconds,
+            wall_seconds: round_outcome.wall_seconds,
+            delivered_count: round_outcome.delivered_count,
+            tpke_partial_open_seconds: round_outcome.tpke_partial_open_seconds,
+            tpke_combine_seconds: round_outcome.tpke_combine_seconds,
+            acs_outbound_events: round_outcome.acs_outbound_events,
+            tpke_combine_calls: round_outcome.tpke_combine_calls,
+            driver_phase_stats: round_outcome.driver_stats,
         });
     }
 
@@ -729,6 +849,11 @@ fn run_driver_rounds(
             tpke_combine_calls,
             stale_acs_frames_dropped,
             chain_digest: hex_encode(&chain_digest),
+            per_round_selected_pids,
+            per_round_block_digests,
+            per_round_block_sizes,
+            per_round_chain_digests,
+            round_details,
         },
         queue_peaks,
     ))
