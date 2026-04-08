@@ -76,6 +76,38 @@ fn driver_phase_stats_from_value(value: &Value) -> Result<DriverPhaseStats, Stri
         pull_limit_hits: json_usize_field(value, "pull_limit_hits")?,
         total_push_seconds: json_f64_field(value, "total_push_seconds")?,
         total_pull_seconds: json_f64_field(value, "total_pull_seconds")?,
+        send_events: value
+            .get("send_events")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        send_payload_bytes: value
+            .get("send_payload_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        decision_events: value
+            .get("decision_events")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        failure_events: value
+            .get("failure_events")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        carryover_events: value
+            .get("carryover_events")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        broadcast_output_events: value
+            .get("broadcast_output_events")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        broadcast_output_payload_bytes: value
+            .get("broadcast_output_payload_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        broadcast_output_roothash_bytes: value
+            .get("broadcast_output_roothash_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
         host_stats,
     })
 }
@@ -109,6 +141,14 @@ fn aggregate_driver_phase_stats(
         aggregated.pull_limit_hits += stats.pull_limit_hits;
         aggregated.total_push_seconds += stats.total_push_seconds;
         aggregated.total_pull_seconds += stats.total_pull_seconds;
+        aggregated.send_events += stats.send_events;
+        aggregated.send_payload_bytes += stats.send_payload_bytes;
+        aggregated.decision_events += stats.decision_events;
+        aggregated.failure_events += stats.failure_events;
+        aggregated.carryover_events += stats.carryover_events;
+        aggregated.broadcast_output_events += stats.broadcast_output_events;
+        aggregated.broadcast_output_payload_bytes += stats.broadcast_output_payload_bytes;
+        aggregated.broadcast_output_roothash_bytes += stats.broadcast_output_roothash_bytes;
 
         for (index, host_stats) in stats.host_stats.iter().enumerate() {
             let aggregated_host = &mut aggregated.host_stats[index];

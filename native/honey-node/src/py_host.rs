@@ -6,6 +6,7 @@ pub(crate) trait RustDrivenAcsHost {
     fn push_inbound_wire_batch(&self, items: &[Vec<u8>]) -> Result<usize, String>;
     fn begin_pull_outbound_wire_batch(&self, limit: usize) -> Result<(), String>;
     fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<PyAcsWireEvent>, String>;
+    fn take_round_broadcast_outputs(&self, round_id: usize) -> Result<Vec<PyAcsWireEvent>, String>;
     fn stats(&self) -> Result<PyAcsHostStats, String>;
     fn shutdown(&self) -> Result<(), String>;
 }
@@ -107,6 +108,23 @@ impl PyAcsHost {
         .map_err(|err| err.to_string())
     }
 
+    pub(crate) fn take_round_broadcast_outputs(
+        &self,
+        round_id: usize,
+    ) -> Result<Vec<PyAcsWireEvent>, String> {
+        Python::attach(|py| -> PyResult<Vec<PyAcsWireEvent>> {
+            let events = self
+                .inner
+                .bind(py)
+                .call_method1("take_round_broadcast_outputs", (round_id,))?;
+            events
+                .try_iter()?
+                .map(|item| parse_acs_wire_event(item?.cast_into::<PyDict>()?))
+                .collect()
+        })
+        .map_err(|err| err.to_string())
+    }
+
     pub(crate) fn stats(&self) -> Result<PyAcsHostStats, String> {
         Python::attach(|py| -> PyResult<PyAcsHostStats> {
             let stats = self
@@ -180,6 +198,10 @@ impl RustDrivenAcsHost for PyAcsHost {
 
     fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<PyAcsWireEvent>, String> {
         PyAcsHost::finish_pull_outbound_wire_batch(self)
+    }
+
+    fn take_round_broadcast_outputs(&self, round_id: usize) -> Result<Vec<PyAcsWireEvent>, String> {
+        PyAcsHost::take_round_broadcast_outputs(self, round_id)
     }
 
     fn stats(&self) -> Result<PyAcsHostStats, String> {

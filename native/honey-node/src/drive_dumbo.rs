@@ -242,6 +242,11 @@ fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String>
                 .get("tpke_seconds")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0);
+            let reused_reference_count = canonical_round
+                .get("reused_reference_count")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or(0);
             let block_size = canonical_round
                 .get("block_size")
                 .and_then(Value::as_u64)
@@ -290,6 +295,7 @@ fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String>
                 "build_seconds": build_seconds,
                 "acs_seconds": acs_seconds,
                 "tpke_seconds": tpke_seconds,
+                "reused_reference_count": reused_reference_count,
                 "block_resolve_seconds": 0.0,
                 "wall_seconds": wall_seconds,
                 "acs_drive_stats": canonical_round
@@ -322,7 +328,7 @@ fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String>
                 "bridge_queue_size": host_stats["bridge_queue_size"].as_u64().unwrap_or(0),
                 "worker_running": host_stats["worker_running"].as_bool().unwrap_or(false),
                 "worker_error": host_stats.get("worker_error"),
-                "mempool_size": 0u64,
+                "mempool_size": node_json["mempool_size"].as_u64().unwrap_or(0),
                 "transport_sent_frames": transport_stats["sent_frames"].as_u64().unwrap_or(0),
                 "transport_recv_frames": transport_stats["recv_frames"].as_u64().unwrap_or(0),
                 "transport_connect_retries": transport_stats["connect_retries"].as_u64().unwrap_or(0),

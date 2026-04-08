@@ -68,8 +68,10 @@ class HBConfig:
     enable_profiling: bool = False
     log_level: str = "INFO"
     enable_broadcast_pool_reuse: bool = False
+    broadcast_mempool_backend: str = "rust"
     enable_pool_reference_proposals: bool = False
     enable_pool_fetch_fallback: bool = False
+    pool_mempool_max: int = 1000
     pool_grace_ms: int = 200
     pool_expire_rounds: int = 5
     pool_reuse_limit_per_round: int = 1
@@ -83,6 +85,10 @@ class HBConfig:
             raise ValueError(f"max_rounds={self.max_rounds} must be > 0")
         if self.round_timeout <= 0:
             raise ValueError(f"round_timeout={self.round_timeout} must be > 0")
+        if self.broadcast_mempool_backend not in {"none", "rust"}:
+            raise ValueError("broadcast_mempool_backend must be one of: none, rust")
+        if self.pool_mempool_max < 0:
+            raise ValueError(f"pool_mempool_max={self.pool_mempool_max} must be >= 0")
         if self.pool_grace_ms < 0:
             raise ValueError(f"pool_grace_ms={self.pool_grace_ms} must be >= 0")
         if self.pool_expire_rounds < 0:

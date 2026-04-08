@@ -7,7 +7,7 @@ from collections.abc import Callable
 from queue import Empty, Queue
 from typing import Literal
 
-from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_acs.data.broadcast_mempool import BroadcastStore
 from honey_acs.params import CryptoParams, HBConfig
 
 type AcsProtocol = Literal["hb", "dumbo"]
@@ -27,7 +27,7 @@ class AcsService(ABC):
         faulty: int,
         crypto: CryptoParams,
         config: HBConfig | None = None,
-        mempool: BroadcastMempool | None = None,
+        mempool: BroadcastStore | None = None,
         logger_name: str,
         event_notifier: Callable[[], None] | None = None,
         output_mode: AcsOutputMode = "selected_pids",
@@ -39,10 +39,7 @@ class AcsService(ABC):
         self.crypto = crypto
         self.config = config or HBConfig()
         self.output_mode = output_mode
-        self.mempool = mempool or BroadcastMempool(
-            max_size=1000,
-            expire_rounds=self.config.pool_expire_rounds,
-        )
+        self.mempool = mempool
         self.logger = logging.LoggerAdapter(logging.getLogger(logger_name), extra={"node": pid})
         self._events: Queue[AcsEvent] = Queue()
         self._event_notifier = event_notifier

@@ -187,6 +187,13 @@ enum PyAcsWireEvent {
         /// Carry-over items from Dumbo with pool reuse enabled.
         items: Vec<CarryoverItem>,
     },
+    BroadcastOutput {
+        round_id: usize,
+        sender: usize,
+        payload_id: String,
+        payload: Vec<u8>,
+        roothash: Vec<u8>,
+    },
 }
 
 struct AcsRoundOutcome {
@@ -242,6 +249,14 @@ struct DriverPhaseStats {
     pull_limit_hits: usize,
     total_push_seconds: f64,
     total_pull_seconds: f64,
+    send_events: usize,
+    send_payload_bytes: usize,
+    decision_events: usize,
+    failure_events: usize,
+    carryover_events: usize,
+    broadcast_output_events: usize,
+    broadcast_output_payload_bytes: usize,
+    broadcast_output_roothash_bytes: usize,
     host_stats: Vec<DriverHostPhaseStats>,
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -383,6 +398,13 @@ fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
             };
             Ok(PyAcsWireEvent::Carryovers { round_id, items })
         }
+        "broadcast_output" => Ok(PyAcsWireEvent::BroadcastOutput {
+            round_id: dict_item(&dict, "round_id")?.extract()?,
+            sender: dict_item(&dict, "sender")?.extract()?,
+            payload_id: dict_item(&dict, "payload_id")?.extract()?,
+            payload: dict_item(&dict, "payload")?.extract()?,
+            roothash: dict_item(&dict, "roothash")?.extract()?,
+        }),
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "unknown ACS wire event kind: {kind}"
         ))),

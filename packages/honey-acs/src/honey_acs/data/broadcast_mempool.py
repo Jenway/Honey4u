@@ -8,9 +8,9 @@ This module stores broadcast outputs across rounds. It serves two roles:
 import hashlib
 import logging
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,32 @@ class BroadcastData:
     selected_in_round: int | None = None
     consumed_in_round: int | None = None
     reuse_count: int = 0
+
+
+class BroadcastStore(Protocol):
+    def add(
+        self,
+        payload: bytes,
+        roothash: bytes,
+        shards: Sequence[bytes | None],
+        proofs: Sequence[bytes | None],
+        round_no: int,
+        sender_id: int,
+        timestamp: float,
+    ) -> str: ...
+
+    def get_by_round_sender(self, round_no: int, sender_id: int) -> BroadcastData | None: ...
+
+
+type BroadcastOutputCallback = Callable[
+    [str, bytes, bytes, Sequence[bytes | None], Sequence[bytes | None], int, int, float],
+    None,
+]
+
+
+def compute_payload_id(round_no: int, sender_id: int, roothash: bytes) -> str:
+    combined = f"{round_no}:{sender_id}:{roothash.hex()}".encode()
+    return hashlib.sha256(combined).hexdigest()[:16]
 
 
 class BroadcastMempool:
@@ -208,8 +234,7 @@ class BroadcastMempool:
 
     @staticmethod
     def _compute_payload_id(round_no: int, sender_id: int, roothash: bytes) -> str:
-        combined = f"{round_no}:{sender_id}:{roothash.hex()}".encode()
-        return hashlib.sha256(combined).hexdigest()[:16]
+        return compute_payload_id(round_no, sender_id, roothash)
 
     def _ensure_capacity(self) -> None:
         if len(self._storage) >= self.max_size:
@@ -240,3 +265,47 @@ class BroadcastMempool:
         existing_id = self._payload_ids_by_hash.get(data.roothash)
         if existing_id == payload_id:
             self._payload_ids_by_hash.pop(data.roothash, None)
+
+
+class NullBroadcastStore:
+    def add(
+        self,
+        payload: bytes,
+        roothash: bytes,
+        shards: Sequence[bytes | None],
+        proofs: Sequence[bytes | None],
+        round_no: int,
+        sender_id: int,
+        timestamp: float,
+    ) -> str:
+        del payload, shards, proofs, timestamp
+        return compute_payload_id(round_no, sender_id, roothash)
+
+    def get_by_round_sender(self, round_no: int, sender_id: int) -> BroadcastData | None:
+        del round_no, sender_id
+        return None
+
+
+class RustEventBroadcastStore:
+    def __init__(self, callback: BroadcastOutputCallback) -> None:
+        self._callback = callback
+
+    def add(
+        self,
+        payload: bytes,
+        roothash: bytes,
+        shards: Sequence[bytes | None],
+        proofs: Sequence[bytes | None],
+        round_no: int,
+        sender_id: int,
+        timestamp: float,
+    ) -> str:
+        payload_id = compute_payload_id(round_no, sender_id, roothash)
+        self._callback(
+            payload_id, payload, roothash, shards, proofs, round_no, sender_id, timestamp
+        )
+        return payload_id
+
+    def get_by_round_sender(self, round_no: int, sender_id: int) -> BroadcastData | None:
+        del round_no, sender_id
+        return None

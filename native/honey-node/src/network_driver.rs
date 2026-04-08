@@ -1,5 +1,8 @@
 use super::*;
 use crate::drive_acs::{driver_phase_stats_json, record_pull, record_push};
+use crate::pool_reuse::{
+    AcsPayload, BroadcastMempool, PoolReference, decode_acs_payload, encode_bundle_acs_payload,
+};
 use bincode::{deserialize, serialize};
 use honey_native::transport::LocalTcpTransport;
 use serde::{Deserialize, Serialize};
@@ -7,6 +10,87 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const DRIVER_NETWORK_BATCH_LIMIT: usize = 512;
 const DRIVER_IDLE_BACKOFF: Duration = Duration::from_micros(50);
+const BATCH_REF_TAG: u8 = 1;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BroadcastPoolBackend {
+    None,
+    Rust,
+}
+
+impl BroadcastPoolBackend {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Rust => "rust",
+        }
+    }
+}
+
+struct BroadcastPoolConfig {
+    backend: BroadcastPoolBackend,
+    max_size: usize,
+    expire_rounds: u32,
+    enable_reuse: bool,
+    enable_reference_proposals: bool,
+    enable_fetch_fallback: bool,
+    reuse_limit_per_round: usize,
+}
+
+fn parse_broadcast_pool_config(config_json: &str) -> Result<BroadcastPoolConfig, String> {
+    let value: Value = serde_json::from_str(config_json).map_err(|err| err.to_string())?;
+    let backend = match value
+        .get("broadcast_mempool_backend")
+        .and_then(Value::as_str)
+        .unwrap_or("rust")
+    {
+        "none" => BroadcastPoolBackend::None,
+        "rust" => BroadcastPoolBackend::Rust,
+        other => {
+            return Err(format!(
+                "unsupported broadcast_mempool_backend in config_json: {other}"
+            ));
+        }
+    };
+    let max_size = value
+        .get("pool_mempool_max")
+        .and_then(Value::as_u64)
+        .unwrap_or(1000) as usize;
+    let expire_rounds = value
+        .get("pool_expire_rounds")
+        .and_then(Value::as_u64)
+        .unwrap_or(5) as u32;
+    let enable_reuse = value
+        .get("enable_broadcast_pool_reuse")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let enable_reference_proposals = value
+        .get("enable_pool_reference_proposals")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let enable_fetch_fallback = value
+        .get("enable_pool_fetch_fallback")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let reuse_limit_per_round = value
+        .get("pool_reuse_limit_per_round")
+        .and_then(Value::as_u64)
+        .unwrap_or(1) as usize;
+    if enable_reuse && backend == BroadcastPoolBackend::None {
+        return Err(String::from(
+            "broadcast_mempool_backend=none is incompatible with enable_broadcast_pool_reuse=true",
+        ));
+    }
+    Ok(BroadcastPoolConfig {
+        backend,
+        max_size,
+        expire_rounds,
+        enable_reuse,
+        enable_reference_proposals,
+        enable_fetch_fallback,
+        reuse_limit_per_round,
+    })
+}
 
 #[derive(Serialize, Deserialize)]
 enum DriverWireFrame {
@@ -22,7 +106,7 @@ enum DriverWireFrame {
     HbShareBundle {
         sender: usize,
         round_id: usize,
-        selected_pids: Vec<usize>,
+        selected_batch_refs: Vec<(u32, u32)>,
         shares: Vec<Option<Vec<u8>>>,
     },
 }
@@ -36,9 +120,11 @@ struct DriverCarryovers {
 
 struct InboundShareBundle {
     sender: usize,
-    selected_pids: Vec<usize>,
+    selected_batch_refs: Vec<(u32, u32)>,
     shares: Vec<Option<Vec<u8>>>,
 }
+
+type BatchArchive = BTreeMap<(u32, u32), Vec<u8>>;
 
 #[derive(Default)]
 struct QueuePeaksSnapshot {
@@ -65,6 +151,7 @@ struct DriverRoundOutcome {
     tpke_combine_calls: usize,
     stale_acs_frames_dropped: usize,
     selected_pids: Vec<usize>,
+    reused_reference_count: usize,
     delivered_count: usize,
     block_payload: Vec<u8>,
     driver_stats: DriverPhaseStats,
@@ -81,6 +168,7 @@ struct DriverNodeRoundTelemetry {
     protocol_seconds: f64,
     wall_seconds: f64,
     delivered_count: usize,
+    reused_reference_count: usize,
     tpke_partial_open_seconds: f64,
     tpke_combine_seconds: f64,
     acs_outbound_events: usize,
@@ -94,6 +182,7 @@ struct DriverRoundCtx<'a> {
     public_key: &'a HbPkePublicParams,
     private_share: &'a HbPkePrivateKeyShare,
     args: &'a RunDriverNodeArgs,
+    broadcast_pool_config: &'a BroadcastPoolConfig,
 }
 
 struct DriverNodeResult {
@@ -126,6 +215,8 @@ struct DriverNodeResult {
     per_round_chain_digests: Vec<String>,
     /// Rich per-round telemetry used by the multi-process drive-hb coordinator.
     round_details: Vec<DriverNodeRoundTelemetry>,
+    rust_broadcast_mempool_size: usize,
+    broadcast_pool_backend: BroadcastPoolBackend,
 }
 
 fn encode_driver_frame(frame: &DriverWireFrame) -> Result<Vec<u8>, String> {
@@ -152,6 +243,177 @@ fn build_driver_round_batch(
 
 fn encode_proposal_ref(pid: usize) -> Vec<u8> {
     (pid as u64).to_be_bytes().to_vec()
+}
+
+fn encode_batch_ref(round_id: usize, sender: usize) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(7);
+    payload.push(BATCH_REF_TAG);
+    payload.extend_from_slice(&(round_id as u32).to_be_bytes());
+    payload.extend_from_slice(&(sender as u16).to_be_bytes());
+    payload
+}
+
+fn decode_batch_ref(payload: &[u8]) -> Result<(u32, u32), String> {
+    if payload.len() != 7 {
+        return Err(format!(
+            "invalid batch ref length: expected 7 bytes, got {}",
+            payload.len()
+        ));
+    }
+    if payload[0] != BATCH_REF_TAG {
+        return Err(format!("invalid batch ref tag: {}", payload[0]));
+    }
+    let round_id = u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
+    let sender = u16::from_be_bytes([payload[5], payload[6]]) as u32;
+    Ok((round_id, sender))
+}
+
+fn remember_archived_batch(
+    batch_archive: &mut BatchArchive,
+    round_id: usize,
+    sender: usize,
+    sealed_batch: &[u8],
+) {
+    batch_archive
+        .entry((round_id as u32, sender as u32))
+        .or_insert_with(|| sealed_batch.to_vec());
+}
+
+fn proposal_batch_refs_for_selected_pids(
+    round_id: usize,
+    selected_pids: &[usize],
+) -> Vec<(u32, u32)> {
+    selected_pids
+        .iter()
+        .map(|pid| (round_id as u32, *pid as u32))
+        .collect()
+}
+
+fn build_dumbo_proposal_input(
+    round_id: usize,
+    pid: usize,
+    pool: Option<&BroadcastMempool>,
+    config: &BroadcastPoolConfig,
+) -> Vec<u8> {
+    let inline_payload = encode_batch_ref(round_id, pid);
+    let references = if config.enable_reference_proposals {
+        pool.map(|pool| {
+            pool.list_reusable(round_id as u32, config.reuse_limit_per_round)
+                .into_iter()
+                .map(|(item_id, entry)| PoolReference {
+                    item_id,
+                    origin_round: entry.round_no,
+                    origin_sender: entry.sender_id,
+                    roothash: entry.roothash.clone(),
+                    proof_payload: entry.proof_payload.clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    encode_bundle_acs_payload(&inline_payload, &references)
+}
+
+struct ResolvedSelectedPayloads {
+    batch_refs: Vec<(u32, u32)>,
+    consumed_reference_ids: Vec<String>,
+}
+
+fn resolve_selected_payloads(
+    selected_payloads: &[Option<Vec<u8>>],
+    pool: &mut BroadcastMempool,
+    allow_fetch_fallback: bool,
+) -> Result<ResolvedSelectedPayloads, String> {
+    let mut batch_refs = Vec::new();
+    let mut seen_batch_refs = BTreeSet::new();
+    let mut consumed_reference_ids = Vec::new();
+    let mut visited_reference_ids = BTreeSet::new();
+    for payload in selected_payloads.iter().flatten() {
+        resolve_payload_bytes(
+            payload,
+            pool,
+            allow_fetch_fallback,
+            &mut batch_refs,
+            &mut seen_batch_refs,
+            &mut consumed_reference_ids,
+            &mut visited_reference_ids,
+        )?;
+    }
+    Ok(ResolvedSelectedPayloads {
+        batch_refs,
+        consumed_reference_ids,
+    })
+}
+
+fn resolve_payload_bytes(
+    payload: &[u8],
+    pool: &mut BroadcastMempool,
+    allow_fetch_fallback: bool,
+    batch_refs: &mut Vec<(u32, u32)>,
+    seen_batch_refs: &mut BTreeSet<(u32, u32)>,
+    consumed_reference_ids: &mut Vec<String>,
+    visited_reference_ids: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    match decode_acs_payload(payload)? {
+        AcsPayload::Inline(data) => {
+            let batch_ref = decode_batch_ref(&data)?;
+            if seen_batch_refs.insert(batch_ref) {
+                batch_refs.push(batch_ref);
+            }
+            Ok(())
+        }
+        AcsPayload::Bundle {
+            inline_payload,
+            references,
+        } => {
+            if !inline_payload.is_empty() {
+                let batch_ref = decode_batch_ref(&inline_payload)?;
+                if seen_batch_refs.insert(batch_ref) {
+                    batch_refs.push(batch_ref);
+                }
+            }
+            for reference in references {
+                if !visited_reference_ids.insert(reference.item_id.clone()) {
+                    continue;
+                }
+                let nested_payload = if let Some(entry) = pool.get_reusable(&reference.item_id) {
+                    if entry.round_no != reference.origin_round
+                        || entry.sender_id != reference.origin_sender
+                        || entry.roothash != reference.roothash
+                    {
+                        return Err(format!(
+                            "reusable entry {} metadata mismatch during payload resolution",
+                            reference.item_id
+                        ));
+                    }
+                    entry.payload.clone()
+                } else if allow_fetch_fallback {
+                    return Err(format!(
+                        "missing reusable entry {} and pool fetch fallback is not implemented",
+                        reference.item_id
+                    ));
+                } else {
+                    return Err(format!(
+                        "missing reusable entry {} during payload resolution",
+                        reference.item_id
+                    ));
+                };
+                consumed_reference_ids.push(reference.item_id.clone());
+                resolve_payload_bytes(
+                    &nested_payload,
+                    pool,
+                    allow_fetch_fallback,
+                    batch_refs,
+                    seen_batch_refs,
+                    consumed_reference_ids,
+                    visited_reference_ids,
+                )?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn update_queue_peaks(transport: &LocalTcpTransport, peaks: &mut QueuePeaksSnapshot) {
@@ -228,6 +490,8 @@ fn build_node_result_json(
     let acs_outbound_events = run_result.acs_outbound_events;
     let tpke_combine_calls = run_result.tpke_combine_calls;
     let stale_acs_frames_dropped = run_result.stale_acs_frames_dropped;
+    let rust_broadcast_mempool_size = run_result.rust_broadcast_mempool_size;
+    let broadcast_pool_backend = run_result.broadcast_pool_backend.as_str();
     let origin_tx_latencies = origin_tx_latencies_by_round
         .iter()
         .flat_map(|samples| samples.iter().copied())
@@ -235,6 +499,30 @@ fn build_node_result_json(
     let delivered_total = round_delivered_counts.iter().sum::<usize>();
     let node_run_total = round_wall_latencies.iter().sum::<f64>();
     let transport_stats = transport.stats();
+    let round_details_json = run_result
+        .round_details
+        .iter()
+        .map(|round| {
+            json!({
+                "selected_pids": round.selected_pids,
+                "block_digest": round.block_digest,
+                "block_size": round.block_size,
+                "chain_digest": round.chain_digest,
+                "build_seconds": round.build_seconds,
+                "acs_seconds": round.acs_seconds,
+                "tpke_seconds": round.tpke_seconds,
+                "protocol_seconds": round.protocol_seconds,
+                "wall_seconds": round.wall_seconds,
+                "delivered_count": round.delivered_count,
+                "reused_reference_count": round.reused_reference_count,
+                "tpke_partial_open_seconds": round.tpke_partial_open_seconds,
+                "tpke_combine_seconds": round.tpke_combine_seconds,
+                "acs_outbound_events": round.acs_outbound_events,
+                "tpke_combine_calls": round.tpke_combine_calls,
+                "driver_phase_stats": driver_phase_stats_json(&round.driver_phase_stats),
+            })
+        })
+        .collect::<Vec<_>>();
 
     serde_json::to_string(&json!({
         "pid": pid,
@@ -249,6 +537,8 @@ fn build_node_result_json(
         "origin_tx_latencies_by_round": origin_tx_latencies_by_round,
         "chain_digest": run_result.chain_digest,
         "ledger_path": Value::Null,
+        "broadcast_pool_backend": broadcast_pool_backend,
+        "mempool_size": rust_broadcast_mempool_size,
         "subprotocol_timings": {
             "hb.round.seconds": timing_summary_json(&round_latencies),
             "acs.driver.seconds": timing_summary_json(&acs_latencies),
@@ -305,25 +595,7 @@ fn build_node_result_json(
         "per_round_block_digests": run_result.per_round_block_digests,
         "per_round_block_sizes": run_result.per_round_block_sizes,
         "per_round_chain_digests": run_result.per_round_chain_digests,
-        "round_details": run_result.round_details.iter().map(|round| {
-            json!({
-                "selected_pids": round.selected_pids,
-                "block_digest": round.block_digest,
-                "block_size": round.block_size,
-                "chain_digest": round.chain_digest,
-                "build_seconds": round.build_seconds,
-                "acs_seconds": round.acs_seconds,
-                "tpke_seconds": round.tpke_seconds,
-                "protocol_seconds": round.protocol_seconds,
-                "wall_seconds": round.wall_seconds,
-                "delivered_count": round.delivered_count,
-                "tpke_partial_open_seconds": round.tpke_partial_open_seconds,
-                "tpke_combine_seconds": round.tpke_combine_seconds,
-                "acs_outbound_events": round.acs_outbound_events,
-                "tpke_combine_calls": round.tpke_combine_calls,
-                "driver_phase_stats": driver_phase_stats_json(&round.driver_phase_stats),
-            })
-        }).collect::<Vec<_>>(),
+        "round_details": round_details_json,
     }))
     .map_err(|err| err.to_string())
 }
@@ -348,6 +620,7 @@ fn drain_transport_into_round(
     transport: &LocalTcpTransport,
     round_id: usize,
     carryovers: &mut DriverCarryovers,
+    batch_archive: &mut BatchArchive,
     inbound_acs_wire: &mut Vec<Vec<u8>>,
     received_batches: &mut BTreeMap<usize, Vec<u8>>,
     pending_share_bundles: &mut Vec<InboundShareBundle>,
@@ -378,6 +651,7 @@ fn drain_transport_into_round(
                 round_id: frame_round_id,
                 sealed_batch,
             } => {
+                remember_archived_batch(batch_archive, frame_round_id, sender, &sealed_batch);
                 if frame_round_id == round_id {
                     received_batches.entry(sender).or_insert(sealed_batch);
                 } else if frame_round_id > round_id {
@@ -392,12 +666,12 @@ fn drain_transport_into_round(
             DriverWireFrame::HbShareBundle {
                 sender,
                 round_id: frame_round_id,
-                selected_pids,
+                selected_batch_refs,
                 shares,
             } => {
                 let bundle = InboundShareBundle {
                     sender,
-                    selected_pids,
+                    selected_batch_refs,
                     shares,
                 };
                 if frame_round_id == round_id {
@@ -419,7 +693,9 @@ fn run_driver_round(
     ctx: &DriverRoundCtx<'_>,
     round_id: usize,
     carryovers: &mut DriverCarryovers,
+    batch_archive: &mut BatchArchive,
     queue_peaks: &mut QueuePeaksSnapshot,
+    rust_broadcast_mempool: &mut Option<BroadcastMempool>,
 ) -> Result<DriverRoundOutcome, String> {
     let round_wall_start = Instant::now();
     let round_sid = format!("{}:{round_id}:", ctx.args.sid);
@@ -427,6 +703,7 @@ fn run_driver_round(
     let batch = build_driver_round_batch(round_id, ctx.args.pid, ctx.args.batch_size)?;
     let sealed_batch = seal_hb_encrypted_batch(ctx.public_key, &batch)?;
     let build_seconds = round_build_start.elapsed().as_secs_f64();
+    remember_archived_batch(batch_archive, round_id, ctx.args.pid, &sealed_batch);
 
     broadcast_frame(
         ctx.transport,
@@ -439,11 +716,26 @@ fn run_driver_round(
     )?;
     update_queue_peaks(ctx.transport, queue_peaks);
 
+    let reuse_enabled =
+        matches!(ctx.args.acs_protocol, Protocol::Dumbo) && ctx.broadcast_pool_config.enable_reuse;
+    let proposal_input = if reuse_enabled {
+        build_dumbo_proposal_input(
+            round_id,
+            ctx.args.pid,
+            rust_broadcast_mempool.as_ref(),
+            ctx.broadcast_pool_config,
+        )
+    } else {
+        encode_proposal_ref(ctx.args.pid)
+    };
     ctx.host
-        .start_round(round_id, &round_sid, &encode_proposal_ref(ctx.args.pid))?;
+        .start_round(round_id, &round_sid, &proposal_input)?;
 
     let deadline = Instant::now() + Duration::from_secs_f64(ctx.args.global_timeout);
     let mut decision: Option<Vec<usize>> = None;
+    let mut decision_payloads: Option<Vec<Option<Vec<u8>>>> = None;
+    let mut selected_batch_refs: Option<Vec<(u32, u32)>> = None;
+    let mut consumed_reference_ids: Vec<String> = Vec::new();
     let mut decryptor: Option<HbBatchDecryptor> = None;
     let mut inbound_acs_wire = carryovers
         .acs_wire_payloads
@@ -460,6 +752,7 @@ fn run_driver_round(
         .unwrap_or_default();
     let mut seen_share_senders: BTreeSet<usize> = BTreeSet::new();
     let mut local_share_broadcasted = false;
+    let mut broadcast_outputs_taken = false;
     let mut acs_decision_at: Option<Instant> = None;
     let mut acs_pull_seconds = 0.0f64;
     let mut tpke_partial_open_seconds = 0.0f64;
@@ -471,6 +764,7 @@ fn run_driver_round(
     let mut acs_outbound_events = 0usize;
     let mut tpke_combine_calls = 0usize;
     let mut stale_acs_frames_dropped = 0usize;
+    let mut reused_reference_count = 0usize;
     let mut driver_stats = DriverPhaseStats {
         host_stats: (0..ctx.args.nodes)
             .map(|pid| DriverHostPhaseStats {
@@ -493,6 +787,7 @@ fn run_driver_round(
             ctx.transport,
             round_id,
             carryovers,
+            batch_archive,
             &mut inbound_acs_wire,
             &mut received_batches,
             &mut pending_share_bundles,
@@ -553,6 +848,8 @@ fn run_driver_round(
                                     "driver round {round_id}: outbound ACS event carried mismatched round_id {event_round_id}"
                                 ));
                             }
+                            driver_stats.send_events += 1;
+                            driver_stats.send_payload_bytes += payload.len();
                             send_frame(
                                 ctx.transport,
                                 recipient,
@@ -562,7 +859,7 @@ fn run_driver_round(
                         PyAcsWireEvent::Decision {
                             round_id: event_round_id,
                             selected_pids,
-                            selected_payloads: _,
+                            selected_payloads,
                         } => {
                             if event_round_id != round_id {
                                 return Err(format!(
@@ -572,25 +869,85 @@ fn run_driver_round(
                             if acs_decision_at.is_none() {
                                 acs_decision_at = Some(Instant::now());
                             }
-                            decision = Some(selected_pids);
+                            driver_stats.decision_events += 1;
+                            let resolved_selected_pids = if selected_pids.is_empty() {
+                                selected_payloads
+                                    .as_ref()
+                                    .map(|payloads| {
+                                        payloads
+                                            .iter()
+                                            .enumerate()
+                                            .filter_map(|(pid, payload)| {
+                                                payload.as_ref().map(|_| pid)
+                                            })
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .unwrap_or_default()
+                            } else {
+                                selected_pids
+                            };
+                            decision = Some(resolved_selected_pids);
+                            decision_payloads = selected_payloads;
                         }
                         PyAcsWireEvent::Failure {
                             round_id: event_round_id,
                             error,
                             exception_type,
                         } => {
+                            driver_stats.failure_events += 1;
                             return Err(format!(
                                 "driver round {round_id}: ACS host failed in event round {event_round_id} with {exception_type}: {error}"
                             ));
                         }
                         PyAcsWireEvent::Carryovers {
                             round_id: event_round_id,
-                            items: _,
+                            items,
                         } => {
                             if event_round_id != round_id {
                                 return Err(format!(
                                     "driver round {round_id}: carryovers event carried mismatched round_id {event_round_id}"
                                 ));
+                            }
+                            driver_stats.carryover_events += 1;
+                            if reuse_enabled {
+                                let pool = rust_broadcast_mempool.as_mut().ok_or_else(|| {
+                                    String::from("Dumbo pool reuse requires a Rust mempool backend")
+                                })?;
+                                for item in items {
+                                    pool.add_reusable(
+                                        item.value,
+                                        item.roothash,
+                                        item.proof_payload,
+                                        round_id as u32,
+                                        item.leader,
+                                        0.0,
+                                    );
+                                }
+                            }
+                        }
+                        PyAcsWireEvent::BroadcastOutput {
+                            round_id: event_round_id,
+                            sender,
+                            payload_id: _,
+                            payload,
+                            roothash,
+                        } => {
+                            if event_round_id != round_id {
+                                return Err(format!(
+                                    "driver round {round_id}: broadcast_output carried mismatched round_id {event_round_id}"
+                                ));
+                            }
+                            driver_stats.broadcast_output_events += 1;
+                            driver_stats.broadcast_output_payload_bytes += payload.len();
+                            driver_stats.broadcast_output_roothash_bytes += roothash.len();
+                            if let Some(pool) = rust_broadcast_mempool.as_mut() {
+                                pool.add_rbc(
+                                    payload,
+                                    roothash,
+                                    round_id as u32,
+                                    sender as u32,
+                                    0.0,
+                                );
                             }
                         }
                     }
@@ -606,16 +963,88 @@ fn run_driver_round(
         update_queue_peaks(ctx.transport, queue_peaks);
 
         if let Some(selected_pids) = decision.as_ref() {
+            if reuse_enabled && selected_batch_refs.is_none() {
+                let pool = rust_broadcast_mempool.as_mut().ok_or_else(|| {
+                    String::from("missing Rust mempool for Dumbo payload resolution")
+                })?;
+                let payloads = decision_payloads.as_ref().ok_or_else(|| {
+                    format!(
+                        "driver round {round_id}: Dumbo reuse decision missing selected_payloads"
+                    )
+                })?;
+                let resolved = resolve_selected_payloads(
+                    payloads,
+                    pool,
+                    ctx.broadcast_pool_config.enable_fetch_fallback,
+                )?;
+                reused_reference_count = resolved.consumed_reference_ids.len();
+                consumed_reference_ids = resolved.consumed_reference_ids;
+                selected_batch_refs = Some(resolved.batch_refs);
+            }
+
+            if rust_broadcast_mempool.is_some() && !broadcast_outputs_taken {
+                let outputs = ctx.host.take_round_broadcast_outputs(round_id)?;
+                for event in outputs {
+                    match event {
+                        PyAcsWireEvent::BroadcastOutput {
+                            round_id: event_round_id,
+                            sender,
+                            payload_id: _,
+                            payload,
+                            roothash,
+                        } => {
+                            if event_round_id != round_id {
+                                return Err(format!(
+                                    "driver round {round_id}: side-channel broadcast_output carried mismatched round_id {event_round_id}"
+                                ));
+                            }
+                            driver_stats.broadcast_output_events += 1;
+                            driver_stats.broadcast_output_payload_bytes += payload.len();
+                            driver_stats.broadcast_output_roothash_bytes += roothash.len();
+                            if let Some(pool) = rust_broadcast_mempool.as_mut() {
+                                pool.add_rbc(
+                                    payload,
+                                    roothash,
+                                    round_id as u32,
+                                    sender as u32,
+                                    0.0,
+                                );
+                            }
+                        }
+                        other => {
+                            return Err(format!(
+                                "driver round {round_id}: unexpected side-channel ACS event kind {}",
+                                match other {
+                                    PyAcsWireEvent::Send { .. } => "send",
+                                    PyAcsWireEvent::Decision { .. } => "decision",
+                                    PyAcsWireEvent::Failure { .. } => "failure",
+                                    PyAcsWireEvent::Carryovers { .. } => "carryovers",
+                                    PyAcsWireEvent::BroadcastOutput { .. } => "broadcast_output",
+                                }
+                            ));
+                        }
+                    }
+                }
+                broadcast_outputs_taken = true;
+            }
+
+            let round_batch_refs = selected_batch_refs
+                .clone()
+                .unwrap_or_else(|| proposal_batch_refs_for_selected_pids(round_id, selected_pids));
+
             if !local_share_broadcasted
-                && selected_pids
+                && round_batch_refs
                     .iter()
-                    .all(|pid| received_batches.contains_key(pid))
+                    .all(|batch_ref| batch_archive.contains_key(batch_ref))
             {
-                let selected_batches = selected_pids
+                let selected_batches = round_batch_refs
                     .iter()
-                    .map(|pid| {
-                        received_batches.get(pid).cloned().ok_or_else(|| {
-                            format!("driver round {round_id}: missing selected batch for pid={pid}")
+                    .map(|batch_ref| {
+                        batch_archive.get(batch_ref).cloned().ok_or_else(|| {
+                            format!(
+                                "driver round {round_id}: missing archived batch for origin_round={} sender={}",
+                                batch_ref.0, batch_ref.1
+                            )
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -638,7 +1067,7 @@ fn run_driver_round(
                     &DriverWireFrame::HbShareBundle {
                         sender: ctx.args.pid,
                         round_id,
-                        selected_pids: selected_pids.clone(),
+                        selected_batch_refs: round_batch_refs.clone(),
                         shares: local_bundle,
                     },
                 )?;
@@ -650,9 +1079,9 @@ fn run_driver_round(
 
             if let Some(batch_decryptor) = decryptor.as_mut() {
                 for bundle in pending_share_bundles.drain(..) {
-                    if bundle.selected_pids != *selected_pids {
+                    if bundle.selected_batch_refs != round_batch_refs {
                         return Err(format!(
-                            "driver round {round_id}: share bundle from pid={} carried divergent selected_pids",
+                            "driver round {round_id}: share bundle from pid={} carried divergent selected batch refs",
                             bundle.sender
                         ));
                     }
@@ -684,6 +1113,14 @@ fn run_driver_round(
                         .unwrap_or(0.0);
                     let protocol_seconds = (wall_seconds - build_seconds).max(0.0);
                     let tpke_seconds = (protocol_seconds - acs_seconds).max(0.0);
+                    if !consumed_reference_ids.is_empty() {
+                        if let Some(pool) = rust_broadcast_mempool.as_mut() {
+                            for item_id in &consumed_reference_ids {
+                                pool.mark_selected(item_id, round_id as u32);
+                                pool.mark_consumed(item_id, round_id as u32);
+                            }
+                        }
+                    }
                     driver_stats.active_sweeps += 1;
                     return Ok(DriverRoundOutcome {
                         build_seconds,
@@ -702,6 +1139,7 @@ fn run_driver_round(
                         tpke_combine_calls,
                         stale_acs_frames_dropped,
                         selected_pids: selected_pids.clone(),
+                        reused_reference_count,
                         delivered_count,
                         block_payload,
                         driver_stats,
@@ -731,9 +1169,11 @@ fn run_driver_rounds(
     public_key: &HbPkePublicParams,
     private_share: &HbPkePrivateKeyShare,
     args: &RunDriverNodeArgs,
+    broadcast_pool_config: &BroadcastPoolConfig,
 ) -> Result<(DriverNodeResult, QueuePeaksSnapshot), String> {
     let mut queue_peaks = QueuePeaksSnapshot::default();
     let mut carryovers = DriverCarryovers::default();
+    let mut batch_archive: BatchArchive = BatchArchive::new();
     let mut round_build_latencies = Vec::with_capacity(args.rounds);
     let mut acs_latencies = Vec::with_capacity(args.rounds);
     let mut tpke_stage_latencies = Vec::with_capacity(args.rounds);
@@ -758,16 +1198,31 @@ fn run_driver_rounds(
     let mut per_round_block_sizes = Vec::with_capacity(args.rounds);
     let mut per_round_chain_digests = Vec::with_capacity(args.rounds);
     let mut round_details = Vec::with_capacity(args.rounds);
+    let mut rust_broadcast_mempool = match broadcast_pool_config.backend {
+        BroadcastPoolBackend::Rust => Some(BroadcastMempool::new(
+            broadcast_pool_config.max_size,
+            broadcast_pool_config.expire_rounds,
+        )),
+        BroadcastPoolBackend::None => None,
+    };
     let ctx = DriverRoundCtx {
         host,
         transport,
         public_key,
         private_share,
         args,
+        broadcast_pool_config,
     };
 
     for round_id in 0..args.rounds {
-        let round_outcome = run_driver_round(&ctx, round_id, &mut carryovers, &mut queue_peaks)?;
+        let round_outcome = run_driver_round(
+            &ctx,
+            round_id,
+            &mut carryovers,
+            &mut batch_archive,
+            &mut queue_peaks,
+            &mut rust_broadcast_mempool,
+        )?;
         round_build_latencies.push(round_outcome.build_seconds);
         acs_latencies.push(round_outcome.acs_seconds);
         tpke_stage_latencies.push(round_outcome.tpke_seconds);
@@ -809,12 +1264,18 @@ fn run_driver_rounds(
             protocol_seconds: round_outcome.protocol_seconds,
             wall_seconds: round_outcome.wall_seconds,
             delivered_count: round_outcome.delivered_count,
+            reused_reference_count: round_outcome.reused_reference_count,
             tpke_partial_open_seconds: round_outcome.tpke_partial_open_seconds,
             tpke_combine_seconds: round_outcome.tpke_combine_seconds,
             acs_outbound_events: round_outcome.acs_outbound_events,
             tpke_combine_calls: round_outcome.tpke_combine_calls,
             driver_phase_stats: round_outcome.driver_stats,
         });
+        if let Some(pool) = rust_broadcast_mempool.as_mut() {
+            pool.cleanup(round_id as u32);
+        }
+        let expire_before = (round_id as u32).saturating_sub(broadcast_pool_config.expire_rounds);
+        batch_archive.retain(|(origin_round, _), _| *origin_round >= expire_before);
     }
 
     Ok((
@@ -843,27 +1304,60 @@ fn run_driver_rounds(
             per_round_block_sizes,
             per_round_chain_digests,
             round_details,
+            rust_broadcast_mempool_size: rust_broadcast_mempool
+                .as_ref()
+                .map(BroadcastMempool::len)
+                .unwrap_or(0),
+            broadcast_pool_backend: broadcast_pool_config.backend,
         },
         queue_peaks,
     ))
 }
 
+fn build_host_config_json(
+    args: &RunDriverNodeArgs,
+    broadcast_pool_config: &BroadcastPoolConfig,
+) -> Result<String, String> {
+    if !matches!(args.acs_protocol, Protocol::Dumbo) || !broadcast_pool_config.enable_reuse {
+        return Ok(args.config_json.clone());
+    }
+    let mut value: Value =
+        serde_json::from_str(&args.config_json).map_err(|err| err.to_string())?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| String::from("run-driver-node config_json must be a JSON object"))?;
+    object.insert(
+        String::from("output_mode"),
+        Value::String(String::from("payloads")),
+    );
+    serde_json::to_string(&value).map_err(|err| err.to_string())
+}
+
 pub(crate) fn run_rust_driver_node(args: RunDriverNodeArgs) -> Result<(), String> {
+    let broadcast_pool_config = parse_broadcast_pool_config(&args.config_json)?;
     let addresses = parse_addresses_json(&args.addresses_json)?;
     let mut transport =
         LocalTcpTransport::new(args.pid, addresses).map_err(|err| err.to_string())?;
+    let host_config_json = build_host_config_json(&args, &broadcast_pool_config)?;
     let host = PyAcsHost::new(
         args.acs_protocol,
         args.pid,
         args.nodes,
         args.faulty,
         &args.acs_crypto_json,
-        &args.config_json,
+        &host_config_json,
     )?;
     let (public_key, private_share) = parse_honeybadger_crypto_payload(&args.hb_crypto_json)?;
     wait_until_start(args.start_at_ms)?;
 
-    let result = run_driver_rounds(&host, &transport, &public_key, &private_share, &args);
+    let result = run_driver_rounds(
+        &host,
+        &transport,
+        &public_key,
+        &private_share,
+        &args,
+        &broadcast_pool_config,
+    );
     let host_stats = host.stats();
     let host_shutdown = host.shutdown();
     let rendered = match result {

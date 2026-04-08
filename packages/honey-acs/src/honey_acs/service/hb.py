@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_acs.data.broadcast_mempool import (
+    BroadcastStore,
+    NullBroadcastStore,
+    RustEventBroadcastStore,
+)
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.hb.bkr93 import CSParams, run_bkr93_acs_with_send
 from honey_acs.messages import Channel, ProtocolMessage
@@ -33,8 +37,9 @@ class HoneyBadgerAcsService(AcsService):
         faulty: int,
         crypto: CryptoParams,
         config: HBConfig | None = None,
-        mempool: BroadcastMempool | None = None,
+        mempool: BroadcastStore | None = None,
         event_notifier: Callable[[], None] | None = None,
+        broadcast_output_sink: Callable[[dict[str, object]], None] | None = None,
         output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
         super().__init__(
@@ -49,12 +54,17 @@ class HoneyBadgerAcsService(AcsService):
             event_notifier=event_notifier,
             output_mode=output_mode,
         )
+        self._broadcast_output_sink = broadcast_output_sink
         self._rounds: dict[int, HBRoundState] = {}
 
     def active_round_ids(self) -> list[int]:
         return list(self._rounds)
 
     async def _start_round(self, *, round_id: int, sid: str, proposal_input: bytes) -> None:
+        if self.output_mode == "payloads":
+            raise ProtocolInvariantError(
+                "HB payload output mode has been removed; use selected_pids output only"
+            )
         if round_id in self._rounds:
             raise ValueError(f"round {round_id} is already active")
         state = HBRoundState(
@@ -190,6 +200,41 @@ class HoneyBadgerAcsService(AcsService):
                 }
             )
 
+        backend = self.config.broadcast_mempool_backend
+
+        broadcast_store: BroadcastStore
+        if backend == "none":
+            broadcast_store = NullBroadcastStore()
+        elif backend == "rust":
+            if self._broadcast_output_sink is None:
+                raise ProtocolInvariantError("HB rust broadcast output sink is not initialized")
+            broadcast_output_sink = self._broadcast_output_sink
+
+            def on_broadcast_output(
+                payload_id: str,
+                payload: bytes,
+                roothash: bytes,
+                _shards: Sequence[bytes | None],
+                _proofs: Sequence[bytes | None],
+                round_no: int,
+                sender_id: int,
+                _timestamp: float,
+            ) -> None:
+                broadcast_output_sink(
+                    {
+                        "kind": "broadcast_output",
+                        "round_id": round_no,
+                        "sender": sender_id,
+                        "payload_id": payload_id,
+                        "payload": payload,
+                        "roothash": roothash,
+                    }
+                )
+
+            broadcast_store = RustEventBroadcastStore(on_broadcast_output)
+        else:
+            raise ProtocolInvariantError(f"unsupported broadcast mempool backend: {backend}")
+
         try:
             async with asyncio.TaskGroup() as task_group:
 
@@ -212,7 +257,7 @@ class HoneyBadgerAcsService(AcsService):
                     coin_recvs=state.coin_recvs,
                     aba_recvs=state.aba_recvs,
                     rbc_recvs=state.rbc_recvs,
-                    mempool=self.mempool,
+                    mempool=broadcast_store,
                     round_id=state.round_id,
                     my_rbc_input=state.my_rbc_input,
                     output_queue=output_queue,
@@ -225,15 +270,6 @@ class HoneyBadgerAcsService(AcsService):
                         task.cancel()
 
             decision = await output_queue.get()
-            if self.output_mode == "payloads":
-                self.emit_event(
-                    {
-                        "kind": "decision",
-                        "round_id": state.round_id,
-                        "selected_payloads": list(cast(tuple[bytes | None, ...], decision)),
-                    }
-                )
-                return
             self.emit_event(
                 {
                     "kind": "decision",

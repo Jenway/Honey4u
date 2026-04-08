@@ -1,5 +1,7 @@
 from typing import Any
 
+import pytest
+
 from benchmarks.support.runners import (
     benchmark_local_dumbo_nodes_rust_driven,
     benchmark_local_honeybadger_nodes_rust_driven,
@@ -71,6 +73,29 @@ def test_local_honeybadger_outer_can_be_rust_driven_with_persistent_python_hosts
     assert all(round_data.acs_drive_stats.sweep_count > 0 for round_data in result.rounds)
     assert all(len(round_data.acs_drive_stats.host_stats) == 4 for round_data in result.rounds)
     assert all(round_data.acs_drive_stats.total_pull_seconds >= 0.0 for round_data in result.rounds)
+
+
+@pytest.mark.parametrize("broadcast_mempool_backend", ["none", "rust"])
+def test_local_honeybadger_outer_supports_non_python_broadcast_pools(
+    broadcast_mempool_backend: str,
+) -> None:
+    result = run_local_honeybadger_rust_driven(
+        sid=f"test:drive-hb:outer:{broadcast_mempool_backend}",
+        num_nodes=4,
+        faulty=1,
+        batch_size=1,
+        max_rounds=1,
+        global_timeout=10.0,
+        broadcast_mempool_backend=broadcast_mempool_backend,
+    )
+
+    assert result.protocol == "hb"
+    assert result.acs_protocol == "hb"
+    assert len(result.nodes) == 4
+    assert len(result.rounds) == 1
+    assert all(node.worker_error is None for node in result.nodes)
+    assert result.rounds[0].selected_count == 4
+    assert result.rounds[0].delivered_count == 4
 
 
 def test_local_honeybadger_outer_can_be_rust_driven_with_dumbo_acs_provider() -> None:

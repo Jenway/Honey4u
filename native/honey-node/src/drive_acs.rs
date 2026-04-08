@@ -96,6 +96,14 @@ pub(crate) fn driver_phase_stats_json(stats: &DriverPhaseStats) -> Value {
         "pull_limit_hits": stats.pull_limit_hits,
         "total_push_seconds": stats.total_push_seconds,
         "total_pull_seconds": stats.total_pull_seconds,
+        "send_events": stats.send_events,
+        "send_payload_bytes": stats.send_payload_bytes,
+        "decision_events": stats.decision_events,
+        "failure_events": stats.failure_events,
+        "carryover_events": stats.carryover_events,
+        "broadcast_output_events": stats.broadcast_output_events,
+        "broadcast_output_payload_bytes": stats.broadcast_output_payload_bytes,
+        "broadcast_output_roothash_bytes": stats.broadcast_output_roothash_bytes,
         "host_stats": stats.host_stats.iter().map(|host| {
             json!({
                 "pid": host.pid,
@@ -139,7 +147,10 @@ fn collect_exchange_events(
                         "drive-acs round {round_id}: invalid recipient {recipient}"
                     ));
                 }
-                pending_deliveries.entry(recipient).or_default().push(payload);
+                pending_deliveries
+                    .entry(recipient)
+                    .or_default()
+                    .push(payload);
             }
             PyAcsWireEvent::Decision {
                 round_id: event_round_id,
@@ -167,6 +178,7 @@ fn collect_exchange_events(
                 round_id: _,
                 items: _,
             } => {}
+            PyAcsWireEvent::BroadcastOutput { .. } => {}
         }
     }
     Ok(())
@@ -483,7 +495,10 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                                 "drive-acs round {round_id}: invalid recipient {recipient} during settle"
                             ));
                         }
-                        pending_deliveries.entry(recipient).or_default().push(payload);
+                        pending_deliveries
+                            .entry(recipient)
+                            .or_default()
+                            .push(payload);
                     }
                     PyAcsWireEvent::Failure {
                         round_id: event_round_id,
@@ -505,6 +520,7 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                             ));
                         }
                     }
+                    PyAcsWireEvent::BroadcastOutput { .. } => {}
                 }
             }
         }

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import time
 from typing import Literal, cast
 
 import honey_native
+import pytest
+from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.host_bridge import (
     PersistentAcsHost,
     build_persistent_acs_host_from_json,
@@ -33,7 +36,7 @@ def _drain_until_decisions(
                 progressed = True
                 kind = str(event["kind"])
                 if kind == "send":
-                    recipient = int(event["recipient"])
+                    recipient = cast(int, event["recipient"])
                     sender, envelope = cast(
                         tuple[int, ProtocolEnvelope],
                         honey_native.decode_protocol_envelope_py(cast(bytes, event["payload"])),
@@ -68,6 +71,7 @@ def _build_hosts(
     faulty: int,
     *,
     output_mode: Literal["selected_pids", "payloads"] = "selected_pids",
+    config: dict[str, object] | None = None,
 ) -> list[PersistentAcsHost]:
     payloads = (
         serialize_dumbo_crypto_payloads_json(num_nodes, faulty)
@@ -81,6 +85,7 @@ def _build_hosts(
             nodes=num_nodes,
             faulty=faulty,
             crypto_json=payload,
+            config_json=json.dumps(config) if config is not None else None,
             output_mode=output_mode,
         )
         for pid, payload in enumerate(payloads)
@@ -93,7 +98,7 @@ def test_persistent_hb_acs_host_reuses_worker_threads_across_rounds() -> None:
     hosts = _build_hosts("hb", num_nodes, faulty)
 
     try:
-        worker_idents = [int(host.stats()["worker_ident"]) for host in hosts]
+        worker_idents = [cast(int, host.stats()["worker_ident"]) for host in hosts]
         assert len(set(worker_idents)) == num_nodes
 
         for round_id in range(2):
@@ -109,7 +114,7 @@ def test_persistent_hb_acs_host_reuses_worker_threads_across_rounds() -> None:
             )
             assert len(set(decisions)) == 1
             assert decisions[0] == tuple(range(num_nodes))
-            assert [int(host.stats()["worker_ident"]) for host in hosts] == worker_idents
+            assert [cast(int, host.stats()["worker_ident"]) for host in hosts] == worker_idents
     finally:
         for host in hosts:
             host.shutdown()
@@ -138,26 +143,55 @@ def test_persistent_dumbo_acs_host_reaches_consistent_decision() -> None:
             host.shutdown()
 
 
-def test_persistent_hb_acs_host_can_emit_payload_decisions() -> None:
+def test_persistent_hb_acs_host_rejects_payload_decisions() -> None:
     num_nodes = 4
     faulty = 1
-    proposals = [f"hb-payload-node-{pid}".encode() for pid in range(num_nodes)]
     hosts = _build_hosts("hb", num_nodes, faulty, output_mode="payloads")
+
+    try:
+        for pid, host in enumerate(hosts):
+            with pytest.raises(
+                ProtocolInvariantError, match="payload output mode has been removed"
+            ):
+                host.start_round(
+                    round_id=0,
+                    sid="test:acs-host:hb:payloads:",
+                    proposal_input=f"hb-payload-node-{pid}".encode(),
+                )
+    finally:
+        for host in hosts:
+            host.shutdown()
+
+
+def test_persistent_hb_acs_host_exposes_rust_broadcast_outputs_via_side_channel() -> None:
+    num_nodes = 4
+    faulty = 1
+    hosts = _build_hosts(
+        "hb",
+        num_nodes,
+        faulty,
+        config={"broadcast_mempool_backend": "rust", "pool_mempool_max": 64},
+    )
 
     try:
         for pid, host in enumerate(hosts):
             host.start_round(
                 round_id=0,
-                sid="test:acs-host:hb:payloads:",
-                proposal_input=proposals[pid],
+                sid="test:acs-host:hb:rust-broadcast-side-channel:",
+                proposal_input=f"hb-round-0-node-{pid}".encode(),
             )
 
-        decisions = cast(
-            list[tuple[bytes | None, ...]],
-            _drain_until_decisions(hosts, round_id=0, decision_key="selected_payloads"),
-        )
+        decisions = cast(list[tuple[int, ...]], _drain_until_decisions(hosts, round_id=0))
         assert len(set(decisions)) == 1
-        assert decisions[0] == tuple(proposals)
+        assert decisions[0] == tuple(range(num_nodes))
+
+        for host in hosts:
+            outputs = host.take_round_broadcast_outputs(0)
+            assert len(outputs) == num_nodes
+            assert {cast(int, output["sender"]) for output in outputs} == set(range(num_nodes))
+            assert all(cast(bytes, output["payload"]) for output in outputs)
+            assert all(len(cast(bytes, output["roothash"])) == 32 for output in outputs)
+            assert host.take_round_broadcast_outputs(0) == []
     finally:
         for host in hosts:
             host.shutdown()

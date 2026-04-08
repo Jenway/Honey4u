@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import honey_native
 
 from honey_acs.crypto.merkle import decode, encode
-from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_acs.data.broadcast_mempool import BroadcastStore
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import RbcEcho, RbcReady, RbcVal
 from honey_acs.params import CommonParams
@@ -44,7 +44,7 @@ async def reliablebroadcast(
     input_queue: asyncio.Queue,
     receive_queue: asyncio.Queue,
     send_queue: asyncio.Queue,
-    mempool: BroadcastMempool,
+    mempool: BroadcastStore,
     round_no: int,
 ) -> str:
     """Reliable broadcast (RBC) protocol."""

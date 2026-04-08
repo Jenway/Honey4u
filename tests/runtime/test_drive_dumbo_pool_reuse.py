@@ -122,19 +122,15 @@ def test_drive_dumbo_new_driver_with_pool_reuse_produces_carryovers() -> None:
         max_rounds=3,
         global_timeout=60.0,
         enable_broadcast_pool_reuse=True,
+        enable_pool_reference_proposals=True,
         pool_grace_ms=100,
         pool_reuse_limit_per_round=4,
         pool_expire_rounds=10,
     )
     assert result.enable_pool_reuse
     _assert_dumbo_run_invariants(result, num_nodes=4, faulty=1, max_rounds=3)
-
-    # With pool reuse enabled, we expect the output mode to be "payloads",
-    # meaning selected_pids may be partial (only those actually decided)
-    for round_data in result.rounds:
-        assert round_data.selected_count >= 3, (  # N - f = 4 - 1 = 3
-            f"round {round_data.round_id}: expected at least 3 selected, got {round_data.selected_count}"
-        )
+    assert max(node.mempool_size for node in result.nodes) > 0
+    assert sum(round_data.reused_reference_count for round_data in result.rounds) > 0
 
 
 def test_drive_dumbo_new_driver_pool_reuse_chain_is_deterministic() -> None:

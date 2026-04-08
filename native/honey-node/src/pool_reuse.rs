@@ -46,6 +46,16 @@ pub struct ReusableEntry {
     pub selected_in_round: Option<u32>,
 }
 
+/// A basic RBC output stored in the broadcast mempool.
+#[derive(Debug, Clone)]
+pub struct RbcEntry {
+    pub payload: Vec<u8>,
+    pub roothash: Vec<u8>,
+    pub round_no: u32,
+    pub sender_id: u32,
+    pub timestamp: f64,
+}
+
 /// Decoded ACS payload: either an inline batch or a bundle with references.
 #[derive(Debug)]
 pub enum AcsPayload {
@@ -174,7 +184,8 @@ pub fn decode_acs_payload(bytes: &[u8]) -> Result<AcsPayload, String> {
 /// In-memory store for PRBC-certified payloads that can be referenced across rounds.
 /// Corresponds to Python `honey_acs.data.broadcast_mempool.BroadcastMempool`.
 pub struct BroadcastMempool {
-    entries: HashMap<String, ReusableEntry>,
+    reusable_entries: HashMap<String, ReusableEntry>,
+    rbc_entries: HashMap<String, RbcEntry>,
     max_size: usize,
     expire_rounds: u32,
 }
@@ -182,7 +193,8 @@ pub struct BroadcastMempool {
 impl BroadcastMempool {
     pub fn new(max_size: usize, expire_rounds: u32) -> Self {
         Self {
-            entries: HashMap::new(),
+            reusable_entries: HashMap::new(),
+            rbc_entries: HashMap::new(),
             max_size,
             expire_rounds,
         }
@@ -208,25 +220,48 @@ impl BroadcastMempool {
         sender_id: u32,
         timestamp: f64,
     ) {
-        if self.entries.len() >= self.max_size {
+        if self.len() >= self.max_size {
             return;
         }
         let item_id = Self::compute_item_id(round_no, sender_id, &roothash);
-        self.entries.entry(item_id).or_insert(ReusableEntry {
+        self.reusable_entries
+            .entry(item_id)
+            .or_insert(ReusableEntry {
+                payload,
+                roothash,
+                proof_payload,
+                round_no,
+                sender_id,
+                timestamp,
+                consumed_in_round: None,
+                selected_in_round: None,
+            });
+    }
+
+    pub fn add_rbc(
+        &mut self,
+        payload: Vec<u8>,
+        roothash: Vec<u8>,
+        round_no: u32,
+        sender_id: u32,
+        timestamp: f64,
+    ) {
+        if self.len() >= self.max_size {
+            return;
+        }
+        let item_id = Self::compute_item_id(round_no, sender_id, &roothash);
+        self.rbc_entries.entry(item_id).or_insert(RbcEntry {
             payload,
             roothash,
-            proof_payload,
             round_no,
             sender_id,
             timestamp,
-            consumed_in_round: None,
-            selected_in_round: None,
         });
     }
 
     /// Look up an entry by its computed item ID.
     pub fn get_reusable(&self, item_id: &str) -> Option<&ReusableEntry> {
-        self.entries.get(item_id)
+        self.reusable_entries.get(item_id)
     }
 
     /// List entries eligible for reuse in the given round, sorted ascending by
@@ -235,7 +270,7 @@ impl BroadcastMempool {
     /// Eligibility: `consumed_in_round.is_none() && round_no < current_round`.
     pub fn list_reusable(&self, current_round: u32, limit: usize) -> Vec<(String, &ReusableEntry)> {
         let mut eligible: Vec<(String, &ReusableEntry)> = self
-            .entries
+            .reusable_entries
             .iter()
             .filter(|(_, e)| e.consumed_in_round.is_none() && e.round_no < current_round)
             .map(|(k, v)| (k.clone(), v))
@@ -254,14 +289,14 @@ impl BroadcastMempool {
 
     /// Mark an entry as selected for the given round (for the `_reuse_owner` check).
     pub fn mark_selected(&mut self, item_id: &str, round_id: u32) {
-        if let Some(e) = self.entries.get_mut(item_id) {
+        if let Some(e) = self.reusable_entries.get_mut(item_id) {
             e.selected_in_round = Some(round_id);
         }
     }
 
     /// Mark an entry as consumed in the given round (excludes it from future reuse).
     pub fn mark_consumed(&mut self, item_id: &str, round_id: u32) {
-        if let Some(e) = self.entries.get_mut(item_id) {
+        if let Some(e) = self.reusable_entries.get_mut(item_id) {
             e.consumed_in_round = Some(round_id);
         }
     }
@@ -270,15 +305,17 @@ impl BroadcastMempool {
     /// Matches Python `BroadcastMempool.cleanup(round_id)`.
     pub fn cleanup(&mut self, round_id: u32) {
         let expire_before = round_id.saturating_sub(self.expire_rounds);
-        self.entries.retain(|_, e| e.round_no >= expire_before);
+        self.reusable_entries
+            .retain(|_, e| e.round_no >= expire_before);
+        self.rbc_entries.retain(|_, e| e.round_no >= expire_before);
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.reusable_entries.len() + self.rbc_entries.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.reusable_entries.is_empty() && self.rbc_entries.is_empty()
     }
 }
 

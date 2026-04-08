@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_acs.data.broadcast_mempool import BroadcastStore
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import Channel, ProtocolMessage
 from honey_acs.params import CommonParams, CryptoParams
@@ -124,7 +124,7 @@ async def run_bkr93_acs_with_send(
     coin_recvs: list[asyncio.Queue[CoinRecv]],
     aba_recvs: list[asyncio.Queue[AbaRecv]],
     rbc_recvs: list[asyncio.Queue[RbcRecv]],
-    mempool: BroadcastMempool,
+    mempool: BroadcastStore,
     round_id: int,
     my_rbc_input: asyncio.Queue[bytes],
     output_queue: asyncio.Queue[tuple[int | bytes | None, ...]],
