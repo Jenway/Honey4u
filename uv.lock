@@ -6,7 +6,6 @@ requires-python = ">=3.14"
 members = [
     "honey-acs",
     "honey-cr",
-    "honey-legacy-node",
     "honey-native",
     "honey-runtime",
     "honey-shared",
@@ -65,7 +64,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "honey-acs" },
-    { name = "honey-legacy-node" },
     { name = "honey-native" },
     { name = "honey-runtime" },
     { name = "honey-shared" },
@@ -83,7 +81,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "honey-acs", editable = "packages/honey-acs" },
-    { name = "honey-legacy-node", editable = "legacy/honey-python-node" },
     { name = "honey-native", editable = "native/honey-native" },
     { name = "honey-runtime", editable = "packages/honey-runtime" },
     { name = "honey-shared", editable = "packages/honey-shared" },
@@ -96,25 +93,6 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "ruff", specifier = ">=0.11.4" },
     { name = "ty", specifier = ">=0.0.1a16" },
-]
-
-[[package]]
-name = "honey-legacy-node"
-version = "0.1.0"
-source = { editable = "legacy/honey-python-node" }
-dependencies = [
-    { name = "honey-acs" },
-    { name = "honey-native" },
-    { name = "honey-runtime" },
-    { name = "honey-shared" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "honey-acs", editable = "packages/honey-acs" },
-    { name = "honey-native", editable = "native/honey-native" },
-    { name = "honey-runtime", editable = "packages/honey-runtime" },
-    { name = "honey-shared", editable = "packages/honey-shared" },
 ]
 
 [[package]]

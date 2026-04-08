@@ -1,22 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import subprocess
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
-import honey_native
-from honey_legacy_node.dumbo.core import DumboBFT
-from honey_legacy_node.honeybadger.core import HoneyBadgerBFT
-from honey_shared.params import CommonParams, CryptoParams, HBConfig
-
-from honey_runtime.drivers.crypto_material import build_materials
 from honey_runtime.infra.logging import setup_logging
-from honey_runtime.simulation import DeterministicNetworkSimulator
 
 _HONEY_NODE_BINARY: Path | None = None
 TxInputMode = Literal["json_str", "bytes"]
@@ -431,41 +422,6 @@ def _decode_rust_driven_honeybadger_payload(
 
 def _configure_logging(log_level: str) -> None:
     setup_logging(log_level)
-
-
-def _resolve_protocol(protocol: str) -> str:
-    normalized = protocol.strip().lower()
-    if normalized in {"hb", "honeybadger"}:
-        return "hb"
-    if normalized == "dumbo":
-        return "dumbo"
-    raise ValueError(f"Unsupported protocol: {protocol}")
-
-
-def _node_class(protocol: str):
-    return DumboBFT if _resolve_protocol(protocol) == "dumbo" else HoneyBadgerBFT
-
-
-def _seed_dummy_transactions(
-    node: HoneyBadgerBFT,
-    pid: int,
-    transactions_per_node: int,
-    tx_input: TxInputMode = "json_str",
-) -> None:
-    for tx_index in range(transactions_per_node):
-        tx = f"Dummy TX node-{pid}-tx-{tx_index}"
-        submitted_at_ns = time.time_ns()
-        if tx_input == "json_str":
-            node.submit_tx_json_str(tx, track_latency=True, submitted_at_ns=submitted_at_ns)
-            continue
-        if tx_input == "bytes":
-            node.submit_tx_bytes(
-                honey_native.encode_json_string(tx),
-                track_latency=True,
-                submitted_at_ns=submitted_at_ns,
-            )
-            continue
-        raise ValueError(f"Unsupported tx input mode: {tx_input}")
 
 
 def _build_honey_node_binary() -> Path:
@@ -1074,64 +1030,3 @@ def run_local_dumbo_new_driver(
         ledger_dir=ledger_dir,
         tx_payload=tx_payload,
     )
-
-
-async def run_local_honeybadger_nodes_deterministic(
-    sid: str,
-    num_nodes: int,
-    faulty: int,
-    *,
-    seed: int = 0,
-    batch_size: int = 1,
-    max_rounds: int = 1,
-    round_timeout: float = 10.0,
-    min_delay_steps: int = 0,
-    max_delay_steps: int = 0,
-    transactions_per_node: int = 1,
-    tx_input: TxInputMode = "json_str",
-    log_level: str = "WARNING",
-    rust_tx_pool_max_bytes: int = 0,
-) -> list[HoneyBadgerBFT]:
-    _configure_logging(log_level)
-    sig_pk, sig_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks = build_materials(
-        num_nodes, faulty
-    )
-    simulator = DeterministicNetworkSimulator(
-        num_nodes,
-        seed=seed,
-        min_delay_steps=min_delay_steps,
-        max_delay_steps=max_delay_steps,
-    )
-
-    nodes: list[HoneyBadgerBFT] = []
-    for pid in range(num_nodes):
-        common = CommonParams(sid=sid, pid=pid, N=num_nodes, f=faulty, leader=0)
-        crypto = CryptoParams(
-            sig_pk=sig_pk,
-            sig_sk=sig_shares[pid],
-            enc_pk=enc_pk,
-            enc_sk=enc_shares[pid],
-            ecdsa_pks=ecdsa_pks,
-            ecdsa_sk=ecdsa_sks[pid],
-        )
-        config = HBConfig(
-            batch_size=batch_size,
-            rust_tx_pool_max_bytes=rust_tx_pool_max_bytes,
-            max_rounds=max_rounds,
-            round_timeout=round_timeout,
-            log_level=log_level,
-        )
-        node = HoneyBadgerBFT(common, crypto, simulator.transports[pid], config=config)
-        _seed_dummy_transactions(node, pid, transactions_per_node, tx_input)
-        nodes.append(node)
-
-    stop_event = asyncio.Event()
-    sim_task = asyncio.create_task(simulator.run(stop_event))
-    try:
-        await asyncio.gather(*(asyncio.create_task(node.run()) for node in nodes))
-        await simulator.flush()
-    finally:
-        stop_event.set()
-        await sim_task
-
-    return nodes

@@ -2,7 +2,6 @@
 
 from honey_runtime.runners._core import (
     _build_honey_node_binary,
-    run_local_honeybadger_nodes_deterministic,
 )
 from honey_runtime.runners.results import (
     MetricTimingSummary,
@@ -52,6 +51,5 @@ __all__ = [
     "run_local_dumbo_new_driver",
     "run_local_dumbo_rust_driven",
     "run_local_honeybadger_acs_rust_driven",
-    "run_local_honeybadger_nodes_deterministic",
     "run_local_honeybadger_rust_driven",
 ]

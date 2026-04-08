@@ -10,7 +10,6 @@ dependencies = [
     "honey-shared",
     "honey-acs",
     "honey-runtime",
-    "honey-legacy-node",
     "honey-native",
 ]
 
@@ -19,7 +18,6 @@ members = [
     "packages/honey-shared",
     "packages/honey-acs",
     "packages/honey-runtime",
-    "legacy/honey-python-node",
     "native/honey-native",
 ]
 
@@ -39,7 +37,6 @@ pythonpath = [
     "packages/honey-shared/src",
     "packages/honey-acs/src",
     "packages/honey-runtime/src",
-    "legacy/honey-python-node/src",
     ".",
 ]
 
@@ -58,9 +55,7 @@ include = [
     "packages/honey-runtime/src/honey_runtime/transport",
     "packages/honey-runtime/src/honey_runtime/routing",
     "packages/honey-runtime/src/honey_runtime/drivers/crypto_material.py",
-    "legacy/honey-python-node/src/honey_legacy_node/bootstrap.py",
     "tests/native/test_ecdsa_and_crypto_params.py",
-    "tests/runtime/test_runtime_boundaries.py",
 ]
 exclude = [
     "benchmarks",
