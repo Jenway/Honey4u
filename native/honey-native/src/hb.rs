@@ -8,11 +8,12 @@ use crate::archive::crypto_wire::{
 };
 use crate::archive::wire::{EncryptedBatchWire, TxBatchWire};
 use crate::crypto;
-use crate::crypto::threshold::keygen::{
+use honey_crypto::threshold;
+use honey_crypto::threshold::keygen::{
     Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams,
 };
 
-pub use crate::crypto::threshold::keygen::{
+pub use honey_crypto::threshold::keygen::{
     PartialDecryptionShare as HbPartialDecryptionShare, PkePrivateKeyShare as HbPkePrivateKeyShare,
     PkePublicParams as HbPkePublicParams,
 };
@@ -102,10 +103,8 @@ pub fn seal_encrypted_batch(
     let mut rng = rand::rng();
     rng.fill(&mut key);
     let ciphertext = crypto::aes::encrypt(&key, payload).map_err(|err| err.to_string())?;
-    let encrypted_key = encode_ciphertext(&crypto::threshold::pke::seal(
-        &public_params.master_public_key,
-        key,
-    ))?;
+    let encrypted_key =
+        encode_ciphertext(&threshold::pke::seal(&public_params.master_public_key, key))?;
     encode_result(&EncryptedBatchWire {
         encrypted_key,
         ciphertext,
@@ -117,7 +116,7 @@ impl BatchDecryptor {
         let mut states = Vec::with_capacity(batches.len());
         for batch in batches {
             let (encrypted_key, ciphertext) = decode_encrypted_batch(&batch)?;
-            crypto::threshold::pke::verify_ciphertext(&public_params, &encrypted_key)
+            threshold::pke::verify_ciphertext(&public_params, &encrypted_key)
                 .map_err(|err| err.to_string())?;
             states.push(BatchDecryptState {
                 encrypted_key,
@@ -151,7 +150,7 @@ impl BatchDecryptor {
     ) -> Result<Vec<PartialDecryptionShare>, String> {
         let mut shares = Vec::with_capacity(self.states.len());
         for state in &self.states {
-            let share = crypto::threshold::pke::partial_open_trusted(share, &state.encrypted_key);
+            let share = threshold::pke::partial_open_trusted(share, &state.encrypted_key);
             shares.push(share);
         }
         Ok(shares)
@@ -246,11 +245,7 @@ impl BatchDecryptor {
             if share_payload.player_id != sender_id + 1 {
                 continue;
             }
-            if !crypto::threshold::pke::verify_share(
-                &self.params,
-                &share_payload,
-                &state.encrypted_key,
-            ) {
+            if !threshold::pke::verify_share(&self.params, &share_payload, &state.encrypted_key) {
                 continue;
             }
 
@@ -268,7 +263,7 @@ impl BatchDecryptor {
             }
 
             let shares = state.shares.values().cloned().collect::<Vec<_>>();
-            match crypto::threshold::pke::open(&self.params, &state.encrypted_key, &shares) {
+            match threshold::pke::open(&self.params, &state.encrypted_key, &shares) {
                 Ok(opened_key) => match crypto::aes::decrypt(&opened_key, &state.ciphertext) {
                     Ok(plaintext) => {
                         state.plaintext = Some(plaintext);
@@ -326,8 +321,7 @@ impl BatchDecryptor {
             }
 
             let shares = state.shares.values().cloned().collect::<Vec<_>>();
-            match crypto::threshold::pke::open_trusted(&self.params, &state.encrypted_key, &shares)
-            {
+            match threshold::pke::open_trusted(&self.params, &state.encrypted_key, &shares) {
                 Ok(opened_key) => match crypto::aes::decrypt(&opened_key, &state.ciphertext) {
                     Ok(plaintext) => {
                         state.plaintext = Some(plaintext);
@@ -359,10 +353,79 @@ impl BatchDecryptor {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Public surface for honey-node crate (bypasses the Python layer)
+// ---------------------------------------------------------------------------
+
+/// Decoded pool-fetch message extracted from a raw protocol-envelope wire payload.
+pub enum PoolFetchWire {
+    Request {
+        sender: u32,
+        item_id: String,
+        origin_round: u32,
+        origin_sender: u32,
+        roothash: Vec<u8>,
+    },
+    Response {
+        sender: u32,
+        item_id: String,
+        payload: Vec<u8>,
+    },
+}
+
+/// Verify ≥ `threshold` distinct valid ECDSA signatures over `digest`.
+///
+/// `pub_keys`: compressed 33-byte secp256k1 public keys, indexed by node-id.
+/// `sigmas`:   `(node_id_0based as i32, raw_64b_signature)` pairs.
+pub fn ecdsa_verify_threshold_sigs(
+    pub_keys: &[[u8; 33]],
+    digest: &[u8],
+    sigmas: &[(i32, [u8; 64])],
+    threshold: usize,
+) -> bool {
+    crate::crypto::ecdsa::verify_threshold_sigs(pub_keys, digest, sigmas, threshold)
+}
+
+/// Decode a `DUMBO_POOL` message from a raw protocol-envelope wire payload.
+///
+/// Returns `Ok(Some(_))` for pool-fetch messages, `Ok(None)` for every other
+/// channel, and `Err(_)` if the bytes are malformed.
+pub fn decode_pool_fetch_from_wire(bytes: &[u8]) -> Result<Option<PoolFetchWire>, String> {
+    use crate::archive::wire::{ChannelWire, MessageWire};
+    let wire: crate::archive::wire::ProtocolEnvelopeWire =
+        crate::archive::api::decode_result(bytes)?;
+    if !matches!(wire.channel, ChannelWire::DumboPool) {
+        return Ok(None);
+    }
+    let sender = wire.sender;
+    match wire.message {
+        MessageWire::PoolFetchRequest {
+            item_id,
+            origin_round,
+            origin_sender,
+            roothash,
+        } => Ok(Some(PoolFetchWire::Request {
+            sender,
+            item_id,
+            origin_round,
+            origin_sender,
+            roothash,
+        })),
+        MessageWire::PoolFetchResponse { item_id, payload } => Ok(Some(PoolFetchWire::Response {
+            sender,
+            item_id,
+            payload,
+        })),
+        _ => Err(String::from(
+            "unexpected message type in DUMBO_POOL envelope",
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::threshold::keygen::generate_pke_keys;
+    use honey_crypto::threshold::keygen::generate_pke_keys;
 
     #[test]
     fn test_hb_block_round_trip_and_merge() {

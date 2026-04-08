@@ -1,16 +1,16 @@
-use crate::crypto;
-use crate::crypto::threshold::keygen::PartialSignature;
+use honey_crypto::threshold;
+use honey_crypto::threshold::keygen::PartialSignature;
+use honey_crypto::threshold::utils::{g1_from_bytes, g1_to_bytes};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::archive::api as archive_api;
 use crate::archive::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
-use crate::crypto::threshold::utils::{g1_from_bytes, g1_to_bytes};
 
 #[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct SigPublicKey {
-    inner: crypto::threshold::keygen::SigPublicParams,
+    inner: threshold::keygen::SigPublicParams,
 }
 
 #[pymethods]
@@ -36,14 +36,12 @@ impl SigPublicKey {
             Ok(value) => value,
             Err(_) => return Ok(false),
         };
-        let partial_sig = crypto::threshold::keygen::PartialSignature {
+        let partial_sig = threshold::keygen::PartialSignature {
             player_id: player_id + 1,
             value,
         };
         let msg = msg.to_vec();
-        py.detach(move || {
-            Ok(crypto::threshold::sig::verify_share(&self.inner, &partial_sig, &msg).is_ok())
-        })
+        py.detach(move || Ok(threshold::sig::verify_share(&self.inner, &partial_sig, &msg).is_ok()))
     }
 
     fn verify_combined(&self, py: Python<'_>, sig_bytes: &[u8], msg: &[u8]) -> PyResult<bool> {
@@ -52,9 +50,7 @@ impl SigPublicKey {
             Err(_) => return Ok(false),
         };
         let msg = msg.to_vec();
-        py.detach(move || {
-            Ok(crypto::threshold::sig::verify_combined(&self.inner, &sig, &msg).is_ok())
-        })
+        py.detach(move || Ok(threshold::sig::verify_combined(&self.inner, &sig, &msg).is_ok()))
     }
 
     fn verify_share_batch(
@@ -80,7 +76,7 @@ impl SigPublicKey {
                 .into_iter()
                 .map(|(partial, msg)| {
                     partial.is_some_and(|partial_sig| {
-                        crypto::threshold::sig::verify_share(&params, &partial_sig, &msg).is_ok()
+                        threshold::sig::verify_share(&params, &partial_sig, &msg).is_ok()
                     })
                 })
                 .collect())
@@ -97,7 +93,7 @@ impl SigPublicKey {
         for (player_id, sig_bytes) in shares {
             let value =
                 g1_from_bytes(&sig_bytes).map_err(|e| PyValueError::new_err(e.to_string()))?;
-            partial_sigs.push(crypto::threshold::keygen::PartialSignature {
+            partial_sigs.push(threshold::keygen::PartialSignature {
                 player_id: player_id + 1,
                 value,
             });
@@ -105,9 +101,9 @@ impl SigPublicKey {
 
         let msg = msg.to_vec();
         py.detach(move || {
-            match crypto::threshold::sig::combine_with_verify(&self.inner, &msg, &partial_sigs) {
+            match threshold::sig::combine_with_verify(&self.inner, &msg, &partial_sigs) {
                 Ok(combined_sig) => Ok(g1_to_bytes(&combined_sig)),
-                Err(e) => Err(e.into()),
+                Err(e) => Err(PyValueError::new_err(e.to_string())),
             }
         })
     }
@@ -122,19 +118,19 @@ impl SigPublicKey {
         for (player_id, sig_bytes) in shares {
             let value =
                 g1_from_bytes(&sig_bytes).map_err(|e| PyValueError::new_err(e.to_string()))?;
-            partial_sigs.push(crypto::threshold::keygen::PartialSignature {
+            partial_sigs.push(threshold::keygen::PartialSignature {
                 player_id: player_id + 1,
                 value,
             });
         }
 
         let msg = msg.to_vec();
-        py.detach(move || {
-            match crypto::threshold::sig::combine_trusted(&self.inner, &msg, &partial_sigs) {
+        py.detach(
+            move || match threshold::sig::combine_trusted(&self.inner, &msg, &partial_sigs) {
                 Ok(combined_sig) => Ok(g1_to_bytes(&combined_sig)),
-                Err(e) => Err(e.into()),
-            }
-        })
+                Err(e) => Err(PyValueError::new_err(e.to_string())),
+            },
+        )
     }
 
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
@@ -156,7 +152,7 @@ impl SigPublicKey {
 #[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct SigPrivateShare {
-    inner: crypto::threshold::keygen::SigPrivateKeyShare,
+    inner: threshold::keygen::SigPrivateKeyShare,
 }
 
 #[pymethods]
@@ -169,7 +165,7 @@ impl SigPrivateShare {
     fn sign(&self, py: Python<'_>, msg: &[u8]) -> PyResult<Vec<u8>> {
         let msg = msg.to_vec();
         py.detach(move || {
-            let partial = crypto::threshold::sig::sign(&self.inner, &msg);
+            let partial = threshold::sig::sign(&self.inner, &msg);
             Ok(g1_to_bytes(&partial.value))
         })
     }
@@ -197,7 +193,7 @@ fn sig_generate(
     threshold: usize,
 ) -> PyResult<(SigPublicKey, Vec<SigPrivateShare>)> {
     let keyset = py.detach(move || {
-        crypto::threshold::keygen::generate_sig_keys(players, threshold)
+        threshold::keygen::generate_sig_keys(players, threshold)
             .map_err(|e| PyValueError::new_err(e.to_string()))
     })?;
 

@@ -1,6 +1,6 @@
 use blst::{blst_fr, blst_fr_add, blst_fr_mul};
 
-use crate::crypto::bls::fr::Fr;
+use crate::bls::fr::Fr;
 
 /// Generate a Shamir secret-sharing polynomial of degree k-1 over Fr.
 /// Returns (master_secret, coefficients), where coefficients[0] = master_secret.

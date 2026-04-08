@@ -235,7 +235,9 @@ impl MerkleResult {
 #[pyfunction]
 fn merkle_encode(py: Python<'_>, data: &[u8], k: usize, n: usize) -> PyResult<MerkleResult> {
     let payload = data.to_vec();
-    let inner = py.detach(move || merkle::encode(&payload, k, n))?;
+    let inner = py
+        .detach(move || merkle::encode(&payload, k, n))
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(MerkleResult { inner })
 }
 

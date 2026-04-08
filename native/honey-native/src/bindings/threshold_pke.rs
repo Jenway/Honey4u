@@ -1,3 +1,6 @@
+use honey_crypto::threshold;
+use honey_crypto::threshold::keygen::{Ciphertext, PartialDecryptionShare};
+use honey_crypto::threshold::utils::g1_to_bytes;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rand::RngExt;
@@ -9,24 +12,22 @@ use crate::archive::crypto_wire::{
 };
 use crate::archive::wire::EncryptedBatchWire;
 use crate::crypto;
-use crate::crypto::threshold::keygen::{Ciphertext, PartialDecryptionShare};
-use crate::crypto::threshold::utils::g1_to_bytes;
 
-fn encode_ciphertext(value: &crypto::threshold::keygen::Ciphertext) -> PyResult<Vec<u8>> {
+fn encode_ciphertext(value: &threshold::keygen::Ciphertext) -> PyResult<Vec<u8>> {
     archive_api::encode(&CiphertextWire::from_runtime(value))
 }
 
-fn decode_ciphertext(payload: &[u8]) -> PyResult<crypto::threshold::keygen::Ciphertext> {
+fn decode_ciphertext(payload: &[u8]) -> PyResult<threshold::keygen::Ciphertext> {
     let wire: CiphertextWire = archive_api::decode(payload)?;
     wire.into_runtime()
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-fn encode_share(value: &crypto::threshold::keygen::PartialDecryptionShare) -> PyResult<Vec<u8>> {
+fn encode_share(value: &threshold::keygen::PartialDecryptionShare) -> PyResult<Vec<u8>> {
     archive_api::encode(&PartialDecryptionShareWire::from_runtime(value))
 }
 
-fn decode_share(payload: &[u8]) -> PyResult<crypto::threshold::keygen::PartialDecryptionShare> {
+fn decode_share(payload: &[u8]) -> PyResult<threshold::keygen::PartialDecryptionShare> {
     let wire: PartialDecryptionShareWire = archive_api::decode(payload)?;
     wire.into_runtime()
         .map_err(|e| PyValueError::new_err(e.to_string()))
@@ -48,7 +49,7 @@ struct BatchDecryptState {
 
 #[pyclass]
 pub struct PkeBatchDecryptor {
-    params: crypto::threshold::keygen::PkePublicParams,
+    params: threshold::keygen::PkePublicParams,
     states: Vec<BatchDecryptState>,
 }
 
@@ -59,7 +60,7 @@ impl PkeBatchDecryptor {
         let mut states = Vec::with_capacity(batches.len());
         for batch in batches {
             let (encrypted_key, ciphertext) = decode_encrypted_batch(&batch)?;
-            crypto::threshold::pke::verify_ciphertext(&pk.inner, &encrypted_key)
+            threshold::pke::verify_ciphertext(&pk.inner, &encrypted_key)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
             states.push(BatchDecryptState {
                 encrypted_key,
@@ -91,7 +92,7 @@ impl PkeBatchDecryptor {
         py.detach(move || {
             let mut shares = Vec::with_capacity(encrypted_keys.len());
             for encrypted_key in encrypted_keys {
-                let share = crypto::threshold::pke::partial_open(&private_share, &encrypted_key)
+                let share = threshold::pke::partial_open(&private_share, &encrypted_key)
                     .map_err(|e| PyValueError::new_err(e.to_string()))?;
                 shares.push(encode_share(&share)?);
             }
@@ -126,7 +127,7 @@ impl PkeBatchDecryptor {
             if share.player_id != sender_id + 1 {
                 continue;
             }
-            if !crypto::threshold::pke::verify_share(&self.params, &share, &state.encrypted_key) {
+            if !threshold::pke::verify_share(&self.params, &share, &state.encrypted_key) {
                 continue;
             }
 
@@ -144,7 +145,7 @@ impl PkeBatchDecryptor {
             }
 
             let shares = state.shares.values().cloned().collect::<Vec<_>>();
-            match crypto::threshold::pke::open(&self.params, &state.encrypted_key, &shares) {
+            match threshold::pke::open(&self.params, &state.encrypted_key, &shares) {
                 Ok(opened_key) => match crypto::aes::decrypt(&opened_key, &state.ciphertext) {
                     Ok(plaintext) => {
                         state.plaintext = Some(plaintext);
@@ -179,7 +180,7 @@ impl PkeBatchDecryptor {
 #[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PkePublicKey {
-    inner: crypto::threshold::keygen::PkePublicParams,
+    inner: threshold::keygen::PkePublicParams,
 }
 
 #[pymethods]
@@ -204,7 +205,7 @@ impl PkePublicKey {
         msg_arr.copy_from_slice(msg);
         let master_public_key = self.inner.master_public_key.clone();
         py.detach(move || {
-            let ct = crypto::threshold::pke::seal(&master_public_key, msg_arr);
+            let ct = threshold::pke::seal(&master_public_key, msg_arr);
             encode_ciphertext(&ct)
         })
     }
@@ -215,7 +216,7 @@ impl PkePublicKey {
             Err(_) => return Ok(false),
         };
 
-        match crypto::threshold::pke::verify_ciphertext(&self.inner, &ct) {
+        match threshold::pke::verify_ciphertext(&self.inner, &ct) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
@@ -235,11 +236,7 @@ impl PkePublicKey {
             return Ok(false);
         }
 
-        Ok(crypto::threshold::pke::verify_share(
-            &self.inner,
-            &share,
-            &ct,
-        ))
+        Ok(threshold::pke::verify_share(&self.inner, &share, &ct))
     }
 
     fn combine_shares(
@@ -257,7 +254,7 @@ impl PkePublicKey {
 
         let public_params = self.inner.clone();
         py.detach(move || {
-            let msg = crypto::threshold::pke::open(&public_params, &ct, &shares)
+            let msg = threshold::pke::open(&public_params, &ct, &shares)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
             Ok(msg.to_vec())
         })
@@ -284,7 +281,7 @@ impl PkePublicKey {
 #[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PkePrivateShare {
-    inner: crypto::threshold::keygen::PkePrivateKeyShare,
+    inner: threshold::keygen::PkePrivateKeyShare,
 }
 
 #[pymethods]
@@ -298,7 +295,7 @@ impl PkePrivateShare {
         let ct = decode_ciphertext(ct_bin)?;
         let private_share = self.inner.clone();
         py.detach(move || {
-            let share = crypto::threshold::pke::partial_open(&private_share, &ct)
+            let share = threshold::pke::partial_open(&private_share, &ct)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
             encode_share(&share)
         })
@@ -323,7 +320,7 @@ fn pke_generate(
     players: usize,
     threshold: usize,
 ) -> PyResult<(PkePublicKey, Vec<PkePrivateShare>)> {
-    let keyset = crypto::threshold::keygen::generate_pke_keys(players, threshold)
+    let keyset = threshold::keygen::generate_pke_keys(players, threshold)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
     let public_key = PkePublicKey {
@@ -348,8 +345,7 @@ fn seal_encrypted_batch(py: Python<'_>, pk: &PkePublicKey, payload: &[u8]) -> Py
         rng.fill(&mut key);
         let ciphertext = crypto::aes::encrypt(&key, &payload)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let encrypted_key =
-            encode_ciphertext(&crypto::threshold::pke::seal(&master_public_key, key))?;
+        let encrypted_key = encode_ciphertext(&threshold::pke::seal(&master_public_key, key))?;
         archive_api::encode(&EncryptedBatchWire {
             encrypted_key,
             ciphertext,

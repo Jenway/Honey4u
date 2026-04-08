@@ -1,6 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use runtime_core::transport::LocalTcpTransport as CoreLocalTcpTransport;
+
+use crate::transport::{LocalTcpTransport as CoreLocalTcpTransport, TransportHandle};
 
 #[pyclass]
 pub struct LocalTcpTransport {
@@ -39,7 +40,7 @@ impl LocalTcpTransport {
     }
 
     fn wakeup_seq(&self) -> u64 {
-        runtime_core::transport::TransportHandle::wakeup_seq(&self.inner)
+        TransportHandle::wakeup_seq(&self.inner)
     }
 
     fn stats(&self) -> PyResult<Py<PyAny>> {

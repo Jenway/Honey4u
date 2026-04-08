@@ -7,7 +7,7 @@ use k256::elliptic_curve::sec1::ToEncodedPoint;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
-use crate::crypto::crypto_error::CryptoError;
+use honey_crypto::crypto_error::CryptoError;
 
 static VERIFYING_KEY_CACHE: LazyLock<RwLock<HashMap<[u8; 33], VerifyingKey>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));

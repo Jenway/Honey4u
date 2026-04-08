@@ -1,7 +1,7 @@
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use sha2::{Digest, Sha256};
 
-use crate::crypto::crypto_error::CryptoError;
+use honey_crypto::crypto_error::CryptoError;
 
 /// Sibling hash on the path from leaf to root.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

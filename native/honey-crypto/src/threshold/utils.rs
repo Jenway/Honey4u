@@ -1,4 +1,4 @@
-use crate::crypto::bls::{fr::Fr, g1::G1, g2::G2};
+use crate::bls::{fr::Fr, g1::G1, g2::G2};
 use blst::{
     blst_bendian_from_scalar, blst_p1_compress, blst_p1_to_affine, blst_p2, blst_p2_affine,
     blst_p2_compress, blst_p2_from_affine, blst_p2_uncompress, blst_scalar, blst_scalar_from_fr,

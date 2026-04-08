@@ -1,0 +1,23 @@
+[package]
+name = "honey-crypto"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blst = "0.3.16"
+rand = "0.10.0"
+serde = { version = "1.0.228", features = ["derive"] }
+sha2 = "0.11.0"
+thiserror = "2.0.18"
+
+[lints.clippy]
+clone_on_copy = "allow"
+empty_line_after_doc_comments = "allow"
+enum_variant_names = "allow"
+manual_div_ceil = "allow"
+needless_borrow = "allow"
+needless_borrows_for_generic_args = "allow"
+needless_range_loop = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+wrong_self_convention = "allow"

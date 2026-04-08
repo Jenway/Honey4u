@@ -1,12 +1,12 @@
-use crate::crypto::crypto_error::CryptoError;
+use crate::crypto_error::CryptoError;
 
-use crate::crypto::bls::{g1::G1, g2::G2, pairing::verify_pairing_equality};
+use crate::bls::{g1::G1, g2::G2, pairing::verify_pairing_equality};
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
 use super::keygen::{PartialSignature, SigPrivateKeyShare, SigPublicParams};
 
-use crate::crypto::bls::interpolate::interpolate_at_zero;
+use crate::bls::interpolate::interpolate_at_zero;
 
 const DST_SIG: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
 static HASH_TO_G1_CACHE: LazyLock<RwLock<HashMap<Vec<u8>, G1>>> =

@@ -3,7 +3,7 @@ use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
 };
 
-use crate::crypto::crypto_error::CryptoError;
+use honey_crypto::crypto_error::CryptoError;
 
 /// Encrypts plaintext with AES-256-GCM.
 /// Returns nonce (12 bytes) || ciphertext+tag.

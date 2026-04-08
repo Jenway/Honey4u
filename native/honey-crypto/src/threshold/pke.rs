@@ -1,10 +1,10 @@
-use crate::crypto::crypto_error::CryptoError;
+use crate::crypto_error::CryptoError;
 
 use super::{
     keygen::{Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams},
     utils::{hash_g, hash_h},
 };
-use crate::crypto::bls::{
+use crate::bls::{
     fr::Fr, g1::G1, g2::G2, interpolate::interpolate_at_zero, pairing::verify_pairing_equality,
 };
 

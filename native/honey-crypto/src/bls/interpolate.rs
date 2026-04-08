@@ -3,7 +3,7 @@ use blst::{
     blst_p1_mult, blst_p2_add_or_double, blst_p2_mult, blst_scalar, blst_scalar_from_fr,
 };
 
-use crate::crypto::{bls::g1::G1, bls::g2::G2, crypto_error::CryptoError};
+use crate::{bls::g1::G1, bls::g2::G2, crypto_error::CryptoError};
 
 /// Marker trait for group elements that can be used in Lagrange interpolation.
 pub trait GroupElement: Clone {

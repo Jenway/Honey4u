@@ -1,8 +1,8 @@
-use crate::crypto::crypto_error::CryptoError;
+use crate::crypto_error::CryptoError;
 
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::bls::{
+use crate::bls::{
     fr::Fr,
     g1::G1,
     g2::G2,

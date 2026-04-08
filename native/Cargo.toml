@@ -1,3 +1,3 @@
 [workspace]
-members = ["honey-native", "runtime-core", "honey-node"]
+members = ["honey-crypto", "honey-native", "honey-node"]
 resolver = "2"

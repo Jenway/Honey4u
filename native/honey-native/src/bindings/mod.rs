@@ -3,7 +3,6 @@ use pyo3::prelude::*;
 mod aes;
 mod codec;
 mod ecdsa;
-mod error;
 mod key_storage;
 mod ledger;
 mod local_transport;
