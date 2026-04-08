@@ -1,6 +1,5 @@
 use pyo3::prelude::*;
 
-mod aes;
 mod codec;
 mod ecdsa;
 mod key_storage;
@@ -16,7 +15,6 @@ pub fn register_all(m: &Bound<'_, PyModule>) -> PyResult<()> {
     threshold_sig::register(m)?;
     threshold_pke::register(m)?;
     ecdsa::register(m)?;
-    aes::register(m)?;
     key_storage::register(m)?;
     ledger::register(m)?;
     local_transport::register(m)?;

@@ -2,13 +2,12 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyModule, PyString, PyTuple};
 use serde_json::Value as JsonValue;
-use std::collections::HashSet;
 use std::convert::TryFrom;
 
 use crate::archive::api as archive_api;
 use crate::archive::wire::{
     AbaPayloadWire, ChannelWire, EncryptedBatchWire, MessageWire, PdStoreRecordWire, PrbcProofWire,
-    ProtocolEnvelopeWire, ThresholdShareProofWire, TxBatchWire,
+    ProtocolEnvelopeWire, ThresholdShareProofWire,
 };
 
 fn parse_tx_json(raw: &[u8]) -> PyResult<JsonValue> {
@@ -46,24 +45,6 @@ fn json_value_to_py(py: Python<'_>, value: JsonValue) -> PyResult<Py<PyAny>> {
             Ok(py_dict.into_any().unbind())
         }
     }
-}
-
-fn merge_tx_batches_bytes_inner(blocks: Vec<Vec<u8>>) -> PyResult<Vec<Vec<u8>>> {
-    let mut ordered_results = Vec::new();
-    let mut seen = HashSet::new();
-
-    for payload in blocks {
-        let wire: TxBatchWire = archive_api::decode(&payload)?;
-
-        for raw_tx in wire.items {
-            if !seen.insert(raw_tx.clone()) {
-                continue;
-            }
-            ordered_results.push(raw_tx);
-        }
-    }
-
-    Ok(ordered_results)
 }
 
 fn to_u32(value: usize, name: &str) -> PyResult<u32> {
@@ -668,16 +649,15 @@ fn decode_encrypted_batch_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAn
 
 #[pyfunction]
 fn encode_tx_batch(py: Python<'_>, items: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
-    py.detach(move || archive_api::encode(&TxBatchWire { items }))
+    py.detach(move || crate::hb::encode_tx_batch(items))
+        .map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
 fn decode_tx_batch(py: Python<'_>, payload: &[u8]) -> PyResult<Vec<Vec<u8>>> {
     let payload = payload.to_vec();
-    py.detach(move || {
-        let wire: TxBatchWire = archive_api::decode(&payload)?;
-        Ok(wire.items)
-    })
+    py.detach(move || crate::hb::decode_tx_batch(&payload))
+        .map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
@@ -689,10 +669,8 @@ fn decode_tx_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAny>> {
 
 #[pyfunction]
 fn merge_tx_batches_bytes(py: Python<'_>, blocks: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
-    py.detach(move || {
-        let items = merge_tx_batches_bytes_inner(blocks)?;
-        archive_api::encode(&TxBatchWire { items })
-    })
+    py.detach(move || crate::hb::merge_tx_batches_bytes(blocks))
+        .map_err(PyValueError::new_err)
 }
 
 #[pyfunction]

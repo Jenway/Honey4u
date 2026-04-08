@@ -20,7 +20,7 @@ pub struct TxPool {
 
 impl TxPool {
     fn encode_json_string_bytes(value: &str) -> Result<Vec<u8>, String> {
-        serde_json::to_vec(value).map_err(|e| e.to_string())
+        crate::hb::encode_json_string(value)
     }
 
     fn push_inner(&mut self, tx_id: String, payload: Vec<u8>) -> Result<(), &'static str> {
