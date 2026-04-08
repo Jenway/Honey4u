@@ -4,11 +4,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from honey_shared.exceptions import ProtocolInvariantError
-from honey_shared.messages import Channel, ProtocolMessage
-from honey_shared.params import CommonParams, CryptoParams
-
 from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_acs.exceptions import ProtocolInvariantError
+from honey_acs.messages import Channel, ProtocolMessage
+from honey_acs.params import CommonParams, CryptoParams
 from honey_acs.subprotocols.binary_agreement import BAParams, binaryagreement
 from honey_acs.subprotocols.common_coin import CoinParams, SharedCoin
 from honey_acs.subprotocols.reliable_broadcast import BroadcastParams, reliablebroadcast

@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from honey_acs.crypto import sig
 from honey_acs.dumbo.dumbo_vacs import VacsDiffuse, VACSParams, validated_common_subset
-from honey_shared.crypto import sig
 
 
 def _network_sender(

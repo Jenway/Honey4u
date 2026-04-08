@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from honey_runtime.drivers.crypto_material import build_materials
-from honey_shared.crypto import ecdsa
-from honey_shared.params import CryptoParams
+from honey_acs.crypto import ecdsa
+from honey_acs.host_crypto import build_materials
+from honey_acs.params import CryptoParams
 
 
 def test_ecdsa_api_round_trip_and_threshold_verify() -> None:

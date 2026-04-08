@@ -5,11 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
-from honey_shared.crypto import sig
-from honey_shared.exceptions import ProtocolInvariantError
-from honey_shared.messages import Channel
-from honey_shared.params import CryptoParams, HBConfig
-
+from honey_acs.crypto import sig
 from honey_acs.data.broadcast_mempool import BroadcastMempool
 from honey_acs.dumbo.dumbo_acs import (
     DumboACSDecision,
@@ -17,6 +13,9 @@ from honey_acs.dumbo.dumbo_acs import (
     DumboProofDiffuse,
     dumbo_acs,
 )
+from honey_acs.exceptions import ProtocolInvariantError
+from honey_acs.messages import Channel
+from honey_acs.params import CryptoParams, HBConfig
 from honey_acs.service.base import AcsOutputMode, AcsService
 from honey_acs.subprotocols.dumbo_mvba import (
     MvbaAbaCoinShare,

@@ -1,8 +1,8 @@
 import honey_native
 import pytest
-from honey_shared.crypto.sig import PrivateShare as SigPrivateMaterial
-from honey_shared.crypto.sig import PublicKey as SigPublicMaterial
-from honey_shared.crypto.sig import generate as sig_generate
+from honey_acs.crypto.sig import PrivateShare as SigPrivateMaterial
+from honey_acs.crypto.sig import PublicKey as SigPublicMaterial
+from honey_acs.crypto.sig import generate as sig_generate
 
 
 @pytest.fixture

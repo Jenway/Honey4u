@@ -7,8 +7,6 @@ members = [
     "honey-acs",
     "honey-cr",
     "honey-native",
-    "honey-runtime",
-    "honey-shared",
 ]
 
 [[package]]
@@ -52,11 +50,11 @@ name = "honey-acs"
 version = "0.1.0"
 source = { editable = "packages/honey-acs" }
 dependencies = [
-    { name = "honey-shared" },
+    { name = "honey-native" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "honey-shared", editable = "packages/honey-shared" }]
+requires-dist = [{ name = "honey-native", editable = "native/honey-native" }]
 
 [[package]]
 name = "honey-cr"
@@ -65,8 +63,6 @@ source = { editable = "." }
 dependencies = [
     { name = "honey-acs" },
     { name = "honey-native" },
-    { name = "honey-runtime" },
-    { name = "honey-shared" },
 ]
 
 [package.dev-dependencies]
@@ -82,8 +78,6 @@ dev = [
 requires-dist = [
     { name = "honey-acs", editable = "packages/honey-acs" },
     { name = "honey-native", editable = "native/honey-native" },
-    { name = "honey-runtime", editable = "packages/honey-runtime" },
-    { name = "honey-shared", editable = "packages/honey-shared" },
 ]
 
 [package.metadata.requires-dev]
@@ -99,34 +93,6 @@ dev = [
 name = "honey-native"
 version = "0.1.1"
 source = { editable = "native/honey-native" }
-
-[[package]]
-name = "honey-runtime"
-version = "0.1.0"
-source = { editable = "packages/honey-runtime" }
-dependencies = [
-    { name = "honey-acs" },
-    { name = "honey-native" },
-    { name = "honey-shared" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "honey-acs", editable = "packages/honey-acs" },
-    { name = "honey-native", editable = "native/honey-native" },
-    { name = "honey-shared", editable = "packages/honey-shared" },
-]
-
-[[package]]
-name = "honey-shared"
-version = "0.1.0"
-source = { editable = "packages/honey-shared" }
-dependencies = [
-    { name = "honey-native" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "honey-native", editable = "native/honey-native" }]
 
 [[package]]
 name = "identify"

@@ -7,9 +7,8 @@ from collections.abc import Callable
 from queue import Empty, Queue
 from typing import Literal
 
-from honey_shared.params import CryptoParams, HBConfig
-
 from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_acs.params import CryptoParams, HBConfig
 
 type AcsProtocol = Literal["hb", "dumbo"]
 type AcsOutputMode = Literal["selected_pids", "payloads"]

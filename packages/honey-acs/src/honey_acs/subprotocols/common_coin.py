@@ -5,10 +5,10 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-from honey_shared.crypto import sig
-from honey_shared.messages import CoinShareMessage
-from honey_shared.params import CommonParams
-from honey_shared.telemetry import METRICS
+from honey_acs.crypto import sig
+from honey_acs.messages import CoinShareMessage
+from honey_acs.params import CommonParams
+from honey_acs.telemetry import METRICS
 
 
 def sha256_hash(x: bytes) -> bytes:

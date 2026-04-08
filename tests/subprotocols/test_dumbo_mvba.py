@@ -4,6 +4,7 @@ import asyncio
 import importlib
 
 import pytest
+from honey_acs.crypto import merkle, sig
 from honey_acs.subprotocols.dumbo_mvba import (
     MVBAParams,
     PdDone,
@@ -15,7 +16,6 @@ from honey_acs.subprotocols.dumbo_mvba import (
     _stored_digest,
     dumbo_mvba,
 )
-from honey_shared.crypto import merkle, sig
 
 dumbo_mvba_module = importlib.import_module("honey_acs.subprotocols.dumbo_mvba")
 

@@ -5,13 +5,13 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 import honey_native
-from honey_shared.crypto.merkle import decode, encode
-from honey_shared.exceptions import ProtocolInvariantError
-from honey_shared.messages import RbcEcho, RbcReady, RbcVal
-from honey_shared.params import CommonParams
-from honey_shared.telemetry import METRICS, timed_metric
 
+from honey_acs.crypto.merkle import decode, encode
 from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_acs.exceptions import ProtocolInvariantError
+from honey_acs.messages import RbcEcho, RbcReady, RbcVal
+from honey_acs.params import CommonParams
+from honey_acs.telemetry import METRICS, timed_metric
 
 
 @dataclass

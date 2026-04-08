@@ -5,12 +5,11 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, cast
 
-from honey_shared.exceptions import ProtocolInvariantError
-from honey_shared.messages import Channel, ProtocolMessage
-from honey_shared.params import CryptoParams, HBConfig
-
 from honey_acs.data.broadcast_mempool import BroadcastMempool
+from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.hb.bkr93 import CSParams, run_bkr93_acs_with_send
+from honey_acs.messages import Channel, ProtocolMessage
+from honey_acs.params import CryptoParams, HBConfig
 from honey_acs.service.base import AcsOutputMode, AcsService
 
 

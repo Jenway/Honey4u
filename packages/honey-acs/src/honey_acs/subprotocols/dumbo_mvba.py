@@ -8,14 +8,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import honey_native
-from honey_shared.crypto import merkle, sig
-from honey_shared.exceptions import ProtocolInvariantError
-from honey_shared.messages import BaAux, BaConf, BaEst, CoinShareMessage
-from honey_shared.params import CommonParams
-from honey_shared.telemetry import METRICS
 
+from honey_acs.crypto import merkle, sig
+from honey_acs.exceptions import ProtocolInvariantError
+from honey_acs.messages import BaAux, BaConf, BaEst, CoinShareMessage
+from honey_acs.params import CommonParams
 from honey_acs.subprotocols.binary_agreement import BAParams, binaryagreement
 from honey_acs.subprotocols.common_coin import CoinParams, SharedCoin
+from honey_acs.telemetry import METRICS
 
 type AbaPayload = BaEst | BaAux | BaConf
 type SendFn = Callable[[int, object], Awaitable[None]]

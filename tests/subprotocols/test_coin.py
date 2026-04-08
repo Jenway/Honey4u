@@ -1,8 +1,8 @@
 import asyncio
 
 import pytest
+from honey_acs.messages import CoinShareMessage
 from honey_acs.subprotocols.common_coin import CoinParams, SharedCoin
-from honey_shared.messages import CoinShareMessage
 
 
 @pytest.fixture

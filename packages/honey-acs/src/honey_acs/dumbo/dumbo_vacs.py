@@ -6,11 +6,10 @@ import pickle
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from honey_shared.crypto import sig
-from honey_shared.exceptions import ProtocolInvariantError
-from honey_shared.telemetry import METRICS
-
+from honey_acs.crypto import sig
+from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.subprotocols.dumbo_mvba import MVBAParams, dumbo_mvba
+from honey_acs.telemetry import METRICS
 
 
 @dataclass(slots=True)

@@ -4,15 +4,15 @@ import time
 from typing import Literal, cast
 
 import honey_native
-from honey_runtime.drivers.crypto_material import (
-    serialize_dumbo_crypto_payloads_json,
-    serialize_hb_crypto_payloads_json,
-)
-from honey_runtime.drivers.python_acs_bridge import (
+from honey_acs.host_bridge import (
     PersistentAcsHost,
     build_persistent_acs_host_from_json,
 )
-from honey_shared.messages import ProtocolEnvelope
+from honey_acs.host_crypto import (
+    serialize_dumbo_crypto_payloads_json,
+    serialize_hb_crypto_payloads_json,
+)
+from honey_acs.messages import ProtocolEnvelope
 
 
 def _drain_until_decisions(

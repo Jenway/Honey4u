@@ -4,6 +4,7 @@ import asyncio
 import importlib
 
 import pytest
+from honey_acs.crypto import ecdsa, merkle
 from honey_acs.subprotocols.provable_reliable_broadcast import (
     PrbcEcho,
     PRBCParams,
@@ -13,7 +14,6 @@ from honey_acs.subprotocols.provable_reliable_broadcast import (
     provable_reliable_broadcast,
     validate_prbc_proof,
 )
-from honey_shared.crypto import ecdsa, merkle
 
 prbc_module = importlib.import_module("honey_acs.subprotocols.provable_reliable_broadcast")
 

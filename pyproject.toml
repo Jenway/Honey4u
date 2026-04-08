@@ -7,25 +7,18 @@ name = "honey-cr"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "honey-shared",
     "honey-acs",
-    "honey-runtime",
     "honey-native",
 ]
 
 [tool.uv.workspace]
 members = [
-    "packages/honey-shared",
     "packages/honey-acs",
-    "packages/honey-runtime",
     "native/honey-native",
 ]
 
 [tool.uv.sources]
-honey-shared = { workspace = true }
 honey-acs = { workspace = true }
-honey-runtime = { workspace = true }
-honey-legacy-node = { workspace = true }
 honey-native = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
@@ -34,27 +27,19 @@ packages = ["src/honey_cr"]
 [tool.pytest.ini_options]
 pythonpath = [
     "src",
-    "packages/honey-shared/src",
     "packages/honey-acs/src",
-    "packages/honey-runtime/src",
     ".",
 ]
 
 [tool.ty.environment]
 root = [
-    "packages/honey-shared/src",
     "packages/honey-acs/src",
-    "packages/honey-runtime/src",
     "native/honey-native",
 ]
 
 [tool.ty.src]
 include = [
-    "packages/honey-shared/src/honey_shared",
     "packages/honey-acs/src/honey_acs",
-    "packages/honey-runtime/src/honey_runtime/transport",
-    "packages/honey-runtime/src/honey_runtime/routing",
-    "packages/honey-runtime/src/honey_runtime/drivers/crypto_material.py",
     "tests/native/test_ecdsa_and_crypto_params.py",
 ]
 exclude = [

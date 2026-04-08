@@ -4,11 +4,10 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from honey_shared.messages import BaAux, BaConf, BaEst
-from honey_shared.params import CommonParams
-from honey_shared.telemetry import METRICS
-
+from honey_acs.messages import BaAux, BaConf, BaEst
+from honey_acs.params import CommonParams
 from honey_acs.subprotocols.common_coin import SharedCoin
+from honey_acs.telemetry import METRICS
 
 type BaMessage = BaEst | BaAux | BaConf
 

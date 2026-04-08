@@ -370,7 +370,7 @@ fn build_message_object(
     let prbc_mod = PyModule::import(py, "honey_acs.subprotocols.provable_reliable_broadcast")?;
     let dumbo_acs_mod = PyModule::import(py, "honey_acs.dumbo.dumbo_acs")?;
     let mvba_mod = PyModule::import(py, "honey_acs.subprotocols.dumbo_mvba")?;
-    let pool_mod = PyModule::import(py, "honey_runtime.data.pool_reuse")?;
+    let pool_mod = PyModule::import(py, "honey_acs.pool_reuse")?;
     match wire {
         MessageWire::RbcVal {
             roothash,
@@ -656,7 +656,7 @@ fn encode_encrypted_batch_py(py: Python<'_>, batch: &Bound<'_, PyAny>) -> PyResu
 fn decode_encrypted_batch_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAny>> {
     let payload = payload.to_vec();
     let wire: EncryptedBatchWire = py.detach(move || archive_api::decode(&payload))?;
-    let messages_mod = PyModule::import(py, "honey_shared.messages")?;
+    let messages_mod = PyModule::import(py, "honey_acs.messages")?;
     Ok(messages_mod
         .getattr("EncryptedBatch")?
         .call1((
@@ -727,7 +727,7 @@ fn encode_protocol_envelope_py(
 fn decode_protocol_envelope_py(py: Python<'_>, payload: &[u8]) -> PyResult<(usize, Py<PyAny>)> {
     let payload = payload.to_vec();
     let wire: ProtocolEnvelopeWire = py.detach(move || archive_api::decode(&payload))?;
-    let messages_mod = PyModule::import(py, "honey_shared.messages")?;
+    let messages_mod = PyModule::import(py, "honey_acs.messages")?;
     let message = build_message_object(py, &messages_mod, wire.message)?;
     let channel = messages_mod
         .getattr("Channel")?

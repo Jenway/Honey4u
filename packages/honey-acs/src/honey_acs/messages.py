@@ -8,7 +8,7 @@ from typing import cast
 
 import honey_native
 
-from honey_shared.exceptions import SerializationError
+from honey_acs.exceptions import SerializationError
 
 _MERGE_TX_BATCHES_BYTES = cast(
     Callable[..., bytes], honey_native.__dict__["merge_tx_batches_bytes"]
