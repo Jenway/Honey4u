@@ -3,8 +3,9 @@ import logging
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine, Iterator
+from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import honey_native
 from honey_acs.data.broadcast_mempool import BroadcastMempool
@@ -73,6 +74,23 @@ class CommittedBlock:
         return decode_block(self.payload)
 
 
+class AcsHost(Protocol):
+    def start_round(self, *, round_id: int, sid: str, proposal_input: bytes | str) -> None: ...
+
+    def push_inbound_batch(
+        self,
+        items: list[tuple[int, int, str, int | None, object]],
+    ) -> int: ...
+
+    def pull_outbound_batch(self, limit: int = 128) -> list[dict[str, object]]: ...
+
+    def abort_round(self, round_id: int) -> None: ...
+
+    def outbound_ready(self) -> bool: ...
+
+    def outbound_wait_fd(self) -> int: ...
+
+
 class HoneyBadgerBFT:
     def __init__(
         self,
@@ -80,11 +98,13 @@ class HoneyBadgerBFT:
         crypto_params: CryptoParams,
         transport: Transport,
         config: HBConfig | None = None,
+        acs_host: AcsHost | None = None,
     ):
         self.common = common_params
         self.crypto = crypto_params
         self.transport = transport
         self.config = config or HBConfig()
+        self._acs_host = acs_host
         self.logger = self._build_logger(common_params.pid)
         self._ledger = self._build_ledger_recorder()
         self.mailboxes = NodeMailboxRouter(self.transport, self.logger)
@@ -311,6 +331,159 @@ class HoneyBadgerBFT:
     def _merge_block_batches(cls, block: tuple[bytes, ...]) -> CommittedBlock:
         return CommittedBlock.from_block_batches(block)
 
+    @staticmethod
+    def _drain_queue_batch[T](
+        queue: asyncio.Queue[T], first_item: T, *, limit: int = 64
+    ) -> list[T]:
+        items = [first_item]
+        while len(items) < limit:
+            try:
+                items.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return items
+
+    def _abort_acs_host_round(self, round_id: int) -> None:
+        if self._acs_host is None:
+            return
+        with suppress(Exception):
+            self._acs_host.abort_round(round_id)
+
+    @staticmethod
+    def _acs_host_failure(round_id: int, event: dict[str, object]) -> RuntimeError:
+        exception_type = str(event.get("exception_type", "RuntimeError"))
+        error = str(event.get("error", "ACS host round failed"))
+        return RuntimeError(f"ACS host round {round_id} failed with {exception_type}: {error}")
+
+    async def _send_acs_host_event(
+        self,
+        round_id: int,
+        event: dict[str, object],
+    ) -> None:
+        await self.transport.send(
+            int(event["recipient"]),
+            ProtocolEnvelope(
+                round_id=round_id,
+                channel=Channel(str(event["channel"])),
+                instance_id=cast(int | None, event.get("instance_id")),
+                message=cast(ProtocolMessage, event["message"]),
+            ),
+        )
+
+    async def _wait_for_acs_host_outbound(self, host: AcsHost) -> None:
+        if host.outbound_ready():
+            return
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        wait_fd = host.outbound_wait_fd()
+
+        def _notify_ready() -> None:
+            if not future.done():
+                future.set_result(None)
+
+        loop.add_reader(wait_fd, _notify_ready)
+        try:
+            if host.outbound_ready():
+                return
+            await future
+        finally:
+            loop.remove_reader(wait_fd)
+
+    async def _run_hosted_hb_acs_round(self, ctx: RoundContext) -> None:
+        host = self._acs_host
+        if host is None:
+            raise RuntimeError("ACS host bridge is not configured")
+
+        round_started = asyncio.Event()
+
+        async def start_round() -> None:
+            proposal_input = await ctx.my_rbc_input.get()
+            host.start_round(
+                round_id=ctx.round_id,
+                sid=ctx.sid,
+                proposal_input=proposal_input,
+            )
+            round_started.set()
+
+        async def forward_queue(
+            source: asyncio.Queue[tuple[int, object]],
+            *,
+            channel: Channel,
+            instance_id: int,
+        ) -> None:
+            await round_started.wait()
+            while True:
+                sender, message = await source.get()
+                batch = self._drain_queue_batch(source, (sender, message))
+                host.push_inbound_batch(
+                    [
+                        (item_sender, ctx.round_id, channel.value, instance_id, item_message)
+                        for item_sender, item_message in batch
+                    ]
+                )
+
+        async def pump_outbound() -> None:
+            await round_started.wait()
+            while True:
+                if not host.outbound_ready():
+                    await self._wait_for_acs_host_outbound(host)
+                    continue
+                for event in host.pull_outbound_batch(256):
+                    kind = str(event["kind"])
+                    if kind == "send":
+                        await self._send_acs_host_event(ctx.round_id, event)
+                        continue
+                    if kind == "decision":
+                        ctx.acs_output_queue.put_nowait(
+                            tuple(cast(list[bytes | None], event["selected_payloads"]))
+                        )
+                        return
+                    if kind == "failure":
+                        raise self._acs_host_failure(ctx.round_id, event)
+                    if kind == "carryovers":
+                        continue
+                    raise ProtocolInvariantError(f"unexpected ACS host event kind: {kind}")
+
+        try:
+            async with asyncio.TaskGroup() as task_group:
+                bridge_tasks: list[asyncio.Task[Any]] = []
+                spawn_bridge = self._task_spawner(task_group, bridge_tasks)
+                spawn_bridge(start_round())
+                for instance_id, queue in enumerate(ctx.coin_recvs):
+                    spawn_bridge(
+                        forward_queue(
+                            queue,
+                            channel=Channel.ACS_COIN,
+                            instance_id=instance_id,
+                        )
+                    )
+                for instance_id, queue in enumerate(ctx.aba_recvs):
+                    spawn_bridge(
+                        forward_queue(
+                            queue,
+                            channel=Channel.ACS_ABA,
+                            instance_id=instance_id,
+                        )
+                    )
+                for instance_id, queue in enumerate(ctx.rbc_recvs):
+                    spawn_bridge(
+                        forward_queue(
+                            queue,
+                            channel=Channel.ACS_RBC,
+                            instance_id=instance_id,
+                        )
+                    )
+                outbound_task = spawn_bridge(pump_outbound())
+                await outbound_task
+                self._cancel_round_tasks(bridge_tasks, keep={outbound_task})
+        except asyncio.CancelledError:
+            self._abort_acs_host_round(ctx.round_id)
+            raise
+        except Exception:
+            self._abort_acs_host_round(ctx.round_id)
+            raise
+
     async def _run_round(self, round_id: int, batch: PendingRoundBatch) -> Result[CommittedBlock]:
         try:
             async with asyncio.TaskGroup() as task_group:
@@ -326,30 +499,33 @@ class HoneyBadgerBFT:
                         broadcast=True,
                     )
                 )
-                spawn(
-                    run_bkr93_acs_with_send(
-                        params=CSParams(
-                            sid=f"{ctx.sid}CS",
-                            pid=ctx.pid,
-                            N=ctx.n,
-                            f=ctx.f,
-                            leader=ctx.pid,
-                        ),
-                        crypto=self.crypto,
-                        task_group=task_group,
-                        spawn=spawn,
-                        coin_recvs=ctx.coin_recvs,
-                        aba_recvs=ctx.aba_recvs,
-                        rbc_recvs=ctx.rbc_recvs,
-                        mempool=self.mempool,
-                        round_id=ctx.round_id,
-                        my_rbc_input=ctx.my_rbc_input,
-                        output_queue=ctx.acs_output_queue,
-                        logger=self.logger,
-                        send=self._send_round_message(round_id),
-                        output_mode="payloads",
+                if self._acs_host is None:
+                    spawn(
+                        run_bkr93_acs_with_send(
+                            params=CSParams(
+                                sid=f"{ctx.sid}CS",
+                                pid=ctx.pid,
+                                N=ctx.n,
+                                f=ctx.f,
+                                leader=ctx.pid,
+                            ),
+                            crypto=self.crypto,
+                            task_group=task_group,
+                            spawn=spawn,
+                            coin_recvs=ctx.coin_recvs,
+                            aba_recvs=ctx.aba_recvs,
+                            rbc_recvs=ctx.rbc_recvs,
+                            mempool=self.mempool,
+                            round_id=ctx.round_id,
+                            my_rbc_input=ctx.my_rbc_input,
+                            output_queue=ctx.acs_output_queue,
+                            logger=self.logger,
+                            send=self._send_round_message(round_id),
+                            output_mode="payloads",
+                        )
                     )
-                )
+                else:
+                    spawn(self._run_hosted_hb_acs_round(ctx))
 
                 propose_queue: asyncio.Queue[bytes] = asyncio.Queue(1)
                 propose_queue.put_nowait(self._proposal_payload_for_active_batch(batch))

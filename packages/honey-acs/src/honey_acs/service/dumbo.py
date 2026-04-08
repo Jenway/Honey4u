@@ -5,12 +5,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
+from honey_shared.crypto import sig
 from honey_shared.exceptions import ProtocolInvariantError
 from honey_shared.messages import Channel
 from honey_shared.params import CryptoParams, HBConfig
 
 from honey_acs.data.broadcast_mempool import BroadcastMempool
-from honey_acs.dumbo.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
+from honey_acs.dumbo.dumbo_acs import (
+    DumboACSDecision,
+    DumboACSParams,
+    DumboProofDiffuse,
+    dumbo_acs,
+)
 from honey_acs.service.base import AcsOutputMode, AcsService
 from honey_acs.subprotocols.dumbo_mvba import (
     MvbaAbaCoinShare,
@@ -48,13 +54,15 @@ _DUMBO_MVBA_MESSAGES = (
     MvbaAbaCoinShare,
 )
 
+type DumboServiceDecision = DumboACSDecision | tuple[bytes | None, ...]
+
 
 @dataclass(slots=True)
 class DumboRoundState:
     round_id: int
     sid: str
     input_queue: asyncio.Queue[bytes]
-    decide_queue: asyncio.Queue[tuple[int | bytes | None, ...]]
+    decide_queue: asyncio.Queue[DumboServiceDecision]
     receive_queue: asyncio.Queue[tuple[int, object]]
     task: asyncio.Task[None] | None = None
 
@@ -185,6 +193,11 @@ class DumboAcsService(AcsService):
         carryover_queue: asyncio.Queue[tuple[PrbcOutcome, ...]] | None = None
         if self.config.enable_broadcast_pool_reuse:
             carryover_queue = asyncio.Queue(1)
+        proof_pk = self.crypto.proof_sig_pk
+        proof_sk = self.crypto.proof_sig_sk
+        ecdsa_sk = self.crypto.ecdsa_sk
+        if proof_pk is None or proof_sk is None or ecdsa_sk is None:
+            raise ProtocolInvariantError("Dumbo ACS requires proof signature keys and ECDSA key")
 
         async def send(recipient: int, message: object) -> None:
             self.emit_event(
@@ -210,10 +223,10 @@ class DumboAcsService(AcsService):
                     leader=self.pid,
                     coin_pk=self.crypto.sig_pk,
                     coin_sk=self.crypto.sig_sk,
-                    proof_pk=self.crypto.proof_sig_pk,
-                    proof_sk=self.crypto.proof_sig_sk,
+                    proof_pk=cast(sig.PublicKey, proof_pk),
+                    proof_sk=cast(sig.PrivateShare, proof_sk),
                     ecdsa_pks=self.crypto.ecdsa_pks,
-                    ecdsa_sk=self.crypto.ecdsa_sk,
+                    ecdsa_sk=ecdsa_sk,
                     carryover_grace_ms=self.config.pool_grace_ms
                     if self.config.enable_broadcast_pool_reuse
                     else 0,

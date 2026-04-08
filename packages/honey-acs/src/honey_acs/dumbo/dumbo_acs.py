@@ -171,7 +171,7 @@ def _build_mvba_predicate(
 
 async def dumbo_acs(
     params: DumboACSParams,
-    input_queue: asyncio.Queue[bytes | str],
+    input_queue: asyncio.Queue[bytes],
     decide_queue: asyncio.Queue[DumboACSDecision | tuple[bytes | None, ...]],
     receive_queue: asyncio.Queue[tuple[int, object]],
     send: SendFn,

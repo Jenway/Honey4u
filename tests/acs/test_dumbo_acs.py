@@ -56,6 +56,7 @@ async def test_dumbo_acs_agrees_on_prbc_selected_values() -> None:
                         decide_queues[pid],
                         recv_queues[pid],
                         _network_sender(pid, recv_queues),
+                        output_mode="payloads",
                     )
                 )
             )

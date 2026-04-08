@@ -5,7 +5,7 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from honey_acs.dumbo.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
 from honey_acs.subprotocols.dumbo_mvba import (
@@ -55,7 +55,12 @@ from honey_shared.params import HBConfig
 from honey_shared.results import Result, success
 
 from honey_legacy_node.honeybadger.block import honeybadger_block
-from honey_legacy_node.honeybadger.core import CommittedBlock, HoneyBadgerBFT, PendingRoundBatch
+from honey_legacy_node.honeybadger.core import (
+    AcsHost,
+    CommittedBlock,
+    HoneyBadgerBFT,
+    PendingRoundBatch,
+)
 
 DUMBO_PRBC_MESSAGES = (PrbcVal, PrbcEcho, PrbcReady)
 DUMBO_MVBA_MESSAGES = (
@@ -100,8 +105,15 @@ class DumboBFT(HoneyBadgerBFT):
         crypto_params,
         transport: Transport,
         config: HBConfig | None = None,
+        acs_host: AcsHost | None = None,
     ):
-        super().__init__(common_params, crypto_params, transport, config=config)
+        super().__init__(
+            common_params,
+            crypto_params,
+            transport,
+            config=config,
+            acs_host=acs_host,
+        )
         if self.crypto.proof_sig_pk is None or self.crypto.proof_sig_sk is None:
             raise ValueError("DumboBFT requires proof_sig_pk/proof_sig_sk in CryptoParams")
         if not self.crypto.ecdsa_pks or self.crypto.ecdsa_sk is None:
@@ -287,6 +299,112 @@ class DumboBFT(HoneyBadgerBFT):
         pending_fetches.pop(reference.item_id, None)
         return payload
 
+    @staticmethod
+    def _decode_host_carryovers(items: list[object]) -> tuple[PrbcOutcome, ...]:
+        carryovers: list[PrbcOutcome] = []
+        for item in items:
+            payload = cast(dict[str, object], item)
+            carryovers.append(
+                PrbcOutcome(
+                    leader=int(payload["leader"]),
+                    value=cast(bytes, payload["value"]),
+                    proof=deserialize_prbc_proof(cast(bytes, payload["proof_payload"])),
+                )
+            )
+        return tuple(carryovers)
+
+    async def _run_hosted_dumbo_acs_round(
+        self,
+        ctx: DumboRoundContext,
+        *,
+        carryover_queue: asyncio.Queue[tuple[PrbcOutcome, ...]] | None,
+    ) -> None:
+        host = self._acs_host
+        if host is None:
+            raise RuntimeError("ACS host bridge is not configured")
+
+        round_started = asyncio.Event()
+        carryovers_required = carryover_queue is not None
+
+        async def start_round() -> None:
+            proposal_input = await ctx.acs_input_queue.get()
+            host.start_round(
+                round_id=ctx.round_id,
+                sid=ctx.sid,
+                proposal_input=proposal_input,
+            )
+            round_started.set()
+
+        async def forward_receive_queue() -> None:
+            await round_started.wait()
+            while True:
+                sender, message = await ctx.dumbo_recv.get()
+                batch = self._drain_queue_batch(ctx.dumbo_recv, (sender, message))
+                host.push_inbound_batch(
+                    [
+                        (
+                            item_sender,
+                            ctx.round_id,
+                            self._dumbo_channel_for_message(item_message).value,
+                            self._dumbo_instance_id(item_message),
+                            item_message,
+                        )
+                        for item_sender, item_message in batch
+                    ]
+                )
+
+        async def pump_outbound() -> None:
+            await round_started.wait()
+            decision_seen = False
+            carryovers_seen = not carryovers_required
+            while True:
+                if not host.outbound_ready():
+                    if decision_seen and carryovers_seen:
+                        return
+                    await self._wait_for_acs_host_outbound(host)
+                    continue
+                for event in host.pull_outbound_batch(256):
+                    kind = str(event["kind"])
+                    if kind == "send":
+                        await self._send_acs_host_event(ctx.round_id, event)
+                        continue
+                    if kind == "decision":
+                        ctx.acs_output_queue.put_nowait(
+                            tuple(cast(list[bytes | None], event["selected_payloads"]))
+                        )
+                        decision_seen = True
+                        continue
+                    if kind == "carryovers":
+                        if carryover_queue is None:
+                            raise ProtocolInvariantError("received unexpected ACS host carryovers")
+                        carryover_queue.put_nowait(
+                            self._decode_host_carryovers(cast(list[object], event["items"]))
+                        )
+                        carryovers_seen = True
+                        continue
+                    if kind == "failure":
+                        raise self._acs_host_failure(ctx.round_id, event)
+                    raise ProtocolInvariantError(f"unexpected ACS host event kind: {kind}")
+                if decision_seen and carryovers_seen:
+                    return
+                await self._wait_for_acs_host_outbound(host)
+
+        try:
+            async with asyncio.TaskGroup() as task_group:
+                bridge_tasks: list[asyncio.Task[Any]] = []
+                spawn_bridge = self._task_spawner(task_group, bridge_tasks)
+                spawn_bridge(start_round())
+                spawn_bridge(forward_receive_queue())
+                outbound_task = spawn_bridge(pump_outbound())
+                await outbound_task
+                self._cancel_round_tasks(bridge_tasks, keep={outbound_task})
+        except asyncio.CancelledError:
+            self._abort_acs_host_round(ctx.round_id)
+            raise
+        except Exception:
+            self._abort_acs_host_round(ctx.round_id)
+            raise
+
     async def _run_round(self, round_id: int, batch: PendingRoundBatch) -> Result[CommittedBlock]:
         try:
             async with asyncio.TaskGroup() as task_group:
@@ -321,32 +439,40 @@ class DumboBFT(HoneyBadgerBFT):
                 if self._pool_reuse_enabled():
                     spawn(self._serve_pool_requests(ctx, pending_fetches, dumbo_send))
 
-                spawn(
-                    dumbo_acs(
-                        DumboACSParams(
-                            sid=f"{ctx.sid}:dumbo",
-                            pid=ctx.pid,
-                            N=ctx.n,
-                            f=ctx.f,
-                            leader=ctx.pid,
-                            coin_pk=self.crypto.sig_pk,
-                            coin_sk=self.crypto.sig_sk,
-                            proof_pk=self.crypto.proof_sig_pk,
-                            proof_sk=self.crypto.proof_sig_sk,
-                            ecdsa_pks=self.crypto.ecdsa_pks,
-                            ecdsa_sk=self.crypto.ecdsa_sk,
-                            carryover_grace_ms=self.config.pool_grace_ms
-                            if self._pool_reuse_enabled()
-                            else 0,
-                        ),
-                        ctx.acs_input_queue,
-                        ctx.acs_output_queue,
-                        ctx.dumbo_recv,
-                        dumbo_send,
-                        carryover_queue=carryover_queue,
-                        output_mode="payloads",
+                if self._acs_host is None:
+                    spawn(
+                        dumbo_acs(
+                            DumboACSParams(
+                                sid=f"{ctx.sid}:dumbo",
+                                pid=ctx.pid,
+                                N=ctx.n,
+                                f=ctx.f,
+                                leader=ctx.pid,
+                                coin_pk=self.crypto.sig_pk,
+                                coin_sk=self.crypto.sig_sk,
+                                proof_pk=self.crypto.proof_sig_pk,
+                                proof_sk=self.crypto.proof_sig_sk,
+                                ecdsa_pks=self.crypto.ecdsa_pks,
+                                ecdsa_sk=self.crypto.ecdsa_sk,
+                                carryover_grace_ms=self.config.pool_grace_ms
+                                if self._pool_reuse_enabled()
+                                else 0,
+                            ),
+                            ctx.acs_input_queue,
+                            ctx.acs_output_queue,
+                            ctx.dumbo_recv,
+                            dumbo_send,
+                            carryover_queue=carryover_queue,
+                            output_mode="payloads",
+                        )
                     )
-                )
+                else:
+                    spawn(
+                        self._run_hosted_dumbo_acs_round(
+                            ctx,
+                            carryover_queue=carryover_queue,
+                        )
+                    )
 
                 propose_queue: asyncio.Queue[bytes | PoolBundleProposal] = asyncio.Queue(1)
                 propose_queue.put_nowait(self._build_round_proposal(round_id, batch))

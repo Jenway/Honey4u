@@ -78,7 +78,7 @@ def _summary(batch_size: int, measured_tps: float, measured_ratio: float) -> Ben
         queue_backlog={
             "raw_inbound_messages": PeakStats(mean=20.0, p95=30.0, max=batch_size * 2),
         },
-        node_runtime="rust",
+        node_runtime="rust-driver",
     )
 
 
@@ -94,7 +94,7 @@ def test_sweep_payload_includes_benchmark_points() -> None:
         sid="bench:local:hb",
         tx_input="json_str",
         transport_backend="tcp",
-        node_runtime="rust",
+        node_runtime="rust-driver",
     )
 
     summaries = [
@@ -107,12 +107,12 @@ def test_sweep_payload_includes_benchmark_points() -> None:
     assert payload["meta"]["num_nodes"] == 10
     assert payload["meta"]["tx_input"] == "json_str"
     assert payload["meta"]["transport_backend"] == "tcp"
-    assert payload["meta"]["node_runtime"] == "rust"
+    assert payload["meta"]["node_runtime"] == "rust-driver"
     assert len(payload["points"]) == 2
     assert payload["points"][0]["batch_size"] == 128
     assert payload["points"][0]["tx_input"] == "json_str"
     assert payload["points"][0]["transport_backend"] == "tcp"
-    assert payload["points"][0]["node_runtime"] == "rust"
+    assert payload["points"][0]["node_runtime"] == "rust-driver"
     assert payload["points"][1]["measured_tps"] == 1800.0
     assert payload["points"][1]["measured_protocol_tps"] == 1800.0
     assert payload["points"][1]["measured_delivery_ratio"] == 0.8
@@ -195,32 +195,12 @@ def _args(*, protocol: str, node_runtime: str) -> argparse.Namespace:
 
 
 def test_select_benchmark_runner_matches_protocol_and_runtime() -> None:
-    assert _select_benchmark_runner("hb", "rust") is (
-        benchmark_module.benchmark_local_honeybadger_nodes_rust_hosted
-    )
     assert _select_benchmark_runner("hb", "rust-driver") is (
         benchmark_module.benchmark_local_honeybadger_nodes_rust_driven
-    )
-    assert _select_benchmark_runner("dumbo", "rust") is (
-        benchmark_module.benchmark_local_dumbo_nodes_rust_hosted
     )
     assert _select_benchmark_runner("dumbo", "rust-driver") is (
         benchmark_module.benchmark_local_dumbo_nodes_rust_driven
     )
-
-
-def test_build_benchmark_kwargs_for_rust_runtime_omits_node_runtime_only() -> None:
-    kwargs = _build_benchmark_kwargs(
-        _args(protocol="hb", node_runtime="rust"),
-        sid="bench:test:rust",
-        faulty=1,
-        batch_size=8,
-        transactions_per_node=24,
-    )
-
-    assert kwargs["global_timeout"] == 120.0
-    assert "node_runtime" not in kwargs
-    assert kwargs["rust_tx_pool_max_bytes"] == 4096
 
 
 def test_build_benchmark_kwargs_for_rust_driver_runtime_omits_node_runtime() -> None:
@@ -278,3 +258,8 @@ def test_select_benchmark_runner_rejects_removed_embedded_runtime() -> None:
 def test_select_benchmark_runner_rejects_removed_bridge_runtime() -> None:
     with pytest.raises(ValueError, match="bridge"):
         _select_benchmark_runner("hb", "bridge")
+
+
+def test_select_benchmark_runner_rejects_removed_hosted_runtime() -> None:
+    with pytest.raises(ValueError, match="rust"):
+        _select_benchmark_runner("hb", "rust")

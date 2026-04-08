@@ -45,11 +45,10 @@ pythonpath = [
 
 [tool.ty.environment]
 root = [
-    "src",
     "packages/honey-shared/src",
     "packages/honey-acs/src",
     "packages/honey-runtime/src",
-    "legacy/honey-python-node/src",
+    "native/honey-native",
 ]
 
 [tool.ty.src]

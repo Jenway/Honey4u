@@ -9,7 +9,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aes-gcm = "0.10"
-blst = "0.3.16"
+crossbeam-channel = "0.5"
+honey-crypto = { path = "../honey-crypto" }
 k256 = "0.13.4"
 rand = "0.10.0"
 reed-solomon-erasure = "6.0.0"
@@ -20,7 +21,6 @@ rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
-runtime-core = { path = "../runtime-core" }
 
 [lints.clippy]
 clone_on_copy = "allow"

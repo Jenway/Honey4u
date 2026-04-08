@@ -10,6 +10,8 @@ from honey_shared.telemetry import METRICS
 
 from honey_acs.subprotocols.common_coin import SharedCoin
 
+type BaMessage = BaEst | BaAux | BaConf
+
 
 def _canonical_conf_value(values: set[int]) -> tuple[int, ...]:
     return tuple(sorted(values))
@@ -52,7 +54,7 @@ async def binaryagreement(
 
     state_changed = asyncio.Event()
 
-    async def broadcast(msg: tuple) -> None:
+    async def broadcast(msg: BaMessage) -> None:
         """Point-to-point simulate broadcast to everyone including self."""
         for i in range(N):
             await send_queue.put((i, msg))

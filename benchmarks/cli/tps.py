@@ -11,9 +11,7 @@ from typing import Any
 
 from honey_runtime.runners import (
     benchmark_local_dumbo_nodes_rust_driven,
-    benchmark_local_dumbo_nodes_rust_hosted,
     benchmark_local_honeybadger_nodes_rust_driven,
-    benchmark_local_honeybadger_nodes_rust_hosted,
 )
 
 
@@ -81,7 +79,7 @@ class BenchmarkSummary:
     measured_wall_round_latency: LatencyStats
     subprotocol_timings: dict[str, TimingStats]
     queue_backlog: dict[str, PeakStats]
-    node_runtime: str = "rust"
+    node_runtime: str = "rust-driver"
     acs_protocol: str = "hb"
     all_nodes_agree: bool = True
     consensus_chain_digest: str | None = None
@@ -154,16 +152,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--transport-backend",
         type=str,
-        choices=("tcp", "quic"),
+        choices=("tcp",),
         default="tcp",
         help="which real socket transport backend to use for networked runs",
     )
     parser.add_argument(
         "--node-runtime",
         type=str,
-        choices=("rust", "rust-driver"),
-        default="rust",
-        help="node runtime mode: rust-hosted or rust-driven HB outer shell",
+        choices=("rust-driver",),
+        default="rust-driver",
+        help="node runtime mode: Rust driver over multi-process local TCP",
     )
     parser.add_argument(
         "--acs-protocol",
@@ -333,18 +331,12 @@ def _build_consistency_summary(results: list[Any]) -> tuple[bool, str | None, tu
 
 
 def _select_benchmark_runner(protocol: str, node_runtime: str) -> BenchmarkFn:
+    if node_runtime != "rust-driver":
+        raise ValueError(f"unsupported node runtime: {node_runtime}")
     if protocol == "dumbo":
-        if node_runtime == "rust-driver":
-            return benchmark_local_dumbo_nodes_rust_driven
-        if node_runtime == "rust":
-            return benchmark_local_dumbo_nodes_rust_hosted
-        raise ValueError(f"unsupported dumbo node runtime: {node_runtime}")
+        return benchmark_local_dumbo_nodes_rust_driven
 
-    if node_runtime == "rust-driver":
-        return benchmark_local_honeybadger_nodes_rust_driven
-    if node_runtime == "rust":
-        return benchmark_local_honeybadger_nodes_rust_hosted
-    raise ValueError(f"unsupported honeybadger node runtime: {node_runtime}")
+    return benchmark_local_honeybadger_nodes_rust_driven
 
 
 def _build_benchmark_kwargs(
@@ -374,16 +366,12 @@ def _build_benchmark_kwargs(
             enable_broadcast_pool_reuse=args.enable_pool_reuse,
             pool_grace_ms=args.pool_grace_ms,
         )
-        if args.node_runtime != "rust-driver":
-            kwargs["enable_pool_reference_proposals"] = args.enable_pool_reference_proposals
-            kwargs["enable_pool_fetch_fallback"] = args.enable_pool_fetch
     else:
         kwargs["rust_tx_pool_max_bytes"] = args.rust_tx_pool_max_bytes
-        if args.node_runtime == "rust-driver":
-            kwargs["acs_protocol"] = args.acs_protocol
-            if args.acs_protocol == "dumbo":
-                kwargs["enable_broadcast_pool_reuse"] = args.enable_pool_reuse
-                kwargs["pool_grace_ms"] = args.pool_grace_ms
+        kwargs["acs_protocol"] = args.acs_protocol
+        if args.acs_protocol == "dumbo":
+            kwargs["enable_broadcast_pool_reuse"] = args.enable_pool_reuse
+            kwargs["pool_grace_ms"] = args.pool_grace_ms
     return kwargs
 
 
@@ -468,11 +456,7 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
         tx_input=args.tx_input,
         transport_backend=args.transport_backend,
         node_runtime=args.node_runtime,
-        acs_protocol=(
-            "dumbo"
-            if args.protocol == "dumbo" and args.node_runtime == "rust-driver"
-            else (args.acs_protocol if args.node_runtime == "rust-driver" else "hb")
-        ),
+        acs_protocol=("dumbo" if args.protocol == "dumbo" else args.acs_protocol),
         max_rounds=args.rounds,
         warmup_rounds=warmup_rounds,
         transactions_per_node=transactions_per_node,

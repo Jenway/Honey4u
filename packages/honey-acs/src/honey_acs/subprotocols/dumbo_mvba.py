@@ -634,7 +634,7 @@ def _leader_permutation(seed: int, n: int) -> list[int]:
 
 async def dumbo_mvba(
     params: MVBAParams,
-    input_queue: asyncio.Queue[bytes | str],
+    input_queue: asyncio.Queue[bytes],
     decide_queue: asyncio.Queue[bytes],
     receive_queue: asyncio.Queue[tuple[int, object]],
     send: SendFn,

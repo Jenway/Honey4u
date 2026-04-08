@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import cast
+
 import honey_native
 
 PublicKey = honey_native.SigPublicKey
@@ -48,9 +51,13 @@ def combine_shares(pk: PublicKey, sigs: dict[int, bytes], msg: bytes) -> bytes:
 
 
 def combine_trusted_shares(pk: PublicKey, sigs: dict[int, bytes], msg: bytes) -> bytes:
-    if hasattr(pk, "combine_trusted_shares"):
-        return pk.combine_trusted_shares(list(sigs.items()), msg)
-    return combine_shares(pk, sigs, msg)
+    trusted_combiner = getattr(pk, "combine_trusted_shares", None)
+    if trusted_combiner is None:
+        return combine_shares(pk, sigs, msg)
+    return cast(
+        Callable[[list[tuple[int, bytes]], bytes], bytes],
+        trusted_combiner,
+    )(list(sigs.items()), msg)
 
 
 def combine_share_sets(

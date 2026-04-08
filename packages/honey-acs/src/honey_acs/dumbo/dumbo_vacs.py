@@ -92,7 +92,7 @@ async def validated_common_subset(
 
     diffuse_recv: asyncio.Queue[tuple[int, VacsDiffuse]] = asyncio.Queue()
     mvba_recv: asyncio.Queue[tuple[int, object]] = asyncio.Queue()
-    mvba_input: asyncio.Queue[bytes | str] = asyncio.Queue(1)
+    mvba_input: asyncio.Queue[bytes] = asyncio.Queue(1)
     mvba_output: asyncio.Queue[bytes] = asyncio.Queue(1)
 
     async def recv_dispatcher() -> None:
