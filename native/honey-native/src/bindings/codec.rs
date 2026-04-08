@@ -4,8 +4,8 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyModule, PyString, PyTuple};
 use serde_json::Value as JsonValue;
 use std::convert::TryFrom;
 
-use crate::archive::api as archive_api;
-use crate::archive::wire::{
+use crate::wire::api as archive_api;
+use crate::wire::format::{
     AbaPayloadWire, ChannelWire, EncryptedBatchWire, MessageWire, PdStoreRecordWire, PrbcProofWire,
     ProtocolEnvelopeWire, ThresholdShareProofWire,
 };

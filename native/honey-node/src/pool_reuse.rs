@@ -35,6 +35,7 @@ pub struct PoolReference {
 
 /// An entry stored in the broadcast mempool.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ReusableEntry {
     pub payload: Vec<u8>,
     pub roothash: Vec<u8>,
@@ -48,6 +49,7 @@ pub struct ReusableEntry {
 
 /// A basic RBC output stored in the broadcast mempool.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RbcEntry {
     pub payload: Vec<u8>,
     pub roothash: Vec<u8>,
@@ -69,6 +71,7 @@ pub enum AcsPayload {
 // ─── Serialization ────────────────────────────────────────────────────────
 
 /// Encode a bare payload (no references) using the inline tag.
+#[allow(dead_code)]
 pub fn encode_inline_acs_payload(payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + 4 + payload.len());
     out.push(INLINE_TAG);
@@ -101,6 +104,7 @@ pub fn encode_bundle_acs_payload(payload: &[u8], refs: &[PoolReference]) -> Vec<
 
 /// Decode an ACS payload produced by either `encode_inline_acs_payload` or
 /// `encode_bundle_acs_payload`.  Corresponds to Python `decode_acs_payload`.
+#[allow(unused_assignments)] // `pos` is advanced inside macros; the final increment is spuriously flagged
 pub fn decode_acs_payload(bytes: &[u8]) -> Result<AcsPayload, String> {
     if bytes.is_empty() {
         return Err("empty ACS payload".into());
@@ -314,6 +318,7 @@ impl BroadcastMempool {
         self.reusable_entries.len() + self.rbc_entries.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.reusable_entries.is_empty() && self.rbc_entries.is_empty()
     }

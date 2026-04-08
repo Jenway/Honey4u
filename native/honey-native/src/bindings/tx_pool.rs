@@ -3,8 +3,8 @@ use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::archive::api as archive_api;
-use crate::archive::wire::TxBatchWire;
+use crate::wire::api as archive_api;
+use crate::wire::format::TxBatchWire;
 
 struct TxEntry {
     tx_id: String,
@@ -208,7 +208,8 @@ fn encode_json_string(py: Python<'_>, value: &str) -> PyResult<Vec<u8>> {
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<TxPool>()?;
+    // TxPool class not registered: zero Python call sites; honey-node manages
+    // its own Rust-native tx pool. encode_json_string remains for messages.py.
     m.add_function(wrap_pyfunction!(encode_json_string, m)?)?;
     Ok(())
 }

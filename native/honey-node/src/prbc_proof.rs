@@ -1,4 +1,5 @@
 //! PRBC (Provable Reliable Broadcast) proof serialization and validation.
+#![allow(dead_code)] // Proof validation is complete but not yet wired into the driver path.
 //!
 //! The serialization format is **byte-for-byte compatible** with the Python
 //! implementation in `honey_acs.subprotocols.provable_reliable_broadcast`:

@@ -1113,12 +1113,12 @@ fn run_driver_round(
                         .unwrap_or(0.0);
                     let protocol_seconds = (wall_seconds - build_seconds).max(0.0);
                     let tpke_seconds = (protocol_seconds - acs_seconds).max(0.0);
-                    if !consumed_reference_ids.is_empty() {
-                        if let Some(pool) = rust_broadcast_mempool.as_mut() {
-                            for item_id in &consumed_reference_ids {
-                                pool.mark_selected(item_id, round_id as u32);
-                                pool.mark_consumed(item_id, round_id as u32);
-                            }
+                    if !consumed_reference_ids.is_empty()
+                        && let Some(pool) = rust_broadcast_mempool.as_mut()
+                    {
+                        for item_id in &consumed_reference_ids {
+                            pool.mark_selected(item_id, round_id as u32);
+                            pool.mark_consumed(item_id, round_id as u32);
                         }
                     }
                     driver_stats.active_sweeps += 1;

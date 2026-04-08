@@ -4,8 +4,8 @@ use honey_crypto::threshold::utils::{g1_from_bytes, g1_to_bytes};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::archive::api as archive_api;
-use crate::archive::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
+use crate::wire::api as archive_api;
+use crate::wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
 
 #[pyclass(from_py_object)]
 #[derive(Clone)]

@@ -26,6 +26,12 @@ mod network_driver;
 mod pool_reuse;
 mod prbc_proof;
 mod py_host;
+mod runner;
+
+// Re-export types that live in submodules but must be visible across all drivers
+// via the `use super::*;` pattern used in the submodule files.
+pub(crate) use py_host::{AcsRoundOutcome, PyAcsHost, PyAcsHostStats, PyAcsWireEvent};
+pub(crate) use runner::SpawnedNode;
 
 #[derive(Clone, Copy)]
 enum Protocol {
@@ -125,95 +131,6 @@ struct DriveDumboArgs {
     /// Index 0 = node 0's transactions, consumed `batch_size` per round.
     /// If absent, deterministic dummy transactions are generated.
     tx_json: Option<String>,
-}
-
-/// A single carry-over item from a Dumbo ACS round (PRBC outputs not included in
-/// the ACS decision but eligible for reuse in the next round).
-struct CarryoverItem {
-    pub leader: u32,
-    pub value: Vec<u8>,
-    pub roothash: Vec<u8>,
-    pub proof_payload: Vec<u8>,
-}
-
-struct SpawnedNode {
-    pid: usize,
-    child: std::process::Child,
-    result_path: PathBuf,
-    stderr_path: PathBuf,
-}
-
-struct PyAcsHost {
-    pid: usize,
-    inner: Py<PyAny>,
-}
-
-struct PyAcsHostStats {
-    worker_ident: u64,
-    rounds_started: usize,
-    rounds_finished: usize,
-    processed_commands: usize,
-    bridge_queue_size: usize,
-    worker_running: bool,
-    worker_error: Option<String>,
-    start_round_calls: usize,
-    push_inbound_wire_batch_calls: usize,
-    push_inbound_wire_batch_items: usize,
-    pull_outbound_wire_batch_calls: usize,
-    pull_outbound_wire_batch_items: usize,
-    stats_calls: usize,
-}
-
-enum PyAcsWireEvent {
-    Send {
-        round_id: usize,
-        recipient: usize,
-        payload: Vec<u8>,
-    },
-    Decision {
-        round_id: usize,
-        /// Set when `output_mode = "selected_pids"` (HB / bench mode).
-        selected_pids: Vec<usize>,
-        /// Set when `output_mode = "payloads"` (Dumbo drive mode with pool reuse).
-        selected_payloads: Option<Vec<Option<Vec<u8>>>>,
-    },
-    Failure {
-        round_id: isize,
-        error: String,
-        exception_type: String,
-    },
-    Carryovers {
-        round_id: usize,
-        /// Carry-over items from Dumbo with pool reuse enabled.
-        items: Vec<CarryoverItem>,
-    },
-    BroadcastOutput {
-        round_id: usize,
-        sender: usize,
-        payload_id: String,
-        payload: Vec<u8>,
-        roothash: Vec<u8>,
-    },
-}
-
-struct AcsRoundOutcome {
-    selected_pids: Vec<usize>,
-    /// Raw payloads from a Dumbo `"payloads"` output-mode decision event.
-    /// Empty when running in `"selected_pids"` mode (HB).
-    selected_payloads: Vec<Option<Vec<u8>>>,
-    /// Carry-over items from Dumbo with pool reuse enabled.
-    /// Empty when pool reuse is disabled or when running HB.
-    carryovers: Vec<CarryoverItem>,
-    send_events: usize,
-    drive_stats: DriverPhaseStats,
-    settle_stats: DriverPhaseStats,
-}
-
-struct HbBlockOutcome {
-    block_payload: Vec<u8>,
-    tpke_bundle_events: usize,
-    local_share_seconds: f64,
-    combine_seconds: f64,
 }
 
 const GENESIS_CHAIN_DIGEST: [u8; 32] = [0; 32];
@@ -324,91 +241,6 @@ fn prepend_python_paths(py: Python<'_>) -> PyResult<()> {
     path.insert(0, ".")?;
     path.insert(0, "src")?;
     Ok(())
-}
-
-fn dict_item<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {
-    dict.get_item(key)?
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("missing key: {key}")))
-}
-
-fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
-    let kind = dict_item(&dict, "kind")?.extract::<String>()?;
-    match kind.as_str() {
-        "send" => Ok(PyAcsWireEvent::Send {
-            round_id: dict_item(&dict, "round_id")?.extract()?,
-            recipient: dict_item(&dict, "recipient")?.extract()?,
-            payload: dict_item(&dict, "payload")?.extract()?,
-        }),
-        "decision" => {
-            let round_id = dict_item(&dict, "round_id")?.extract()?;
-            // `selected_pids` is present in HB / "selected_pids" output mode.
-            // In Dumbo "payloads" mode this key may be absent.
-            let selected_pids = if let Some(pids_val) = dict.get_item("selected_pids")? {
-                pids_val
-                    .try_iter()?
-                    .map(|item| item?.extract::<usize>())
-                    .collect::<PyResult<Vec<_>>>()?
-            } else {
-                Vec::new()
-            };
-            // `selected_payloads` is present in Dumbo "payloads" output mode.
-            let selected_payloads =
-                if let Some(payloads_val) = dict.get_item("selected_payloads")? {
-                    Some(
-                        payloads_val
-                            .try_iter()?
-                            .map(|item| item?.extract::<Option<Vec<u8>>>())
-                            .collect::<PyResult<Vec<_>>>()?,
-                    )
-                } else {
-                    None
-                };
-            Ok(PyAcsWireEvent::Decision {
-                round_id,
-                selected_pids,
-                selected_payloads,
-            })
-        }
-        "failure" => Ok(PyAcsWireEvent::Failure {
-            round_id: dict_item(&dict, "round_id")?.extract()?,
-            error: dict_item(&dict, "error")?.extract()?,
-            exception_type: dict_item(&dict, "exception_type")?.extract()?,
-        }),
-        "carryovers" => {
-            let round_id = dict_item(&dict, "round_id")?.extract()?;
-            // `items` is present when pool reuse is enabled.
-            let items = if let Some(items_val) = dict.get_item("items")? {
-                items_val
-                    .try_iter()?
-                    .map(|item| {
-                        let item = item?;
-                        let d = item.downcast::<PyDict>().map_err(|_| {
-                            pyo3::exceptions::PyTypeError::new_err("carryover item must be a dict")
-                        })?;
-                        Ok(CarryoverItem {
-                            leader: dict_item(d, "leader")?.extract()?,
-                            value: dict_item(d, "value")?.extract()?,
-                            roothash: dict_item(d, "roothash")?.extract()?,
-                            proof_payload: dict_item(d, "proof_payload")?.extract()?,
-                        })
-                    })
-                    .collect::<PyResult<Vec<_>>>()?
-            } else {
-                Vec::new()
-            };
-            Ok(PyAcsWireEvent::Carryovers { round_id, items })
-        }
-        "broadcast_output" => Ok(PyAcsWireEvent::BroadcastOutput {
-            round_id: dict_item(&dict, "round_id")?.extract()?,
-            sender: dict_item(&dict, "sender")?.extract()?,
-            payload_id: dict_item(&dict, "payload_id")?.extract()?,
-            payload: dict_item(&dict, "payload")?.extract()?,
-            roothash: dict_item(&dict, "roothash")?.extract()?,
-        }),
-        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "unknown ACS wire event kind: {kind}"
-        ))),
-    }
 }
 
 fn hex_nibble(value: u8) -> Result<u8, String> {

@@ -5,77 +5,23 @@ from typing import cast
 
 import honey_native
 
-from honey_acs.crypto import ecdsa, sig
 from honey_acs.params import CryptoParams
 
 
-def build_materials(num_nodes: int, faulty: int):
-    sig_pk, sig_shares = sig.generate(num_nodes, faulty + 1)
-    enc_pk, enc_shares = honey_native.pke_generate(num_nodes, faulty + 1)
-    ecdsa_pks, ecdsa_sks = ecdsa.generate(num_nodes)
-    return sig_pk, sig_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks
-
-
-def build_dumbo_materials(num_nodes: int, faulty: int):
-    coin_pk, coin_shares = sig.generate(num_nodes, faulty + 1)
-    proof_pk, proof_shares = sig.generate(num_nodes, num_nodes - faulty)
-    enc_pk, enc_shares = honey_native.pke_generate(num_nodes, faulty + 1)
-    ecdsa_pks, ecdsa_sks = ecdsa.generate(num_nodes)
-    return coin_pk, coin_shares, proof_pk, proof_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks
-
-
-def serialize_hb_crypto_payloads(num_nodes: int, faulty: int) -> list[dict[str, object]]:
-    sig_pk, sig_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks = build_materials(
-        num_nodes, faulty
-    )
-    payloads: list[dict[str, object]] = []
-    for pid in range(num_nodes):
-        payloads.append(
-            {
-                "sig_pk": sig_pk.to_bytes().hex(),
-                "sig_sk": sig_shares[pid].to_bytes().hex(),
-                "enc_pk": enc_pk.to_bytes().hex(),
-                "enc_sk": enc_shares[pid].to_bytes().hex(),
-                "ecdsa_pks": [pk.hex() for pk in ecdsa_pks],
-                "ecdsa_sk": ecdsa_sks[pid].hex(),
-            }
-        )
-    return payloads
-
-
-def serialize_dumbo_crypto_payloads(num_nodes: int, faulty: int) -> list[dict[str, object]]:
-    coin_pk, coin_shares, proof_pk, proof_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks = (
-        build_dumbo_materials(num_nodes, faulty)
-    )
-    payloads: list[dict[str, object]] = []
-    for pid in range(num_nodes):
-        payloads.append(
-            {
-                "sig_pk": coin_pk.to_bytes().hex(),
-                "sig_sk": coin_shares[pid].to_bytes().hex(),
-                "enc_pk": enc_pk.to_bytes().hex(),
-                "enc_sk": enc_shares[pid].to_bytes().hex(),
-                "ecdsa_pks": [pk.hex() for pk in ecdsa_pks],
-                "ecdsa_sk": ecdsa_sks[pid].hex(),
-                "proof_sig_pk": proof_pk.to_bytes().hex(),
-                "proof_sig_sk": proof_shares[pid].to_bytes().hex(),
-            }
-        )
-    return payloads
-
-
 def serialize_hb_crypto_payloads_json(num_nodes: int, faulty: int) -> list[str]:
-    return [
-        json.dumps(payload, separators=(",", ":"))
-        for payload in serialize_hb_crypto_payloads(num_nodes, faulty)
-    ]
+    """Generate per-node HoneyBadger crypto material as JSON strings.
+
+    Delegates entirely to Rust; Python never holds native key objects.
+    """
+    return honey_native.generate_hb_crypto_payloads_json(num_nodes, faulty)
 
 
 def serialize_dumbo_crypto_payloads_json(num_nodes: int, faulty: int) -> list[str]:
-    return [
-        json.dumps(payload, separators=(",", ":"))
-        for payload in serialize_dumbo_crypto_payloads(num_nodes, faulty)
-    ]
+    """Generate per-node Dumbo crypto material as JSON strings.
+
+    Delegates entirely to Rust; Python never holds native key objects.
+    """
+    return honey_native.generate_dumbo_crypto_payloads_json(num_nodes, faulty)
 
 
 def _decode_hex(value: str) -> bytes:

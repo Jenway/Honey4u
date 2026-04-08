@@ -2,12 +2,12 @@ use rand::RngExt;
 use std::collections::{BTreeMap, HashSet};
 use std::thread;
 
-use crate::archive::api::{decode_result, encode_result};
-use crate::archive::crypto_wire::{
+use crate::crypto;
+use crate::wire::api::{decode_result, encode_result};
+use crate::wire::crypto_wire::{
     CiphertextWire, PartialDecryptionShareWire, PkePrivateKeyShareWire, PkePublicParamsWire,
 };
-use crate::archive::wire::{EncryptedBatchWire, TxBatchWire};
-use crate::crypto;
+use crate::wire::format::{EncryptedBatchWire, TxBatchWire};
 use honey_crypto::threshold;
 use honey_crypto::threshold::keygen::{
     Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams,
@@ -391,9 +391,8 @@ pub fn ecdsa_verify_threshold_sigs(
 /// Returns `Ok(Some(_))` for pool-fetch messages, `Ok(None)` for every other
 /// channel, and `Err(_)` if the bytes are malformed.
 pub fn decode_pool_fetch_from_wire(bytes: &[u8]) -> Result<Option<PoolFetchWire>, String> {
-    use crate::archive::wire::{ChannelWire, MessageWire};
-    let wire: crate::archive::wire::ProtocolEnvelopeWire =
-        crate::archive::api::decode_result(bytes)?;
+    use crate::wire::format::{ChannelWire, MessageWire};
+    let wire: crate::wire::format::ProtocolEnvelopeWire = crate::wire::api::decode_result(bytes)?;
     if !matches!(wire.channel, ChannelWire::DumboPool) {
         return Ok(None);
     }

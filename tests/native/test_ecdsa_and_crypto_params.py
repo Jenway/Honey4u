@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
+
 from honey_acs.crypto import ecdsa
-from honey_acs.host_crypto import build_materials
+from honey_acs.host_crypto import build_crypto_params_from_json, serialize_hb_crypto_payloads_json
 from honey_acs.params import CryptoParams
 
 
@@ -23,17 +25,32 @@ def test_ecdsa_api_round_trip_and_threshold_verify() -> None:
     )
 
 
-def test_build_materials_returns_ecdsa_keys() -> None:
-    sig_pk, sig_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks = build_materials(4, 1)
+def test_generate_hb_crypto_payloads_json_produces_valid_material() -> None:
+    """generate_hb_crypto_payloads_json returns well-formed per-node JSON payloads
+    that can be round-tripped through build_crypto_params_from_json."""
+    N, f = 4, 1
+    payloads = serialize_hb_crypto_payloads_json(N, f)
 
-    assert sig_pk is not None
-    assert enc_pk is not None
-    assert len(sig_shares) == 4
-    assert len(enc_shares) == 4
-    assert len(ecdsa_pks) == 4
-    assert len(ecdsa_sks) == 4
-    assert all(len(pub) == 33 for pub in ecdsa_pks)
-    assert all(len(sk) == 32 for sk in ecdsa_sks)
+    assert len(payloads) == N
+
+    for pid, raw in enumerate(payloads):
+        payload = json.loads(raw)
+
+        # All expected keys are present
+        for key in ("sig_pk", "sig_sk", "enc_pk", "enc_sk", "ecdsa_pks", "ecdsa_sk"):
+            assert key in payload, f"pid={pid}: missing key {key!r}"
+
+        # ECDSA key sizes match the k256 compressed point format
+        assert len(payload["ecdsa_pks"]) == N
+        assert all(len(bytes.fromhex(pk)) == 33 for pk in payload["ecdsa_pks"])
+        assert len(bytes.fromhex(payload["ecdsa_sk"])) == 32
+
+        # Round-trip: JSON → CryptoParams succeeds without error
+        crypto = build_crypto_params_from_json("hb", raw)
+        assert crypto.sig_pk is not None
+        assert crypto.sig_sk is not None
+        assert len(crypto.ecdsa_pks) == N
+        assert crypto.ecdsa_sk is not None
 
 
 def test_crypto_params_accepts_optional_ecdsa_material() -> None:

@@ -2,9 +2,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::archive::api as archive_api;
-use crate::archive::wire::{EncodedShardWire, MerkleProofWire, MerkleResultWire};
 use crate::crypto::merkle;
+use crate::wire::api as archive_api;
+use crate::wire::format::{EncodedShardWire, MerkleProofWire, MerkleResultWire};
 
 fn merkle_proof_to_wire(proof: &merkle::MerkleProof) -> MerkleProofWire {
     MerkleProofWire {

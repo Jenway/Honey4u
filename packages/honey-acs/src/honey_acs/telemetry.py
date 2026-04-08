@@ -14,7 +14,7 @@ def _label_key(labels: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted((key, str(value)) for key, value in labels.items()))
 
 
-def normalize_timing_snapshot(
+def _normalize_timing_snapshot(
     snapshot_timings: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, dict[str, float | int]]:
     aggregated: dict[str, dict[str, float | int]] = defaultdict(
