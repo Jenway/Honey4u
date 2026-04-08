@@ -1,6 +1,6 @@
 """Benchmark CLI entrypoints."""
 
-from benchmarks.cli.acs import main as acs_main
+from benchmarks.cli.dumbo_reuse_sweep import main as dumbo_reuse_sweep_main
 from benchmarks.cli.tps import main as tps_main
 
-__all__ = ["acs_main", "tps_main"]
+__all__ = ["dumbo_reuse_sweep_main", "tps_main"]

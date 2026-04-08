@@ -12,6 +12,7 @@ _HONEY_NODE_BINARY: Path | None = None
 TxInputMode = Literal["json_str", "bytes"]
 TransportBackend = Literal["tcp", "quic"]
 AcsRuntimeProtocol = Literal["hb", "dumbo"]
+BroadcastPoolBackend = Literal["none", "rust"]
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,14 @@ class RustDrivenDriverPhaseStats:
     pull_limit_hits: int = 0
     total_push_seconds: float = 0.0
     total_pull_seconds: float = 0.0
+    send_events: int = 0
+    send_payload_bytes: int = 0
+    decision_events: int = 0
+    failure_events: int = 0
+    carryover_events: int = 0
+    broadcast_output_events: int = 0
+    broadcast_output_payload_bytes: int = 0
+    broadcast_output_roothash_bytes: int = 0
     host_stats: tuple[RustDrivenHostPhaseStats, ...] = ()
 
 
@@ -171,6 +180,7 @@ class RustDrivenDumboRoundResult:
     wall_seconds: float
     # TPKE outer-shell fields (non-zero when has_tpke=True in driver output)
     delivered_count: int = 0
+    reused_reference_count: int = 0
     tpke_seconds: float = 0.0
     tpke_bundle_events: int = 0
     build_seconds: float = 0.0
@@ -282,6 +292,14 @@ def _decode_rust_driven_driver_phase_stats(
         pull_limit_hits=int(value.get("pull_limit_hits", 0)),
         total_push_seconds=float(value.get("total_push_seconds", 0.0)),
         total_pull_seconds=float(value.get("total_pull_seconds", 0.0)),
+        send_events=int(value.get("send_events", 0)),
+        send_payload_bytes=int(value.get("send_payload_bytes", 0)),
+        decision_events=int(value.get("decision_events", 0)),
+        failure_events=int(value.get("failure_events", 0)),
+        carryover_events=int(value.get("carryover_events", 0)),
+        broadcast_output_events=int(value.get("broadcast_output_events", 0)),
+        broadcast_output_payload_bytes=int(value.get("broadcast_output_payload_bytes", 0)),
+        broadcast_output_roothash_bytes=int(value.get("broadcast_output_roothash_bytes", 0)),
         host_stats=tuple(
             _decode_rust_driven_host_phase_stats(cast(dict[str, Any], host_stats))
             for host_stats in value.get("host_stats", ())
@@ -662,6 +680,7 @@ def _decode_rust_driven_dumbo_payload(value: dict[str, Any]) -> RustDrivenDumboR
                 block_resolve_seconds=float(round_data.get("block_resolve_seconds", 0.0)),
                 wall_seconds=float(round_data.get("wall_seconds", 0.0)),
                 delivered_count=int(round_data.get("delivered_count", 0)),
+                reused_reference_count=int(round_data.get("reused_reference_count", 0)),
                 tpke_seconds=float(round_data.get("tpke_seconds", 0.0)),
                 tpke_bundle_events=int(round_data.get("tpke_bundle_events", 0)),
                 build_seconds=float(round_data.get("build_seconds", 0.0)),
@@ -831,6 +850,8 @@ def benchmark_local_honeybadger_nodes_rust_driven(
     acs_protocol: AcsRuntimeProtocol = "hb",
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
+    broadcast_mempool_backend: BroadcastPoolBackend = "rust",
+    pool_mempool_max: int = 1000,
 ) -> list[MultiprocessNodeResult]:
     del round_timeout, log_level, rust_tx_pool_max_bytes
     if tx_input != "json_str":
@@ -853,6 +874,9 @@ def benchmark_local_honeybadger_nodes_rust_driven(
             "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
             "pool_grace_ms": pool_grace_ms,
         }
+    config_payload = dict(acs_config_payload or {})
+    config_payload["broadcast_mempool_backend"] = broadcast_mempool_backend
+    config_payload["pool_mempool_max"] = pool_mempool_max
     return _benchmark_rust_driver_nodes(
         sid=sid,
         num_nodes=num_nodes,
@@ -861,7 +885,7 @@ def benchmark_local_honeybadger_nodes_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         acs_protocol=acs_protocol,
-        config_payload=acs_config_payload or {},
+        config_payload=config_payload,
     )
 
 
@@ -921,6 +945,8 @@ def run_local_honeybadger_acs_rust_driven(
     faulty: int,
     max_rounds: int = 1,
     global_timeout: float = 30.0,
+    broadcast_mempool_backend: BroadcastPoolBackend = "rust",
+    pool_mempool_max: int = 1000,
 ) -> RustDrivenAcsRunResult:
     return _run_rust_driven_acs(
         protocol="hb",
@@ -929,6 +955,10 @@ def run_local_honeybadger_acs_rust_driven(
         faulty=faulty,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
+        config_payload={
+            "broadcast_mempool_backend": broadcast_mempool_backend,
+            "pool_mempool_max": pool_mempool_max,
+        },
     )
 
 
@@ -942,6 +972,8 @@ def run_local_honeybadger_rust_driven(
     acs_protocol: AcsRuntimeProtocol = "hb",
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
+    broadcast_mempool_backend: BroadcastPoolBackend = "rust",
+    pool_mempool_max: int = 1000,
 ) -> RustDrivenHoneyBadgerRunResult:
     acs_config_payload: dict[str, Any] | None = None
     if acs_protocol == "dumbo":
@@ -949,6 +981,9 @@ def run_local_honeybadger_rust_driven(
             "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
             "pool_grace_ms": pool_grace_ms,
         }
+    config_payload = dict(acs_config_payload or {})
+    config_payload["broadcast_mempool_backend"] = broadcast_mempool_backend
+    config_payload["pool_mempool_max"] = pool_mempool_max
     return _run_rust_driven_honeybadger(
         sid=sid,
         num_nodes=num_nodes,
@@ -957,7 +992,7 @@ def run_local_honeybadger_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         acs_protocol=acs_protocol,
-        acs_config_payload=acs_config_payload,
+        acs_config_payload=config_payload,
     )
 
 
