@@ -4,13 +4,13 @@ import json
 from typing import cast
 
 import honey_native
-from honey_shared.crypto import ecdsa, pke, sig
+from honey_shared.crypto import ecdsa, sig
 from honey_shared.params import CryptoParams
 
 
 def build_materials(num_nodes: int, faulty: int):
     sig_pk, sig_shares = sig.generate(num_nodes, faulty + 1)
-    enc_pk, enc_shares = pke.generate(num_nodes, faulty + 1)
+    enc_pk, enc_shares = honey_native.pke_generate(num_nodes, faulty + 1)
     ecdsa_pks, ecdsa_sks = ecdsa.generate(num_nodes)
     return sig_pk, sig_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks
 
@@ -18,7 +18,7 @@ def build_materials(num_nodes: int, faulty: int):
 def build_dumbo_materials(num_nodes: int, faulty: int):
     coin_pk, coin_shares = sig.generate(num_nodes, faulty + 1)
     proof_pk, proof_shares = sig.generate(num_nodes, num_nodes - faulty)
-    enc_pk, enc_shares = pke.generate(num_nodes, faulty + 1)
+    enc_pk, enc_shares = honey_native.pke_generate(num_nodes, faulty + 1)
     ecdsa_pks, ecdsa_sks = ecdsa.generate(num_nodes)
     return coin_pk, coin_shares, proof_pk, proof_shares, enc_pk, enc_shares, ecdsa_pks, ecdsa_sks
 
@@ -85,8 +85,6 @@ def build_crypto_params_from_payload(protocol: str, payload: dict[str, object]) 
     crypto = CryptoParams(
         sig_pk=honey_native.SigPublicKey.from_bytes(_decode_hex(str(payload["sig_pk"]))),
         sig_sk=honey_native.SigPrivateShare.from_bytes(_decode_hex(str(payload["sig_sk"]))),
-        enc_pk=honey_native.PkePublicKey.from_bytes(_decode_hex(str(payload["enc_pk"]))),
-        enc_sk=honey_native.PkePrivateShare.from_bytes(_decode_hex(str(payload["enc_sk"]))),
         ecdsa_pks=[_decode_hex(str(value)) for value in cast(list[str], payload["ecdsa_pks"])],
         ecdsa_sk=_decode_hex(str(payload["ecdsa_sk"])),
     )

@@ -5,8 +5,8 @@ import importlib
 
 import pytest
 from honey_acs.subprotocols.provable_reliable_broadcast import (
-    PRBCParams,
     PrbcEcho,
+    PRBCParams,
     PrbcProof,
     PrbcReady,
     PrbcVal,
@@ -146,7 +146,9 @@ def test_prbc_proof_validation_rejects_bad_signature() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prbc_skips_self_and_surplus_ready_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_prbc_skips_self_and_surplus_ready_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     n = 7
     f = 2
     pid = 0

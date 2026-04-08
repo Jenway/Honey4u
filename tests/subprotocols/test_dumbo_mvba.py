@@ -15,8 +15,7 @@ from honey_acs.subprotocols.dumbo_mvba import (
     _stored_digest,
     dumbo_mvba,
 )
-from honey_shared.crypto import merkle
-from honey_shared.crypto import sig
+from honey_shared.crypto import merkle, sig
 
 dumbo_mvba_module = importlib.import_module("honey_acs.subprotocols.dumbo_mvba")
 

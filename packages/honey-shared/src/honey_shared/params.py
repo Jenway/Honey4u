@@ -32,8 +32,6 @@ class CryptoParams:
 
     sig_pk: Any
     sig_sk: Any
-    enc_pk: Any
-    enc_sk: Any
     ecdsa_pks: list[bytes] = field(default_factory=list)
     ecdsa_sk: bytes | None = None
     proof_sig_pk: Any | None = None
@@ -43,8 +41,6 @@ class CryptoParams:
         """Validate crypto parameters."""
         if self.sig_pk is None or self.sig_sk is None:
             raise ValueError("Signature keys (sig_pk, sig_sk) must not be None")
-        if self.enc_pk is None or self.enc_sk is None:
-            raise ValueError("Encryption keys (enc_pk, enc_sk) must not be None")
         if self.ecdsa_pks or self.ecdsa_sk is not None:
             if not self.ecdsa_pks:
                 raise ValueError("ECDSA public keys must not be empty when ECDSA is configured")

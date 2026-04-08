@@ -42,8 +42,6 @@ def test_crypto_params_accepts_optional_ecdsa_material() -> None:
     params = CryptoParams(
         sig_pk=b"sig_pk",
         sig_sk=b"sig_sk",
-        enc_pk=b"enc_pk",
-        enc_sk=b"enc_sk",
         ecdsa_pks=pks,
         ecdsa_sk=sks[0],
     )

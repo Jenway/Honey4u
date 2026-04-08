@@ -10,7 +10,7 @@ from honey_acs.subprotocols.dumbo_mvba import (
 )
 from honey_acs.subprotocols.provable_reliable_broadcast import PrbcProof, PrbcReady
 from honey_runtime.data.pool_reuse import PoolFetchRequest, PoolFetchResponse
-from honey_shared.crypto import merkle, pke
+from honey_shared.crypto import merkle
 from honey_shared.exceptions import SerializationError
 from honey_shared.messages import (
     BaConf,
@@ -224,19 +224,20 @@ def test_seal_encrypted_batch_round_trip(encryption_keys) -> None:
     pk, sks = encryption_keys
     payload = b"batch-payload"
 
-    encoded = pke.seal_encrypted_batch(pk, payload)
+    encoded = honey_native.seal_encrypted_batch(pk, payload)
     batch = EncryptedBatch.from_bytes(encoded)
     shares = [sks[0].decrypt_share(batch.encrypted_key), sks[1].decrypt_share(batch.encrypted_key)]
     opened_key = pk.combine_shares(batch.encrypted_key, shares)
 
-    assert pke.decrypt(opened_key, batch.ciphertext) == payload
+    assert honey_native.aes_decrypt(opened_key, batch.ciphertext) == payload
 
 
 def test_tpke_batch_decryptor_decrypts_multiple_batches(encryption_keys) -> None:
     pk, sks = encryption_keys
     payloads = [b"batch-one", b"batch-two"]
-    decryptor = pke.BatchDecryptor(
-        pk, [pke.seal_encrypted_batch(pk, payload) for payload in payloads]
+    decryptor = honey_native.PkeBatchDecryptor(
+        pk,
+        [honey_native.seal_encrypted_batch(pk, payload) for payload in payloads],
     )
 
     shares0 = decryptor.local_shares(sks[0])
@@ -254,9 +255,12 @@ def test_tpke_batch_decryptor_rejects_bad_bundle_shape_and_skips_bad_shares(
     encryption_keys,
 ) -> None:
     pk, sks = encryption_keys
-    decryptor = pke.BatchDecryptor(
+    decryptor = honey_native.PkeBatchDecryptor(
         pk,
-        [pke.seal_encrypted_batch(pk, b"batch-one"), pke.seal_encrypted_batch(pk, b"batch-two")],
+        [
+            honey_native.seal_encrypted_batch(pk, b"batch-one"),
+            honey_native.seal_encrypted_batch(pk, b"batch-two"),
+        ],
     )
 
     shares0 = decryptor.local_shares(sks[0])
@@ -290,11 +294,11 @@ def test_merkle_round_trip_preserves_encrypted_batch_when_len_divisible_by_k() -
     num_nodes = 10
     faulty = 3
     k = num_nodes - 2 * faulty
-    pk, _ = pke.generate(num_nodes, faulty + 1)
+    pk, _ = honey_native.pke_generate(num_nodes, faulty + 1)
     payload = encode_tx_batch([encode_tx(f"tx-{i}") for i in range(4)])
 
     for _ in range(50):
-        encrypted_batch = pke.seal_encrypted_batch(pk, payload)
+        encrypted_batch = honey_native.seal_encrypted_batch(pk, payload)
         assert len(encrypted_batch) % k == 0
         root, shards, proofs = merkle.encode(encrypted_batch, k, num_nodes)
         available = [honey_native.EncodedShard(i, shards[i], proofs[i]) for i in range(k)]

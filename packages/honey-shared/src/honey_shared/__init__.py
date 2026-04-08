@@ -1,6 +1,6 @@
 """Canonical protocol-layer exports."""
 
-from honey_shared.crypto import ecdsa, merkle, pke, sig
+from honey_shared.crypto import ecdsa, merkle, sig
 from honey_shared.messages import Channel, ProtocolEnvelope, ProtocolMessage
 from honey_shared.params import CommonParams, CryptoParams, HBConfig
 from honey_shared.results import Failure, Result, Success, failure, success
@@ -22,7 +22,6 @@ __all__ = [
     "log_event",
     "merkle",
     "normalize_timing_snapshot",
-    "pke",
     "sig",
     "success",
     "timed_metric",
