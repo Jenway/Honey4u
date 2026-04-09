@@ -752,7 +752,6 @@ fn run_driver_round(
         .unwrap_or_default();
     let mut seen_share_senders: BTreeSet<usize> = BTreeSet::new();
     let mut local_share_broadcasted = false;
-    let mut broadcast_outputs_taken = false;
     let mut acs_decision_at: Option<Instant> = None;
     let mut acs_pull_seconds = 0.0f64;
     let mut tpke_partial_open_seconds = 0.0f64;
@@ -797,163 +796,160 @@ fn run_driver_round(
         }
         update_queue_peaks(ctx.transport, queue_peaks);
 
-        if decision.is_none() {
-            let mut pushed_inbound = false;
-            if !inbound_acs_wire.is_empty() {
-                let batch = std::mem::take(&mut inbound_acs_wire);
-                acs_inbound_wire_batches += 1;
-                acs_inbound_wire_items += batch.len();
-                let push_start = Instant::now();
-                ctx.host.push_inbound_wire_batch(&batch)?;
-                record_push(
-                    &mut driver_stats,
-                    ctx.args.pid,
-                    batch.len(),
-                    push_start.elapsed().as_secs_f64(),
-                );
-                pushed_inbound = true;
-                progressed = true;
-            }
+        let mut pushed_inbound = false;
+        if decision.is_none() && !inbound_acs_wire.is_empty() {
+            let batch = std::mem::take(&mut inbound_acs_wire);
+            acs_inbound_wire_batches += 1;
+            acs_inbound_wire_items += batch.len();
+            let push_start = Instant::now();
+            ctx.host.push_inbound_wire_batch(&batch)?;
+            record_push(
+                &mut driver_stats,
+                ctx.args.pid,
+                batch.len(),
+                push_start.elapsed().as_secs_f64(),
+            );
+            pushed_inbound = true;
+            progressed = true;
+        }
 
-            if pushed_inbound || ctx.host.outbound_ready()? {
-                let pull_start = Instant::now();
-                ctx.host
-                    .begin_pull_outbound_wire_batch(DRIVER_NETWORK_BATCH_LIMIT)?;
-                let events = ctx.host.finish_pull_outbound_wire_batch()?;
-                let pull_seconds = pull_start.elapsed().as_secs_f64();
-                acs_pull_seconds += pull_seconds;
-                acs_pull_calls += 1;
-                record_pull(
-                    &mut driver_stats,
-                    ctx.args.pid,
-                    events.len(),
-                    pull_seconds,
-                    DRIVER_NETWORK_BATCH_LIMIT,
-                );
-                if !events.is_empty() {
-                    progressed = true;
-                } else {
-                    acs_empty_pull_calls += 1;
-                }
-                acs_outbound_events += events.len();
-                for event in events {
-                    match event {
-                        PyAcsWireEvent::Send {
-                            round_id: event_round_id,
-                            recipient,
-                            payload,
-                        } => {
-                            if event_round_id != round_id {
-                                return Err(format!(
-                                    "driver round {round_id}: outbound ACS event carried mismatched round_id {event_round_id}"
-                                ));
-                            }
-                            driver_stats.send_events += 1;
-                            driver_stats.send_payload_bytes += payload.len();
-                            send_frame(
-                                ctx.transport,
-                                recipient,
-                                &DriverWireFrame::AcsEnvelope { round_id, payload },
-                            )?;
-                        }
-                        PyAcsWireEvent::Decision {
-                            round_id: event_round_id,
-                            selected_pids,
-                            selected_payloads,
-                        } => {
-                            if event_round_id != round_id {
-                                return Err(format!(
-                                    "driver round {round_id}: decision carried mismatched round_id {event_round_id}"
-                                ));
-                            }
-                            if acs_decision_at.is_none() {
-                                acs_decision_at = Some(Instant::now());
-                            }
-                            driver_stats.decision_events += 1;
-                            let resolved_selected_pids = if selected_pids.is_empty() {
-                                selected_payloads
-                                    .as_ref()
-                                    .map(|payloads| {
-                                        payloads
-                                            .iter()
-                                            .enumerate()
-                                            .filter_map(|(pid, payload)| {
-                                                payload.as_ref().map(|_| pid)
-                                            })
-                                            .collect::<Vec<_>>()
-                                    })
-                                    .unwrap_or_default()
-                            } else {
-                                selected_pids
-                            };
-                            decision = Some(resolved_selected_pids);
-                            decision_payloads = selected_payloads;
-                        }
-                        PyAcsWireEvent::Failure {
-                            round_id: event_round_id,
-                            error,
-                            exception_type,
-                        } => {
-                            driver_stats.failure_events += 1;
+        let should_pull_host = if pushed_inbound {
+            true
+        } else {
+            ctx.host.outbound_ready()?
+        };
+        if should_pull_host {
+            let pull_start = Instant::now();
+            ctx.host
+                .begin_pull_outbound_wire_batch(DRIVER_NETWORK_BATCH_LIMIT)?;
+            let events = ctx.host.finish_pull_outbound_wire_batch()?;
+            let pull_seconds = pull_start.elapsed().as_secs_f64();
+            acs_pull_seconds += pull_seconds;
+            acs_pull_calls += 1;
+            record_pull(
+                &mut driver_stats,
+                ctx.args.pid,
+                events.len(),
+                pull_seconds,
+                DRIVER_NETWORK_BATCH_LIMIT,
+            );
+            if !events.is_empty() {
+                progressed = true;
+            } else {
+                acs_empty_pull_calls += 1;
+            }
+            acs_outbound_events += events.len();
+            for event in events {
+                match event {
+                    PyAcsWireEvent::Send {
+                        round_id: event_round_id,
+                        recipient,
+                        payload,
+                    } => {
+                        if event_round_id != round_id {
                             return Err(format!(
-                                "driver round {round_id}: ACS host failed in event round {event_round_id} with {exception_type}: {error}"
+                                "driver round {round_id}: outbound ACS event carried mismatched round_id {event_round_id}"
                             ));
                         }
-                        PyAcsWireEvent::Carryovers {
-                            round_id: event_round_id,
-                            items,
-                        } => {
-                            if event_round_id != round_id {
-                                return Err(format!(
-                                    "driver round {round_id}: carryovers event carried mismatched round_id {event_round_id}"
-                                ));
-                            }
-                            driver_stats.carryover_events += 1;
-                            if reuse_enabled {
-                                let pool = rust_broadcast_mempool.as_mut().ok_or_else(|| {
-                                    String::from("Dumbo pool reuse requires a Rust mempool backend")
-                                })?;
-                                for item in items {
-                                    pool.add_reusable(
-                                        item.value,
-                                        item.roothash,
-                                        item.proof_payload,
-                                        round_id as u32,
-                                        item.leader,
-                                        0.0,
-                                    );
-                                }
-                            }
+                        driver_stats.send_events += 1;
+                        driver_stats.send_payload_bytes += payload.len();
+                        send_frame(
+                            ctx.transport,
+                            recipient,
+                            &DriverWireFrame::AcsEnvelope { round_id, payload },
+                        )?;
+                    }
+                    PyAcsWireEvent::Decision {
+                        round_id: event_round_id,
+                        selected_pids,
+                        selected_payloads,
+                    } => {
+                        if event_round_id != round_id {
+                            return Err(format!(
+                                "driver round {round_id}: decision carried mismatched round_id {event_round_id}"
+                            ));
                         }
-                        PyAcsWireEvent::BroadcastOutput {
-                            round_id: event_round_id,
-                            sender,
-                            payload_id: _,
-                            payload,
-                            roothash,
-                        } => {
-                            if event_round_id != round_id {
-                                return Err(format!(
-                                    "driver round {round_id}: broadcast_output carried mismatched round_id {event_round_id}"
-                                ));
-                            }
-                            driver_stats.broadcast_output_events += 1;
-                            driver_stats.broadcast_output_payload_bytes += payload.len();
-                            driver_stats.broadcast_output_roothash_bytes += roothash.len();
-                            if let Some(pool) = rust_broadcast_mempool.as_mut() {
-                                pool.add_rbc(
-                                    payload,
-                                    roothash,
+                        if acs_decision_at.is_none() {
+                            acs_decision_at = Some(Instant::now());
+                        }
+                        driver_stats.decision_events += 1;
+                        let resolved_selected_pids = if selected_pids.is_empty() {
+                            selected_payloads
+                                .as_ref()
+                                .map(|payloads| {
+                                    payloads
+                                        .iter()
+                                        .enumerate()
+                                        .filter_map(|(pid, payload)| payload.as_ref().map(|_| pid))
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            selected_pids
+                        };
+                        decision = Some(resolved_selected_pids);
+                        decision_payloads = selected_payloads;
+                    }
+                    PyAcsWireEvent::Failure {
+                        round_id: event_round_id,
+                        error,
+                        exception_type,
+                    } => {
+                        driver_stats.failure_events += 1;
+                        return Err(format!(
+                            "driver round {round_id}: ACS host failed in event round {event_round_id} with {exception_type}: {error}"
+                        ));
+                    }
+                    PyAcsWireEvent::Carryovers {
+                        round_id: event_round_id,
+                        items,
+                    } => {
+                        if event_round_id != round_id {
+                            return Err(format!(
+                                "driver round {round_id}: carryovers event carried mismatched round_id {event_round_id}"
+                            ));
+                        }
+                        driver_stats.carryover_events += 1;
+                        if reuse_enabled {
+                            let pool = rust_broadcast_mempool.as_mut().ok_or_else(|| {
+                                String::from("Dumbo pool reuse requires a Rust mempool backend")
+                            })?;
+                            for item in items {
+                                pool.add_reusable(
+                                    item.value,
+                                    item.roothash,
+                                    item.proof_payload,
                                     round_id as u32,
-                                    sender as u32,
+                                    item.leader,
                                     0.0,
                                 );
                             }
                         }
                     }
+                    PyAcsWireEvent::BroadcastOutput {
+                        round_id: event_round_id,
+                        sender,
+                        payload_id: _,
+                        payload,
+                        roothash,
+                    } => {
+                        if event_round_id != round_id {
+                            return Err(format!(
+                                "driver round {round_id}: broadcast_output carried mismatched round_id {event_round_id}"
+                            ));
+                        }
+                        driver_stats.broadcast_output_events += 1;
+                        driver_stats.broadcast_output_payload_bytes += payload.len();
+                        driver_stats.broadcast_output_roothash_bytes += roothash.len();
+                        if let Some(pool) = rust_broadcast_mempool.as_mut() {
+                            pool.add_rbc(payload, roothash, round_id as u32, sender as u32, 0.0);
+                        }
+                    }
                 }
             }
-        } else if !inbound_acs_wire.is_empty() {
+        }
+
+        if decision.is_some() && !inbound_acs_wire.is_empty() {
             // Once ACS has emitted a decision, the service has already torn down the round state.
             // Current-round ACS envelopes arriving later are stale and would be ignored by Python.
             stale_acs_frames_dropped += inbound_acs_wire.len();
@@ -980,52 +976,6 @@ fn run_driver_round(
                 reused_reference_count = resolved.consumed_reference_ids.len();
                 consumed_reference_ids = resolved.consumed_reference_ids;
                 selected_batch_refs = Some(resolved.batch_refs);
-            }
-
-            if rust_broadcast_mempool.is_some() && !broadcast_outputs_taken {
-                let outputs = ctx.host.take_round_broadcast_outputs(round_id)?;
-                for event in outputs {
-                    match event {
-                        PyAcsWireEvent::BroadcastOutput {
-                            round_id: event_round_id,
-                            sender,
-                            payload_id: _,
-                            payload,
-                            roothash,
-                        } => {
-                            if event_round_id != round_id {
-                                return Err(format!(
-                                    "driver round {round_id}: side-channel broadcast_output carried mismatched round_id {event_round_id}"
-                                ));
-                            }
-                            driver_stats.broadcast_output_events += 1;
-                            driver_stats.broadcast_output_payload_bytes += payload.len();
-                            driver_stats.broadcast_output_roothash_bytes += roothash.len();
-                            if let Some(pool) = rust_broadcast_mempool.as_mut() {
-                                pool.add_rbc(
-                                    payload,
-                                    roothash,
-                                    round_id as u32,
-                                    sender as u32,
-                                    0.0,
-                                );
-                            }
-                        }
-                        other => {
-                            return Err(format!(
-                                "driver round {round_id}: unexpected side-channel ACS event kind {}",
-                                match other {
-                                    PyAcsWireEvent::Send { .. } => "send",
-                                    PyAcsWireEvent::Decision { .. } => "decision",
-                                    PyAcsWireEvent::Failure { .. } => "failure",
-                                    PyAcsWireEvent::Carryovers { .. } => "carryovers",
-                                    PyAcsWireEvent::BroadcastOutput { .. } => "broadcast_output",
-                                }
-                            ));
-                        }
-                    }
-                }
-                broadcast_outputs_taken = true;
             }
 
             let round_batch_refs = selected_batch_refs

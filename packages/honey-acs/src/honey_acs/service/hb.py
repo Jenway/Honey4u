@@ -39,7 +39,6 @@ class HoneyBadgerAcsService(AcsService):
         config: HBConfig | None = None,
         mempool: BroadcastStore | None = None,
         event_notifier: Callable[[], None] | None = None,
-        broadcast_output_sink: Callable[[dict[str, object]], None] | None = None,
         output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
         super().__init__(
@@ -54,7 +53,6 @@ class HoneyBadgerAcsService(AcsService):
             event_notifier=event_notifier,
             output_mode=output_mode,
         )
-        self._broadcast_output_sink = broadcast_output_sink
         self._rounds: dict[int, HBRoundState] = {}
 
     def active_round_ids(self) -> list[int]:
@@ -206,9 +204,6 @@ class HoneyBadgerAcsService(AcsService):
         if backend == "none":
             broadcast_store = NullBroadcastStore()
         elif backend == "rust":
-            if self._broadcast_output_sink is None:
-                raise ProtocolInvariantError("HB rust broadcast output sink is not initialized")
-            broadcast_output_sink = self._broadcast_output_sink
 
             def on_broadcast_output(
                 payload_id: str,
@@ -220,7 +215,7 @@ class HoneyBadgerAcsService(AcsService):
                 sender_id: int,
                 _timestamp: float,
             ) -> None:
-                broadcast_output_sink(
+                self.emit_event(
                     {
                         "kind": "broadcast_output",
                         "round_id": round_no,

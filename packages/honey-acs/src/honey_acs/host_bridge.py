@@ -64,7 +64,6 @@ class PersistentAcsHost:
             "start_round": 0,
             "push_inbound_wire_batch": 0,
             "pull_outbound_wire_batch": 0,
-            "take_round_broadcast_outputs": 0,
             "abort_round": 0,
             "stats": 0,
             "shutdown": 0,
@@ -72,7 +71,6 @@ class PersistentAcsHost:
         self._batch_item_counts: dict[str, int] = {
             "push_inbound_wire_batch_items": 0,
             "pull_outbound_wire_batch_items": 0,
-            "take_round_broadcast_outputs_items": 0,
         }
         self._worker_error: str | None = None
         self._worker_ident = 0
@@ -92,7 +90,6 @@ class PersistentAcsHost:
         self._profile: cProfile.Profile | None = None
         self._profile_path: Path | None = None
         self._pending_pull: concurrent.futures.Future[object] | None = None
-        self._round_broadcast_outputs: dict[int, list[dict[str, object]]] = {}
         self._commands: Queue[_HostCommand] = Queue()
         self._command_task: asyncio.Task[None] | None = None
         self._worker.start()
@@ -111,7 +108,6 @@ class PersistentAcsHost:
                 crypto=self._crypto,
                 config=self._config,
                 event_notifier=self._mark_outbound_ready,
-                broadcast_output_sink=self._store_broadcast_output,
                 output_mode=self._output_mode,
             )
         if self._protocol == "dumbo":
@@ -193,8 +189,6 @@ class PersistentAcsHost:
             return None
         if command.kind == "pull_outbound_wire_batch":
             return self._encode_wire_events(self._drain_service_events(cast(int, command.payload)))
-        if command.kind == "take_round_broadcast_outputs":
-            return self._round_broadcast_outputs.pop(cast(int, command.payload), [])
         if command.kind == "stats":
             return self._service.stats()
         if command.kind == "shutdown":
@@ -254,10 +248,6 @@ class PersistentAcsHost:
             self._outbound_ready.clear()
             self._clear_outbound_signal()
         return drained
-
-    def _store_broadcast_output(self, event: dict[str, object]) -> None:
-        round_id = int(cast(int, event["round_id"]))
-        self._round_broadcast_outputs.setdefault(round_id, []).append(event)
 
     def _submit_command[T](
         self,
@@ -404,15 +394,6 @@ class PersistentAcsHost:
             raise
         self._batch_item_counts["pull_outbound_wire_batch_items"] += len(drained)
         return drained
-
-    def take_round_broadcast_outputs(self, round_id: int) -> list[dict[str, object]]:
-        self._command_counts["take_round_broadcast_outputs"] += 1
-        outputs = cast(
-            list[dict[str, object]],
-            self._submit_command("take_round_broadcast_outputs", round_id),
-        )
-        self._batch_item_counts["take_round_broadcast_outputs_items"] += len(outputs)
-        return outputs
 
     def stats(self) -> dict[str, object]:
         self._command_counts["stats"] += 1

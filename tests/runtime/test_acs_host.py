@@ -48,6 +48,8 @@ def _drain_until_decisions(
                 if kind == "decision":
                     decisions[pid] = tuple(cast(list[object], event[decision_key]))
                     continue
+                if kind == "broadcast_output":
+                    continue
                 if kind == "carryovers":
                     continue
                 if kind == "failure":
@@ -63,6 +65,61 @@ def _drain_until_decisions(
             time.sleep(0.001)
 
     raise AssertionError(f"timed out waiting for ACS host decisions in round {round_id}")
+
+
+def _drain_until_decisions_and_broadcast_outputs(
+    hosts: list[PersistentAcsHost],
+    *,
+    round_id: int,
+    expected_outputs_per_host: int,
+    timeout: float = 20.0,
+) -> tuple[list[tuple[int, ...]], list[list[dict[str, object]]]]:
+    decisions: list[tuple[int, ...] | None] = [None] * len(hosts)
+    broadcast_outputs: list[list[dict[str, object]]] = [[] for _ in hosts]
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        progressed = False
+        for pid, host in enumerate(hosts):
+            host.begin_pull_outbound_wire_batch(512)
+            for event in host.finish_pull_outbound_wire_batch():
+                progressed = True
+                kind = str(event["kind"])
+                if kind == "send":
+                    recipient = cast(int, event["recipient"])
+                    sender, envelope = cast(
+                        tuple[int, ProtocolEnvelope],
+                        honey_native.decode_protocol_envelope_py(cast(bytes, event["payload"])),
+                    )
+                    assert sender == pid
+                    assert envelope.round_id == round_id
+                    hosts[recipient].push_inbound_wire_batch([cast(bytes, event["payload"])])
+                    continue
+                if kind == "decision":
+                    decisions[pid] = tuple(cast(list[int], event["selected_pids"]))
+                    continue
+                if kind == "broadcast_output":
+                    broadcast_outputs[pid].append(event)
+                    continue
+                if kind == "carryovers":
+                    continue
+                if kind == "failure":
+                    raise AssertionError(
+                        f"ACS host {pid} failed in round {round_id}: "
+                        f"{event['exception_type']}: {event['error']}"
+                    )
+                raise AssertionError(f"unexpected ACS host event kind: {kind}")
+
+        if all(decision is not None for decision in decisions) and all(
+            len(outputs) >= expected_outputs_per_host for outputs in broadcast_outputs
+        ):
+            return cast(list[tuple[int, ...]], decisions), broadcast_outputs
+        if not progressed:
+            time.sleep(0.001)
+
+    raise AssertionError(
+        f"timed out waiting for ACS host decisions and broadcast outputs in round {round_id}"
+    )
 
 
 def _build_hosts(
@@ -163,7 +220,7 @@ def test_persistent_hb_acs_host_rejects_payload_decisions() -> None:
             host.shutdown()
 
 
-def test_persistent_hb_acs_host_exposes_rust_broadcast_outputs_via_side_channel() -> None:
+def test_persistent_hb_acs_host_emits_rust_broadcast_outputs_on_main_event_stream() -> None:
     num_nodes = 4
     faulty = 1
     hosts = _build_hosts(
@@ -177,21 +234,23 @@ def test_persistent_hb_acs_host_exposes_rust_broadcast_outputs_via_side_channel(
         for pid, host in enumerate(hosts):
             host.start_round(
                 round_id=0,
-                sid="test:acs-host:hb:rust-broadcast-side-channel:",
+                sid="test:acs-host:hb:rust-broadcast-main-event-stream:",
                 proposal_input=f"hb-round-0-node-{pid}".encode(),
             )
 
-        decisions = cast(list[tuple[int, ...]], _drain_until_decisions(hosts, round_id=0))
+        decisions, outputs_by_host = _drain_until_decisions_and_broadcast_outputs(
+            hosts,
+            round_id=0,
+            expected_outputs_per_host=num_nodes,
+        )
         assert len(set(decisions)) == 1
         assert decisions[0] == tuple(range(num_nodes))
 
-        for host in hosts:
-            outputs = host.take_round_broadcast_outputs(0)
+        for outputs in outputs_by_host:
             assert len(outputs) == num_nodes
             assert {cast(int, output["sender"]) for output in outputs} == set(range(num_nodes))
             assert all(cast(bytes, output["payload"]) for output in outputs)
             assert all(len(cast(bytes, output["roothash"])) == 32 for output in outputs)
-            assert host.take_round_broadcast_outputs(0) == []
     finally:
         for host in hosts:
             host.shutdown()
