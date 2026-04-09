@@ -447,7 +447,7 @@ def _build_chart_payloads(
     rounds: int,
 ) -> dict[str, str]:
     subtitle = (
-        f"drive-dumbo, real multiprocess local TCP, repeats={repeats}, rounds={rounds}, "
+        f"bench-driver --mode dumbo, real multiprocess local TCP, repeats={repeats}, rounds={rounds}, "
         "pool refs enabled"
     )
     chart_specs = [
@@ -582,7 +582,7 @@ def main() -> None:
                             "pool_expire_rounds": args.pool_expire_rounds,
                             "pool_mempool_max": args.pool_mempool_max,
                             "generated_at_utc": datetime.now(UTC).isoformat(),
-                            "driver": "drive-dumbo",
+                            "driver": "bench-driver:dumbo",
                             "transport": "local-tcp",
                             "multiprocess": True,
                         },
@@ -610,7 +610,7 @@ def main() -> None:
             "pool_expire_rounds": args.pool_expire_rounds,
             "pool_mempool_max": args.pool_mempool_max,
             "generated_at_utc": datetime.now(UTC).isoformat(),
-            "driver": "drive-dumbo",
+            "driver": "bench-driver:dumbo",
             "transport": "local-tcp",
             "multiprocess": True,
         },

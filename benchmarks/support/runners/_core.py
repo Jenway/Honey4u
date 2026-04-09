@@ -540,7 +540,9 @@ def _run_rust_driven_acs(
     completed = subprocess.run(
         [
             str(binary),
-            "drive-acs",
+            "bench-driver",
+            "--mode",
+            "acs",
             "--protocol",
             protocol,
             "--sid",
@@ -585,7 +587,9 @@ def _run_rust_driven_honeybadger(
     completed = subprocess.run(
         [
             str(binary),
-            "drive-hb",
+            "bench-driver",
+            "--mode",
+            "hb",
             "--sid",
             sid,
             "--acs-protocol",
@@ -711,7 +715,9 @@ def _run_rust_driven_dumbo(
     binary = _build_honey_node_binary()
     cmd = [
         str(binary),
-        "drive-dumbo",
+        "bench-driver",
+        "--mode",
+        "dumbo",
         "--sid",
         sid,
         "--nodes",
@@ -1061,10 +1067,10 @@ def run_local_dumbo_new_driver(
     ledger_dir: str | None = None,
     tx_payload: list[list[str]] | None = None,
 ) -> RustDrivenDumboRunResult:
-    """Run the Dumbo BFT protocol using the new Rust-native ``drive-dumbo`` driver.
+    """Run the Dumbo BFT protocol using the unified Rust-native ``bench-driver`` entrypoint.
 
-    Unlike ``benchmark_local_dumbo_nodes_rust_driven`` which wraps ``bench-driver``,
-    this function invokes the new ``drive-dumbo`` command that manages BroadcastMempool,
+    Unlike ``benchmark_local_dumbo_nodes_rust_driven`` which consumes benchmark-style node output,
+    this function invokes ``bench-driver --mode dumbo`` to manage BroadcastMempool,
     PoolReference building, and carryover processing fully in Rust.
 
     Args:

@@ -1,9 +1,8 @@
 //! BroadcastMempool and Pool Reuse serialization.
 //!
-//! This module is a Rust port of `honey_acs.data.broadcast_mempool` and
-//! `honey_acs.pool_reuse`.  The serialization format is
-//! **byte-for-byte compatible** with the Python implementations so that
-//! proposal payloads created here can be decoded by Python nodes and vice versa.
+//! This module owns the runtime mempool semantics used by `honey-node` and
+//! preserves wire compatibility with the historical Python pool-reuse formats
+//! so proposal payloads created here can still be decoded by Python ACS hosts.
 //!
 //! Python format (`_BUNDLE_TAG = 3`):
 //! ```text
@@ -186,7 +185,6 @@ pub fn decode_acs_payload(bytes: &[u8]) -> Result<AcsPayload, String> {
 // ─── BroadcastMempool ─────────────────────────────────────────────────────
 
 /// In-memory store for PRBC-certified payloads that can be referenced across rounds.
-/// Corresponds to Python `honey_acs.data.broadcast_mempool.BroadcastMempool`.
 pub struct BroadcastMempool {
     reusable_entries: HashMap<String, ReusableEntry>,
     rbc_entries: HashMap<String, RbcEntry>,
@@ -205,7 +203,7 @@ impl BroadcastMempool {
     }
 
     /// Compute the deterministic ID for an entry.
-    /// Matches Python `_compute_payload_id`:
+    /// Matches the historical Python `_compute_payload_id` formula:
     ///   `SHA256(f"{round_no}:{sender_id}:{roothash.hex()}".encode()).hexdigest()[:16]`
     pub fn compute_item_id(round_no: u32, sender_id: u32, roothash: &[u8]) -> String {
         let roothash_hex = hex::encode(roothash);

@@ -35,15 +35,28 @@ def _drain_until_decisions(
             for event in host.finish_pull_outbound_wire_batch():
                 progressed = True
                 kind = str(event["kind"])
-                if kind == "send":
-                    recipient = cast(int, event["recipient"])
+                if kind in {"send", "broadcast_send"}:
                     sender, envelope = cast(
                         tuple[int, ProtocolEnvelope],
                         honey_native.decode_protocol_envelope_py(cast(bytes, event["payload"])),
                     )
                     assert sender == pid
                     assert envelope.round_id == round_id
-                    hosts[recipient].push_inbound_wire_batch([cast(bytes, event["payload"])])
+                    payload = cast(bytes, event["payload"])
+                    if kind == "send":
+                        recipient = cast(int, event["recipient"])
+                        hosts[recipient].push_inbound_wire_batch([payload])
+                    else:
+                        include_self = bool(event.get("include_self", True))
+                        recipients = (
+                            range(len(hosts))
+                            if include_self
+                            else (
+                                recipient for recipient in range(len(hosts)) if recipient != sender
+                            )
+                        )
+                        for recipient in recipients:
+                            hosts[recipient].push_inbound_wire_batch([payload])
                     continue
                 if kind == "decision":
                     decisions[pid] = tuple(cast(list[object], event[decision_key]))
@@ -85,15 +98,28 @@ def _drain_until_decisions_and_broadcast_outputs(
             for event in host.finish_pull_outbound_wire_batch():
                 progressed = True
                 kind = str(event["kind"])
-                if kind == "send":
-                    recipient = cast(int, event["recipient"])
+                if kind in {"send", "broadcast_send"}:
                     sender, envelope = cast(
                         tuple[int, ProtocolEnvelope],
                         honey_native.decode_protocol_envelope_py(cast(bytes, event["payload"])),
                     )
                     assert sender == pid
                     assert envelope.round_id == round_id
-                    hosts[recipient].push_inbound_wire_batch([cast(bytes, event["payload"])])
+                    payload = cast(bytes, event["payload"])
+                    if kind == "send":
+                        recipient = cast(int, event["recipient"])
+                        hosts[recipient].push_inbound_wire_batch([payload])
+                    else:
+                        include_self = bool(event.get("include_self", True))
+                        recipients = (
+                            range(len(hosts))
+                            if include_self
+                            else (
+                                recipient for recipient in range(len(hosts)) if recipient != sender
+                            )
+                        )
+                        for recipient in recipients:
+                            hosts[recipient].push_inbound_wire_batch([payload])
                     continue
                 if kind == "decision":
                     decisions[pid] = tuple(cast(list[int], event["selected_pids"]))

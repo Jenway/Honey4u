@@ -3,7 +3,7 @@ use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
 };
 
-use honey_crypto::crypto_error::CryptoError;
+use crate::crypto_error::CryptoError;
 
 /// Encrypts plaintext with AES-256-GCM.
 /// Returns nonce (12 bytes) || ciphertext+tag.
@@ -40,9 +40,9 @@ mod tests {
     fn test_encrypt_decrypt_roundtrip() {
         let key = [0x42u8; 32];
         let plaintext = b"Some secret message to encrypt";
-        let ciphertext = encrypt(&key, plaintext).unwrap();
+        let ciphertext = encrypt(&key, plaintext).expect("encrypt should succeed");
         assert!(ciphertext.len() > plaintext.len());
-        let decrypted = decrypt(&key, &ciphertext).unwrap();
+        let decrypted = decrypt(&key, &ciphertext).expect("decrypt should succeed");
         assert_eq!(decrypted, plaintext);
     }
 
@@ -51,7 +51,7 @@ mod tests {
         let key = [0x42u8; 32];
         let wrong_key = [0x43u8; 32];
         let plaintext = b"hello world";
-        let ciphertext = encrypt(&key, plaintext).unwrap();
+        let ciphertext = encrypt(&key, plaintext).expect("encrypt should succeed");
         assert!(decrypt(&wrong_key, &ciphertext).is_err());
     }
 

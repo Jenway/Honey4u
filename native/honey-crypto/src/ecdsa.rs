@@ -7,7 +7,7 @@ use k256::elliptic_curve::sec1::ToEncodedPoint;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
-use honey_crypto::crypto_error::CryptoError;
+use crate::crypto_error::CryptoError;
 
 static VERIFYING_KEY_CACHE: LazyLock<RwLock<HashMap<[u8; 33], VerifyingKey>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
@@ -26,7 +26,7 @@ fn verifying_key(pub_key: &[u8; 33]) -> Option<VerifyingKey> {
     Some(key)
 }
 
-/// Signs `msg` (SHA-256 hash is computed internally) with the given private key.
+/// Signs `msg` with the given private key.
 /// Returns compact 64-byte signature (r || s).
 pub fn sign(priv_key: &[u8; 32], msg: &[u8]) -> Result<[u8; 64], CryptoError> {
     let signing_key = SigningKey::from_bytes(priv_key.into())
@@ -61,10 +61,7 @@ pub fn verify(pub_key: &[u8; 33], msg: &[u8], sig_bytes: &[u8; 64]) -> bool {
 }
 
 /// Verify that `sigmas` contains at least `threshold` distinct valid ECDSA
-/// signatures over `digest`.  Each entry is `(node_id, sig)`.
-///
-/// This is the shared primitive behind CBC-validate, PRBC-proof-validate,
-/// PB-proof-verify, PCBC-proof-verify, and SPBC sigma checks.
+/// signatures over `digest`. Each entry is `(node_id, sig)`.
 pub fn verify_threshold_sigs(
     pub_keys: &[[u8; 33]],
     digest: &[u8],
@@ -103,8 +100,8 @@ mod tests {
     #[test]
     fn test_sign_and_verify() {
         let msg = b"this is a test message for signing";
-        let pub_key = get_public_key(&PRIV_KEY).unwrap();
-        let sig = sign(&PRIV_KEY, msg).unwrap();
+        let pub_key = get_public_key(&PRIV_KEY).expect("key derivation should succeed");
+        let sig = sign(&PRIV_KEY, msg).expect("sign should succeed");
         assert!(verify(&pub_key, msg, &sig));
     }
 
@@ -113,8 +110,8 @@ mod tests {
         let msg = b"this is a test message for signing";
         let mut wrong_key = PRIV_KEY;
         wrong_key[0] ^= 0xFF;
-        let wrong_pub = get_public_key(&wrong_key).unwrap();
-        let sig = sign(&PRIV_KEY, msg).unwrap();
+        let wrong_pub = get_public_key(&wrong_key).expect("key derivation should succeed");
+        let sig = sign(&PRIV_KEY, msg).expect("sign should succeed");
         assert!(!verify(&wrong_pub, msg, &sig));
     }
 
@@ -122,16 +119,16 @@ mod tests {
     fn test_verify_wrong_message() {
         let msg = b"this is a test message for signing";
         let wrong_msg = b"this is a test message for signing!";
-        let pub_key = get_public_key(&PRIV_KEY).unwrap();
-        let sig = sign(&PRIV_KEY, msg).unwrap();
+        let pub_key = get_public_key(&PRIV_KEY).expect("key derivation should succeed");
+        let sig = sign(&PRIV_KEY, msg).expect("sign should succeed");
         assert!(!verify(&pub_key, wrong_msg, &sig));
     }
 
     #[test]
     fn test_verify_tampered_sig() {
         let msg = b"this is a test message for signing";
-        let pub_key = get_public_key(&PRIV_KEY).unwrap();
-        let mut sig = sign(&PRIV_KEY, msg).unwrap();
+        let pub_key = get_public_key(&PRIV_KEY).expect("key derivation should succeed");
+        let mut sig = sign(&PRIV_KEY, msg).expect("sign should succeed");
         sig[10] ^= 0xFF;
         assert!(!verify(&pub_key, msg, &sig));
     }

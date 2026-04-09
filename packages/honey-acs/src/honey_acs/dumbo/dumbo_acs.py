@@ -22,6 +22,7 @@ from honey_acs.subprotocols.provable_reliable_broadcast import (
 from honey_acs.telemetry import METRICS
 
 type SendFn = Callable[[int, object], Awaitable[None]]
+type BroadcastFn = Callable[[object], Awaitable[None]]
 type PrbcProofVector = tuple[PrbcProof | None, ...]
 type DumboACSDecision = tuple[int | None, ...]
 type PrbcProofValidationKey = tuple[int, bytes, tuple[tuple[int, bytes], ...]]
@@ -174,6 +175,8 @@ async def dumbo_acs(
     decide_queue: asyncio.Queue[DumboACSDecision | tuple[bytes | None, ...]],
     receive_queue: asyncio.Queue[tuple[int, object]],
     send: SendFn,
+    broadcast: BroadcastFn | None = None,
+    broadcast_others: BroadcastFn | None = None,
     carryover_queue: asyncio.Queue[tuple[PrbcOutcome, ...]] | None = None,
     output_mode: Literal["selected_pids", "payloads"] = "selected_pids",
 ) -> None:
@@ -231,6 +234,7 @@ async def dumbo_acs(
                     leader_input,
                     prbc_recvs[leader],
                     send,
+                    broadcast_others=broadcast_others,
                 )
             )
         )
@@ -252,6 +256,9 @@ async def dumbo_acs(
         outcome = await prbc_tasks[params.pid]
         message = DumboProofDiffuse(leader=params.pid, proof=outcome.proof)
         diffuse_recv.put_nowait((params.pid, message))
+        if broadcast_others is not None:
+            await broadcast_others(message)
+            return
         for recipient in range(params.N):
             if recipient == params.pid:
                 continue
@@ -266,6 +273,7 @@ async def dumbo_acs(
             mvba_recv,
             send,
             predicate=_build_mvba_predicate(params, proof_validity_cache),
+            broadcast=broadcast,
         )
     )
 

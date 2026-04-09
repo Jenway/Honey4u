@@ -37,13 +37,9 @@ impl Default for WakeupCounter {
 
 pub trait TransportHandle {
     fn send(&self, recipient: usize, payload: &[u8]) -> io::Result<()>;
-
     fn recv_batch(&self, max_items: usize) -> io::Result<Vec<Vec<u8>>>;
-
     fn pending_inbound(&self) -> usize;
-
     fn pending_outbound(&self) -> usize;
-
     fn wakeup_seq(&self) -> u64;
 }
 

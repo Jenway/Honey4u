@@ -1,5 +1,4 @@
 from honey_acs.crypto import ecdsa, merkle, sig
-from honey_acs.data.broadcast_mempool import BroadcastData, BroadcastMempool
 from honey_acs.dumbo.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
 from honey_acs.dumbo.dumbo_vacs import VACSParams, validated_common_subset
 from honey_acs.exceptions import (
@@ -31,8 +30,6 @@ from honey_acs.pool_reuse import (
 )
 
 __all__ = [
-    "BroadcastData",
-    "BroadcastMempool",
     "CSParams",
     "Channel",
     "CommonParams",

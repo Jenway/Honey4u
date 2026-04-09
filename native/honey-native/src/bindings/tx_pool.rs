@@ -1,10 +1,10 @@
+use honey_crypto::hb;
+use honey_crypto::wire::api::{decode_result, encode_result};
+use honey_crypto::wire::format::TxBatchWire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use std::collections::{HashMap, HashSet, VecDeque};
-
-use crate::wire::api as archive_api;
-use crate::wire::format::TxBatchWire;
 
 struct TxEntry {
     tx_id: String,
@@ -20,7 +20,7 @@ pub struct TxPool {
 
 impl TxPool {
     fn encode_json_string_bytes(value: &str) -> Result<Vec<u8>, String> {
-        crate::hb::encode_json_string(value)
+        hb::encode_json_string(value)
     }
 
     fn push_inner(&mut self, tx_id: String, payload: Vec<u8>) -> Result<(), &'static str> {
@@ -71,7 +71,7 @@ impl TxPool {
             })
             .collect();
 
-        let payload = archive_api::encode(&TxBatchWire { items }).map_err(|e| e.to_string())?;
+        let payload = encode_result(&TxBatchWire { items })?;
 
         Ok((selected, payload))
     }
@@ -101,8 +101,7 @@ impl TxPool {
         tx_ids: Vec<String>,
         final_block_payload: Vec<u8>,
     ) -> Result<(Vec<String>, Vec<String>), String> {
-        let wire: TxBatchWire =
-            archive_api::decode(&final_block_payload).map_err(|e| e.to_string())?;
+        let wire: TxBatchWire = decode_result(&final_block_payload)?;
         let mut delivered_counts: HashMap<Vec<u8>, usize> = HashMap::new();
         for payload in wire.items {
             *delivered_counts.entry(payload).or_default() += 1;

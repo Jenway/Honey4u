@@ -23,8 +23,6 @@ from honey_acs.service import (
     AcsOutputMode,
     AcsProtocol,
     AcsService,
-    DumboAcsService,
-    HoneyBadgerAcsService,
 )
 
 
@@ -100,27 +98,16 @@ class PersistentAcsHost:
             raise RuntimeError(self._startup_error)
 
     def _build_service(self) -> AcsService:
-        if self._protocol == "hb":
-            return HoneyBadgerAcsService(
-                pid=self._pid,
-                nodes=self._nodes,
-                faulty=self._faulty,
-                crypto=self._crypto,
-                config=self._config,
-                event_notifier=self._mark_outbound_ready,
-                output_mode=self._output_mode,
-            )
-        if self._protocol == "dumbo":
-            return DumboAcsService(
-                pid=self._pid,
-                nodes=self._nodes,
-                faulty=self._faulty,
-                crypto=self._crypto,
-                config=self._config,
-                event_notifier=self._mark_outbound_ready,
-                output_mode=self._output_mode,
-            )
-        raise ValueError(f"unsupported ACS protocol: {self._protocol}")
+        return AcsService(
+            protocol=self._protocol,
+            pid=self._pid,
+            nodes=self._nodes,
+            faulty=self._faulty,
+            crypto=self._crypto,
+            config=self._config,
+            event_notifier=self._mark_outbound_ready,
+            output_mode=self._output_mode,
+        )
 
     def _worker_main(self) -> None:
         loop = asyncio.new_event_loop()
@@ -333,12 +320,12 @@ class PersistentAcsHost:
     def _encode_wire_events(self, events: list[dict[str, object]]) -> list[dict[str, object]]:
         encoded: list[dict[str, object]] = []
         for event in events:
-            if str(event.get("kind")) != "send":
+            kind = str(event.get("kind"))
+            if kind not in {"send", "broadcast_send"}:
                 encoded.append(event)
                 continue
 
             round_id = cast(int, event["round_id"])
-            recipient = cast(int, event["recipient"])
             channel = Channel(str(event["channel"]))
             envelope = ProtocolEnvelope(
                 round_id=round_id,
@@ -347,11 +334,22 @@ class PersistentAcsHost:
                 message=cast(ProtocolMessage, event["message"]),
             )
             payload = honey_native.encode_protocol_envelope_py(self._pid, envelope)
+            if kind == "send":
+                encoded.append(
+                    {
+                        "kind": "send",
+                        "round_id": round_id,
+                        "recipient": cast(int, event["recipient"]),
+                        "payload": payload,
+                    }
+                )
+                continue
+
             encoded.append(
                 {
-                    "kind": "send",
+                    "kind": "broadcast_send",
                     "round_id": round_id,
-                    "recipient": recipient,
+                    "include_self": bool(event.get("include_self", True)),
                     "payload": payload,
                 }
             )
@@ -449,7 +447,7 @@ def build_persistent_acs_host_from_json(
     output_mode: AcsOutputMode = "selected_pids",
 ) -> PersistentAcsHost:
     config_payload = cast(dict[str, object], json.loads(config_json)) if config_json else {}
-    # Allow config_json to carry "output_mode" (used by the Rust drive-dumbo driver
+    # Allow config_json to carry "output_mode" (used by bench-driver --mode dumbo
     # which cannot pass it as a separate kwarg).  Pop it before forwarding to HBConfig.
     if "output_mode" in config_payload:
         output_mode = cast(AcsOutputMode, config_payload.pop("output_mode"))

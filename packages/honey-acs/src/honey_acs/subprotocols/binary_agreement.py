@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from honey_acs.messages import BaAux, BaConf, BaEst
@@ -10,6 +10,7 @@ from honey_acs.subprotocols.common_coin import SharedCoin
 from honey_acs.telemetry import METRICS
 
 type BaMessage = BaEst | BaAux | BaConf
+type BaBroadcastFn = Callable[[BaMessage], Awaitable[None]]
 
 
 def _canonical_conf_value(values: set[int]) -> tuple[int, ...]:
@@ -31,6 +32,7 @@ async def binaryagreement(
     decide_queue: asyncio.Queue,
     receive_queue: asyncio.Queue,
     send_queue: asyncio.Queue,
+    broadcast: BaBroadcastFn | None = None,
 ) -> None:
     pid = params.pid
     N = params.N
@@ -53,8 +55,11 @@ async def binaryagreement(
 
     state_changed = asyncio.Event()
 
-    async def broadcast(msg: BaMessage) -> None:
-        """Point-to-point simulate broadcast to everyone including self."""
+    async def broadcast_message(msg: BaMessage) -> None:
+        """Broadcast a uniform BA control message to everyone including self."""
+        if broadcast is not None:
+            await broadcast(msg)
+            return
         for i in range(N):
             await send_queue.put((i, msg))
 
@@ -100,13 +105,13 @@ async def binaryagreement(
     async def est_phase(r: int, est: int) -> None:
         if not est_sent[r][est]:
             est_sent[r][est] = True
-            await broadcast(BaEst(epoch=r, value=est))
+            await broadcast_message(BaEst(epoch=r, value=est))
 
         await wait_for_condition(lambda: bool(bin_values[r]))
 
     async def aux_phase(r: int) -> set[int]:
         w = next(iter(bin_values[r]))
-        await broadcast(BaAux(epoch=r, value=w))
+        await broadcast_message(BaAux(epoch=r, value=w))
 
         def aux_condition() -> bool:
             if 1 in bin_values[r] and len(aux_values[r][1]) >= N - f:
@@ -129,7 +134,7 @@ async def binaryagreement(
         conf_key = _canonical_conf_value(values)
         if not conf_sent[r][conf_key]:
             conf_sent[r][conf_key] = True
-            await broadcast(BaConf(epoch=r, values=conf_key))
+            await broadcast_message(BaConf(epoch=r, values=conf_key))
 
         def conf_condition() -> bool:
             if 1 in bin_values[r] and len(conf_values[r][(1,)]) >= N - f:

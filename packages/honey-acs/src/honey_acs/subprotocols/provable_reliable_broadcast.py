@@ -15,6 +15,7 @@ from honey_acs.params import CommonParams
 from honey_acs.telemetry import METRICS
 
 type SendFn = Callable[[int, object], Awaitable[None]]
+type BroadcastFn = Callable[[object], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -152,16 +153,12 @@ def validate_prbc_proof(
     return ecdsa.verify_threshold_sigs_strict(ecdsa_pks, digest, proof.sigmas, threshold)
 
 
-async def _broadcast(num_nodes: int, send: SendFn, message: object) -> None:
-    for recipient in range(num_nodes):
-        await send(recipient, message)
-
-
 async def provable_reliable_broadcast(
     params: PRBCParams,
     input_queue: asyncio.Queue[bytes | str],
     receive_queue: asyncio.Queue[tuple[int, object]],
     send: SendFn,
+    broadcast_others: BroadcastFn | None = None,
 ) -> PrbcOutcome:
     logger = logging.LoggerAdapter(
         logging.getLogger("honey.prbc"),
@@ -208,7 +205,10 @@ async def provable_reliable_broadcast(
             ready_digests[roothash] = digest
         return digest
 
-    async def broadcast_others(message: object) -> None:
+    async def emit_broadcast_others(message: object) -> None:
+        if broadcast_others is not None:
+            await broadcast_others(message)
+            return
         for recipient in range(n):
             if recipient == pid:
                 continue
@@ -223,7 +223,7 @@ async def provable_reliable_broadcast(
         local_ready_signatures[roothash] = signature
         ready_senders[roothash].add(pid)
         ready_signatures[roothash][pid] = signature
-        await broadcast_others(
+        await emit_broadcast_others(
             PrbcReady(
                 leader=leader,
                 roothash=roothash,
@@ -250,7 +250,7 @@ async def provable_reliable_broadcast(
             stripes[message.roothash][message.stripe_index] = message.stripe
             proofs[message.roothash][message.stripe_index] = message.proof
             echo_senders[message.roothash].add(pid)
-            await broadcast_others(
+            await emit_broadcast_others(
                 PrbcEcho(
                     leader=leader,
                     roothash=message.roothash,

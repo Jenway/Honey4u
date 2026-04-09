@@ -2,18 +2,18 @@ use rand::RngExt;
 use std::collections::{BTreeMap, HashSet};
 use std::thread;
 
-use crate::crypto;
+use crate::threshold;
+use crate::threshold::keygen::{
+    Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams,
+};
 use crate::wire::api::{decode_result, encode_result};
 use crate::wire::crypto_wire::{
     CiphertextWire, PartialDecryptionShareWire, PkePrivateKeyShareWire, PkePublicParamsWire,
 };
 use crate::wire::format::{EncryptedBatchWire, TxBatchWire};
-use honey_crypto::threshold;
-use honey_crypto::threshold::keygen::{
-    Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams,
-};
+use crate::{aes, ecdsa};
 
-pub use honey_crypto::threshold::keygen::{
+pub use crate::threshold::keygen::{
     PartialDecryptionShare as HbPartialDecryptionShare, PkePrivateKeyShare as HbPkePrivateKeyShare,
     PkePublicParams as HbPkePublicParams,
 };
@@ -102,7 +102,7 @@ pub fn seal_encrypted_batch(
     let mut key = [0u8; 32];
     let mut rng = rand::rng();
     rng.fill(&mut key);
-    let ciphertext = crypto::aes::encrypt(&key, payload).map_err(|err| err.to_string())?;
+    let ciphertext = aes::encrypt(&key, payload).map_err(|err| err.to_string())?;
     let encrypted_key =
         encode_ciphertext(&threshold::pke::seal(&public_params.master_public_key, key))?;
     encode_result(&EncryptedBatchWire {
@@ -264,7 +264,7 @@ impl BatchDecryptor {
 
             let shares = state.shares.values().cloned().collect::<Vec<_>>();
             match threshold::pke::open(&self.params, &state.encrypted_key, &shares) {
-                Ok(opened_key) => match crypto::aes::decrypt(&opened_key, &state.ciphertext) {
+                Ok(opened_key) => match aes::decrypt(&opened_key, &state.ciphertext) {
                     Ok(plaintext) => {
                         state.plaintext = Some(plaintext);
                         state.needs_open = false;
@@ -322,7 +322,7 @@ impl BatchDecryptor {
 
             let shares = state.shares.values().cloned().collect::<Vec<_>>();
             match threshold::pke::open_trusted(&self.params, &state.encrypted_key, &shares) {
-                Ok(opened_key) => match crypto::aes::decrypt(&opened_key, &state.ciphertext) {
+                Ok(opened_key) => match aes::decrypt(&opened_key, &state.ciphertext) {
                     Ok(plaintext) => {
                         state.plaintext = Some(plaintext);
                         state.needs_open = false;
@@ -353,78 +353,20 @@ impl BatchDecryptor {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public surface for honey-node crate (bypasses the Python layer)
-// ---------------------------------------------------------------------------
-
-/// Decoded pool-fetch message extracted from a raw protocol-envelope wire payload.
-pub enum PoolFetchWire {
-    Request {
-        sender: u32,
-        item_id: String,
-        origin_round: u32,
-        origin_sender: u32,
-        roothash: Vec<u8>,
-    },
-    Response {
-        sender: u32,
-        item_id: String,
-        payload: Vec<u8>,
-    },
-}
-
-/// Verify ≥ `threshold` distinct valid ECDSA signatures over `digest`.
-///
-/// `pub_keys`: compressed 33-byte secp256k1 public keys, indexed by node-id.
-/// `sigmas`:   `(node_id_0based as i32, raw_64b_signature)` pairs.
+/// Verify >= `threshold` distinct valid ECDSA signatures over `digest`.
 pub fn ecdsa_verify_threshold_sigs(
     pub_keys: &[[u8; 33]],
     digest: &[u8],
     sigmas: &[(i32, [u8; 64])],
     threshold: usize,
 ) -> bool {
-    crate::crypto::ecdsa::verify_threshold_sigs(pub_keys, digest, sigmas, threshold)
-}
-
-/// Decode a `DUMBO_POOL` message from a raw protocol-envelope wire payload.
-///
-/// Returns `Ok(Some(_))` for pool-fetch messages, `Ok(None)` for every other
-/// channel, and `Err(_)` if the bytes are malformed.
-pub fn decode_pool_fetch_from_wire(bytes: &[u8]) -> Result<Option<PoolFetchWire>, String> {
-    use crate::wire::format::{ChannelWire, MessageWire};
-    let wire: crate::wire::format::ProtocolEnvelopeWire = crate::wire::api::decode_result(bytes)?;
-    if !matches!(wire.channel, ChannelWire::DumboPool) {
-        return Ok(None);
-    }
-    let sender = wire.sender;
-    match wire.message {
-        MessageWire::PoolFetchRequest {
-            item_id,
-            origin_round,
-            origin_sender,
-            roothash,
-        } => Ok(Some(PoolFetchWire::Request {
-            sender,
-            item_id,
-            origin_round,
-            origin_sender,
-            roothash,
-        })),
-        MessageWire::PoolFetchResponse { item_id, payload } => Ok(Some(PoolFetchWire::Response {
-            sender,
-            item_id,
-            payload,
-        })),
-        _ => Err(String::from(
-            "unexpected message type in DUMBO_POOL envelope",
-        )),
-    }
+    ecdsa::verify_threshold_sigs(pub_keys, digest, sigmas, threshold)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use honey_crypto::threshold::keygen::generate_pke_keys;
+    use crate::threshold::keygen::generate_pke_keys;
 
     #[test]
     fn test_hb_block_round_trip_and_merge() {

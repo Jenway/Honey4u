@@ -2,19 +2,19 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
-from honey_acs.data.broadcast_mempool import BroadcastStore
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import Channel, ProtocolMessage
 from honey_acs.params import CommonParams, CryptoParams
 from honey_acs.subprotocols.binary_agreement import BAParams, binaryagreement
 from honey_acs.subprotocols.common_coin import CoinParams, SharedCoin
-from honey_acs.subprotocols.reliable_broadcast import BroadcastParams, reliablebroadcast
+from honey_acs.subprotocols.reliable_broadcast import BroadcastParams, RbcOutput, reliablebroadcast
 
 from . import bkr93_core
 
 type HBOutboundSend = Callable[[int, Channel, int | None, ProtocolMessage], Awaitable[None]]
+type HBBroadcastSend = Callable[[Channel, int | None, ProtocolMessage], Awaitable[None]]
 type CoinRecv = tuple[int, object]
 type AbaRecv = tuple[int, object]
 type RbcRecv = tuple[int, object]
@@ -88,14 +88,12 @@ async def _forward_broadcast_queue(
     *,
     channel: Channel,
     instance_id: int,
-    num_nodes: int,
-    send: HBOutboundSend,
+    broadcast: HBBroadcastSend,
 ) -> None:
     try:
         while True:
             message = await queue.get()
-            for recipient in range(num_nodes):
-                await send(recipient, channel, instance_id, message)
+            await broadcast(channel, instance_id, message)
     except asyncio.CancelledError:
         pass
 
@@ -124,13 +122,13 @@ async def run_bkr93_acs_with_send(
     coin_recvs: list[asyncio.Queue[CoinRecv]],
     aba_recvs: list[asyncio.Queue[AbaRecv]],
     rbc_recvs: list[asyncio.Queue[RbcRecv]],
-    mempool: BroadcastStore,
     round_id: int,
     my_rbc_input: asyncio.Queue[bytes],
-    output_queue: asyncio.Queue[tuple[int | bytes | None, ...]],
+    output_queue: asyncio.Queue[tuple[int | None, ...]],
     logger: logging.LoggerAdapter,
     send: HBOutboundSend,
-    output_mode: Literal["selected_pids", "payloads"] = "selected_pids",
+    broadcast: HBBroadcastSend,
+    on_rbc_output: Callable[[RbcOutput], None] | None = None,
 ) -> None:
     n = params.N
     f = params.f
@@ -148,12 +146,13 @@ async def run_bkr93_acs_with_send(
             extra={"round": round_id},
         )
 
-    def bridge_rbc(instance_id: int, rbc_task: asyncio.Task[str]) -> None:
+    def bridge_rbc(instance_id: int, rbc_task: asyncio.Task[RbcOutput]) -> None:
         async def loop() -> None:
             try:
-                payload_id = await rbc_task
-                if payload_id:
-                    rbc_outputs[instance_id].put_nowait(instance_id)
+                output = await rbc_task
+                if on_rbc_output is not None:
+                    on_rbc_output(output)
+                rbc_outputs[instance_id].put_nowait(instance_id)
             except asyncio.CancelledError:
                 pass
             except Exception as exc:
@@ -170,8 +169,7 @@ async def run_bkr93_acs_with_send(
                     coin_broadcast_queue,
                     channel=Channel.ACS_COIN,
                     instance_id=j,
-                    num_nodes=n,
-                    send=send,
+                    broadcast=broadcast,
                 )
             )
 
@@ -191,14 +189,6 @@ async def run_bkr93_acs_with_send(
 
             aba_send_queue: asyncio.Queue[PointToPointOutbound] = asyncio.Queue()
             spawn(
-                _forward_point_to_point_queue(
-                    aba_send_queue,
-                    channel=Channel.ACS_ABA,
-                    instance_id=j,
-                    send=send,
-                )
-            )
-            spawn(
                 binaryagreement(
                     BAParams(sid=f"{sid}ABA{j}", pid=pid, N=n, f=f, leader=j),
                     coin,
@@ -207,6 +197,9 @@ async def run_bkr93_acs_with_send(
                     aba_outputs[j],
                     aba_recvs[j],
                     aba_send_queue,
+                    broadcast=lambda message, instance_id=j: broadcast(
+                        Channel.ACS_ABA, instance_id, message
+                    ),
                 )
             )
 
@@ -226,27 +219,14 @@ async def run_bkr93_acs_with_send(
                     rbc_input,
                     rbc_recvs[j],
                     rbc_send_queue,
-                    mempool,
-                    round_id,
+                    broadcast=lambda message, instance_id=j: broadcast(
+                        Channel.ACS_RBC, instance_id, message
+                    ),
                 )
             )
             bridge_rbc(j, rbc_task)
 
         result = await commonsubset(params, rbc_outputs, aba_inputs, aba_outputs)
-        if output_mode == "payloads":
-            payload_result: list[bytes | None] = []
-            for selected in result:
-                if selected is None:
-                    payload_result.append(None)
-                    continue
-                data = mempool.get_by_round_sender(round_id, int(selected))
-                if data is None:
-                    raise ProtocolInvariantError(
-                        f"missing RBC payload for round={round_id} sender={selected}"
-                    )
-                payload_result.append(data.payload)
-            output_queue.put_nowait(tuple(payload_result))
-            return
         output_queue.put_nowait(result)
     except asyncio.CancelledError:
         raise

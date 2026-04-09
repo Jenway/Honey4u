@@ -1,3 +1,4 @@
+use honey_crypto::ecdsa;
 /// Coarse-grained key-generation entry points for the Python ACS host.
 ///
 /// These functions generate all cryptographic material for an N-node cluster
@@ -7,16 +8,14 @@
 /// The JSON schema mirrors the format expected by `build_crypto_params_from_json`
 /// in `honey_acs/host_crypto.py`.
 use honey_crypto::threshold;
+use honey_crypto::wire::api::encode_result;
+use honey_crypto::wire::crypto_wire::{
+    PkePrivateKeyShareWire, PkePublicParamsWire, SigPrivateKeyShareWire, SigPublicParamsWire,
+};
 use k256::elliptic_curve::rand_core::OsRng;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde_json::json;
-
-use crate::crypto;
-use crate::wire::api as archive_api;
-use crate::wire::crypto_wire::{
-    PkePrivateKeyShareWire, PkePublicParamsWire, SigPrivateKeyShareWire, SigPublicParamsWire,
-};
 
 // ---------------------------------------------------------------------------
 // Internal helpers — pure Rust, no GIL required
@@ -27,27 +26,19 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 fn sig_pk_hex(params: &threshold::keygen::SigPublicParams) -> Result<String, String> {
-    archive_api::encode(&SigPublicParamsWire::from_runtime(params))
-        .map(|b| to_hex(&b))
-        .map_err(|e| e.to_string())
+    encode_result(&SigPublicParamsWire::from_runtime(params)).map(|b| to_hex(&b))
 }
 
 fn sig_sk_hex(share: &threshold::keygen::SigPrivateKeyShare) -> Result<String, String> {
-    archive_api::encode(&SigPrivateKeyShareWire::from_runtime(share))
-        .map(|b| to_hex(&b))
-        .map_err(|e| e.to_string())
+    encode_result(&SigPrivateKeyShareWire::from_runtime(share)).map(|b| to_hex(&b))
 }
 
 fn pke_pk_hex(params: &threshold::keygen::PkePublicParams) -> Result<String, String> {
-    archive_api::encode(&PkePublicParamsWire::from_runtime(params))
-        .map(|b| to_hex(&b))
-        .map_err(|e| e.to_string())
+    encode_result(&PkePublicParamsWire::from_runtime(params)).map(|b| to_hex(&b))
 }
 
 fn pke_sk_hex(share: &threshold::keygen::PkePrivateKeyShare) -> Result<String, String> {
-    archive_api::encode(&PkePrivateKeyShareWire::from_runtime(share))
-        .map(|b| to_hex(&b))
-        .map_err(|e| e.to_string())
+    encode_result(&PkePrivateKeyShareWire::from_runtime(share)).map(|b| to_hex(&b))
 }
 
 /// Generate ECDSA keys for `count` nodes.
@@ -62,7 +53,7 @@ fn ecdsa_generate(count: usize) -> Result<(Vec<String>, Vec<String>), String> {
             .as_slice()
             .try_into()
             .expect("k256 private key is always 32 bytes");
-        let pub_key = crypto::ecdsa::get_public_key(&priv_fixed).map_err(|e| e.to_string())?;
+        let pub_key = ecdsa::get_public_key(&priv_fixed).map_err(|e| e.to_string())?;
         pks.push(to_hex(&pub_key));
         sks.push(to_hex(&priv_bytes));
     }

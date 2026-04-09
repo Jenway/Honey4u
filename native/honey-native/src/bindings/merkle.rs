@@ -1,10 +1,9 @@
+use honey_crypto::merkle;
+use honey_crypto::wire::api::{decode_result, encode_result};
+use honey_crypto::wire::format::{EncodedShardWire, MerkleProofWire, MerkleResultWire};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-
-use crate::crypto::merkle;
-use crate::wire::api as archive_api;
-use crate::wire::format::{EncodedShardWire, MerkleProofWire, MerkleResultWire};
 
 fn merkle_proof_to_wire(proof: &merkle::MerkleProof) -> MerkleProofWire {
     MerkleProofWire {
@@ -87,13 +86,14 @@ impl MerkleProof {
 
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
         let wire = merkle_proof_to_wire(&self.inner);
-        py.detach(move || archive_api::encode(&wire))
+        py.detach(move || encode_result(&wire).map_err(PyValueError::new_err))
     }
 
     #[staticmethod]
     fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
         let payload = b.to_vec();
-        let wire: MerkleProofWire = py.detach(move || archive_api::decode(&payload))?;
+        let wire: MerkleProofWire =
+            py.detach(move || decode_result(&payload).map_err(PyValueError::new_err))?;
         let inner = merkle_proof_from_wire(wire)?;
         Ok(Self { inner })
     }
@@ -135,13 +135,14 @@ impl EncodedShard {
             data: self.data.clone(),
             proof: merkle_proof_to_wire(&self.proof.inner),
         };
-        py.detach(move || archive_api::encode(&wire))
+        py.detach(move || encode_result(&wire).map_err(PyValueError::new_err))
     }
 
     #[staticmethod]
     fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
         let payload = b.to_vec();
-        let wire: EncodedShardWire = py.detach(move || archive_api::decode(&payload))?;
+        let wire: EncodedShardWire =
+            py.detach(move || decode_result(&payload).map_err(PyValueError::new_err))?;
         Ok(Self {
             index: wire.index,
             data: wire.data,
@@ -220,13 +221,14 @@ impl MerkleResult {
 
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
         let wire = merkle_result_to_wire(&self.inner);
-        py.detach(move || archive_api::encode(&wire))
+        py.detach(move || encode_result(&wire).map_err(PyValueError::new_err))
     }
 
     #[staticmethod]
     fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
         let payload = b.to_vec();
-        let wire: MerkleResultWire = py.detach(move || archive_api::decode(&payload))?;
+        let wire: MerkleResultWire =
+            py.detach(move || decode_result(&payload).map_err(PyValueError::new_err))?;
         let inner = merkle_result_from_wire(wire)?;
         Ok(Self { inner })
     }
@@ -304,7 +306,8 @@ fn merkle_decode_dicts(
             continue;
         };
         let proof_bytes = proof_any.extract::<Vec<u8>>()?;
-        let proof_wire: MerkleProofWire = archive_api::decode(&proof_bytes)?;
+        let proof_wire: MerkleProofWire =
+            decode_result(&proof_bytes).map_err(PyValueError::new_err)?;
         let proof = merkle_proof_from_wire(proof_wire)?;
         inner.push((idx, shard, proof));
     }

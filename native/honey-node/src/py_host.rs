@@ -42,6 +42,11 @@ pub(crate) enum PyAcsWireEvent {
         recipient: usize,
         payload: Vec<u8>,
     },
+    BroadcastSend {
+        round_id: usize,
+        payload: Vec<u8>,
+        include_self: bool,
+    },
     Decision {
         round_id: usize,
         /// Set when `output_mode = "selected_pids"` (HB / bench mode).
@@ -62,8 +67,6 @@ pub(crate) enum PyAcsWireEvent {
     BroadcastOutput {
         round_id: usize,
         sender: usize,
-        #[allow(dead_code)]
-        payload_id: String,
         payload: Vec<u8>,
         roothash: Vec<u8>,
     },
@@ -107,6 +110,15 @@ fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
             round_id: dict_item(&dict, "round_id")?.extract()?,
             recipient: dict_item(&dict, "recipient")?.extract()?,
             payload: dict_item(&dict, "payload")?.extract()?,
+        }),
+        "broadcast_send" => Ok(PyAcsWireEvent::BroadcastSend {
+            round_id: dict_item(&dict, "round_id")?.extract()?,
+            payload: dict_item(&dict, "payload")?.extract()?,
+            include_self: dict
+                .get_item("include_self")?
+                .map(|value| value.extract::<bool>())
+                .transpose()?
+                .unwrap_or(true),
         }),
         "decision" => {
             let round_id = dict_item(&dict, "round_id")?.extract()?;
@@ -170,7 +182,6 @@ fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
         "broadcast_output" => Ok(PyAcsWireEvent::BroadcastOutput {
             round_id: dict_item(&dict, "round_id")?.extract()?,
             sender: dict_item(&dict, "sender")?.extract()?,
-            payload_id: dict_item(&dict, "payload_id")?.extract()?,
             payload: dict_item(&dict, "payload")?.extract()?,
             roothash: dict_item(&dict, "roothash")?.extract()?,
         }),

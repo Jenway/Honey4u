@@ -19,6 +19,7 @@ from honey_acs.telemetry import METRICS
 
 type AbaPayload = BaEst | BaAux | BaConf
 type SendFn = Callable[[int, object], Awaitable[None]]
+type BroadcastFn = Callable[[object], Awaitable[None]]
 type PredicateFn = Callable[[bytes], bool]
 type ThresholdProofValidationKey = tuple[bytes, bytes]
 
@@ -229,7 +230,16 @@ def _verify_threshold_proof_cached(
     return valid
 
 
-async def _broadcast(num_nodes: int, send: SendFn, message: object) -> None:
+async def _broadcast(
+    num_nodes: int,
+    send: SendFn,
+    message: object,
+    *,
+    broadcast: BroadcastFn | None = None,
+) -> None:
+    if broadcast is not None:
+        await broadcast(message)
+        return
     for recipient in range(num_nodes):
         await send(recipient, message)
 
@@ -244,6 +254,7 @@ async def _provable_dispersal(
     send: SendFn,
     event_queue: asyncio.Queue[PdEvent],
     proof_validity_cache: dict[ThresholdProofValidationKey, bool],
+    broadcast: BroadcastFn | None = None,
 ) -> None:
     pid = params.pid
     n = params.N
@@ -322,7 +333,7 @@ async def _provable_dispersal(
                 lock_sent = True
                 if pid == leader:
                     local_lock_proof = proof
-                await _broadcast(n, send, PdLock(leader=leader, proof=proof))
+                await _broadcast(n, send, PdLock(leader=leader, proof=proof), broadcast=broadcast)
 
         elif isinstance(message, PdLock):
             if sender != leader or message.leader != leader or local_lock is not None:
@@ -368,7 +379,7 @@ async def _provable_dispersal(
                 done_sent = True
                 if pid == leader:
                     local_done_proof = proof
-                await _broadcast(n, send, PdDone(leader=leader, proof=proof))
+                await _broadcast(n, send, PdDone(leader=leader, proof=proof), broadcast=broadcast)
 
         elif isinstance(message, PdDone):
             if sender != leader or message.leader != leader or local_done is not None:
@@ -398,6 +409,7 @@ async def _recast_value(
     receive_queue: asyncio.Queue[tuple[int, object]],
     send: SendFn,
     proof_validity_cache: dict[ThresholdProofValidationKey, bool],
+    broadcast: BroadcastFn | None = None,
 ) -> bytes:
     n = params.N
     f = params.f
@@ -419,12 +431,18 @@ async def _recast_value(
     while True:
         if lock_proof is not None and not sent_lock:
             await _broadcast(
-                n, send, MvbaRcLock(mvba_round=mvba_round, leader=leader, proof=lock_proof)
+                n,
+                send,
+                MvbaRcLock(mvba_round=mvba_round, leader=leader, proof=lock_proof),
+                broadcast=broadcast,
             )
             sent_lock = True
         if local_store is not None and not sent_store:
             await _broadcast(
-                n, send, MvbaRcStore(mvba_round=mvba_round, leader=leader, store=local_store)
+                n,
+                send,
+                MvbaRcStore(mvba_round=mvba_round, leader=leader, store=local_store),
+                broadcast=broadcast,
             )
             sent_store = True
 
@@ -497,11 +515,12 @@ async def _forward_election_coin_shares(
     num_nodes: int,
     queue: asyncio.Queue[CoinShareMessage],
     send: SendFn,
+    broadcast: BroadcastFn | None = None,
 ) -> None:
     while True:
         payload = await queue.get()
         wrapped = MvbaElectionCoinShare(coin_round=payload.round_id, signature=payload.signature)
-        await _broadcast(num_nodes, send, wrapped)
+        await _broadcast(num_nodes, send, wrapped, broadcast=broadcast)
 
 
 async def _forward_aba_messages(
@@ -519,6 +538,7 @@ async def _forward_aba_coin_shares(
     mvba_round: int,
     queue: asyncio.Queue[CoinShareMessage],
     send: SendFn,
+    broadcast: BroadcastFn | None = None,
 ) -> None:
     while True:
         payload = await queue.get()
@@ -527,7 +547,7 @@ async def _forward_aba_coin_shares(
             coin_round=payload.round_id,
             signature=payload.signature,
         )
-        await _broadcast(num_nodes, send, wrapped)
+        await _broadcast(num_nodes, send, wrapped, broadcast=broadcast)
 
 
 async def _run_rc_prepare(
@@ -540,11 +560,13 @@ async def _run_rc_prepare(
     receive_queue: asyncio.Queue[tuple[int, object]],
     send: SendFn,
     proof_validity_cache: dict[ThresholdProofValidationKey, bool],
+    broadcast: BroadcastFn | None = None,
 ) -> tuple[int, ThresholdShareProof | None]:
     await _broadcast(
         params.N,
         send,
         MvbaRcPrepare(mvba_round=mvba_round, leader=leader, proof=local_lock),
+        broadcast=broadcast,
     )
 
     none_votes = 0
@@ -576,6 +598,7 @@ async def _run_mvba_aba_round(
     send: SendFn,
     task_group: asyncio.TaskGroup,
     background_tasks: list[asyncio.Task[object]],
+    broadcast: BroadcastFn | None = None,
 ) -> int:
     decide_queue: asyncio.Queue[int] = asyncio.Queue(1)
     input_queue: asyncio.Queue[int] = asyncio.Queue(1)
@@ -594,6 +617,16 @@ async def _run_mvba_aba_round(
         )
     )
     coin.start(task_group, aba_coin_recv_queue)
+    aba_broadcast = (
+        None
+        if broadcast is None
+        else lambda payload: _broadcast(
+            params.N,
+            send,
+            MvbaAbaMessage(mvba_round=mvba_round, payload=payload),
+            broadcast=broadcast,
+        )
+    )
     aba_task = task_group.create_task(
         binaryagreement(
             BAParams(
@@ -609,15 +642,23 @@ async def _run_mvba_aba_round(
             decide_queue,
             aba_recv_queue,
             send_queue,
+            broadcast=aba_broadcast,
         )
     )
     background_tasks.append(aba_task)
-    background_tasks.append(
-        task_group.create_task(_forward_aba_messages(mvba_round, send_queue, send))
-    )
+    if broadcast is None:
+        background_tasks.append(
+            task_group.create_task(_forward_aba_messages(mvba_round, send_queue, send))
+        )
     background_tasks.append(
         task_group.create_task(
-            _forward_aba_coin_shares(params.N, mvba_round, coin_send_queue, send)
+            _forward_aba_coin_shares(
+                params.N,
+                mvba_round,
+                coin_send_queue,
+                send,
+                broadcast=broadcast,
+            )
         )
     )
     decision = await decide_queue.get()
@@ -639,6 +680,7 @@ async def dumbo_mvba(
     receive_queue: asyncio.Queue[tuple[int, object]],
     send: SendFn,
     predicate: PredicateFn | None = None,
+    broadcast: BroadcastFn | None = None,
 ) -> None:
     predicate = predicate or (lambda _value: True)
     logger = logging.LoggerAdapter(logging.getLogger("honey.mvba"), extra={"node": params.pid})
@@ -681,7 +723,11 @@ async def dumbo_mvba(
             )
         )
         background_tasks.append(
-            tg.create_task(_forward_election_coin_shares(params.N, election_coin_send, send))
+            tg.create_task(
+                _forward_election_coin_shares(
+                    params.N, election_coin_send, send, broadcast=broadcast
+                )
+            )
         )
 
         election_coin = SharedCoin(
@@ -712,6 +758,7 @@ async def dumbo_mvba(
                         send=send,
                         event_queue=pd_event_queue,
                         proof_validity_cache=proof_validity_cache,
+                        broadcast=broadcast,
                     )
                 )
             )
@@ -753,6 +800,7 @@ async def dumbo_mvba(
                 receive_queue=rc_prepare_recvs[mvba_round],
                 send=send,
                 proof_validity_cache=proof_validity_cache,
+                broadcast=broadcast,
             )
             aba_decision = await _run_mvba_aba_round(
                 params,
@@ -763,6 +811,7 @@ async def dumbo_mvba(
                 send=send,
                 task_group=tg,
                 background_tasks=background_tasks,
+                broadcast=broadcast,
             )
             if aba_decision == 1:
                 lock_proof = selected_lock or locks.get(leader)
@@ -778,6 +827,7 @@ async def dumbo_mvba(
                     receive_queue=rc_recvs[mvba_round],
                     send=send,
                     proof_validity_cache=proof_validity_cache,
+                    broadcast=broadcast,
                 )
                 await decide_queue.put(value)
                 METRICS.increment("mvba.decision", node=params.pid, leader=leader)

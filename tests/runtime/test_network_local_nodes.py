@@ -19,7 +19,7 @@ def _assert_transport_stats_populated(results: list[Any]) -> None:
 
 def test_local_honeybadger_acs_can_be_rust_driven_with_persistent_python_hosts() -> None:
     result = run_local_honeybadger_acs_rust_driven(
-        sid="test:drive-acs:hb",
+        sid="test:bench-driver:acs:hb",
         num_nodes=4,
         faulty=1,
         max_rounds=2,
@@ -46,7 +46,7 @@ def test_local_honeybadger_acs_can_be_rust_driven_with_persistent_python_hosts()
 
 def test_local_honeybadger_outer_can_be_rust_driven_with_persistent_python_hosts() -> None:
     result = run_local_honeybadger_rust_driven(
-        sid="test:drive-hb:outer",
+        sid="test:bench-driver:hb:outer",
         num_nodes=4,
         faulty=1,
         batch_size=2,
@@ -80,7 +80,7 @@ def test_local_honeybadger_outer_supports_non_python_broadcast_pools(
     broadcast_mempool_backend: str,
 ) -> None:
     result = run_local_honeybadger_rust_driven(
-        sid=f"test:drive-hb:outer:{broadcast_mempool_backend}",
+        sid=f"test:bench-driver:hb:outer:{broadcast_mempool_backend}",
         num_nodes=4,
         faulty=1,
         batch_size=1,
@@ -100,7 +100,7 @@ def test_local_honeybadger_outer_supports_non_python_broadcast_pools(
 
 def test_local_honeybadger_outer_can_be_rust_driven_with_dumbo_acs_provider() -> None:
     result = run_local_honeybadger_rust_driven(
-        sid="test:drive-hb:outer:dumbo-acs",
+        sid="test:bench-driver:hb:outer:dumbo-acs",
         num_nodes=4,
         faulty=1,
         batch_size=1,
@@ -120,7 +120,7 @@ def test_local_honeybadger_outer_can_be_rust_driven_with_dumbo_acs_provider() ->
 
 def test_local_honeybadger_benchmark_rust_driven_reports_round_stats() -> None:
     results = benchmark_local_honeybadger_nodes_rust_driven(
-        sid="test:drive-hb:benchmark",
+        sid="test:bench-driver:hb:benchmark",
         num_nodes=4,
         faulty=1,
         batch_size=2,
@@ -147,7 +147,7 @@ def test_local_honeybadger_benchmark_rust_driven_reports_round_stats() -> None:
 
 def test_local_dumbo_outer_can_be_rust_driven_with_persistent_python_hosts() -> None:
     result = run_local_dumbo_rust_driven(
-        sid="test:drive-dumbo:outer",
+        sid="test:bench-driver:dumbo:outer",
         num_nodes=4,
         faulty=1,
         batch_size=1,
@@ -172,7 +172,7 @@ def test_local_dumbo_outer_can_be_rust_driven_with_persistent_python_hosts() -> 
 
 def test_local_dumbo_benchmark_rust_driven_reports_round_stats() -> None:
     results = benchmark_local_dumbo_nodes_rust_driven(
-        sid="test:drive-dumbo:benchmark",
+        sid="test:bench-driver:dumbo:benchmark",
         num_nodes=4,
         faulty=1,
         batch_size=2,
@@ -200,7 +200,7 @@ def test_local_dumbo_benchmark_rust_driven_reports_round_stats() -> None:
 
 def test_local_dumbo_acs_can_be_rust_driven_with_persistent_python_hosts() -> None:
     result = run_local_dumbo_acs_rust_driven(
-        sid="test:drive-acs:dumbo",
+        sid="test:bench-driver:acs:dumbo",
         num_nodes=4,
         faulty=1,
         max_rounds=1,

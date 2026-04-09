@@ -12,9 +12,6 @@ where
     match command.as_str() {
         "run-driver-node" => parse_run_driver_node_args(argv).map(CliCommand::RunDriverNode),
         "bench-driver" => parse_bench_driver_args(argv).map(CliCommand::BenchDriver),
-        "drive-acs" => parse_drive_acs_args(argv).map(CliCommand::DriveAcs),
-        "drive-hb" => parse_drive_honeybadger_args(argv).map(CliCommand::DriveHoneyBadger),
-        "drive-dumbo" => parse_drive_dumbo_args(argv).map(CliCommand::DriveDumbo),
         _ => Err(format!("unknown command: {command}")),
     }
 }
@@ -127,218 +124,10 @@ fn parse_bench_driver_args<I>(mut argv: I) -> Result<BenchDriverArgs, String>
 where
     I: Iterator<Item = String>,
 {
+    let mut mode = BenchDriverMode::Benchmark;
     let mut sid = String::from("bench:driver:hb");
-    let mut acs_protocol = Protocol::HoneyBadger;
-    let mut nodes = 4usize;
-    let mut faulty = 1usize;
-    let mut rounds = 1usize;
-    let mut batch_size = 1usize;
-    let mut global_timeout = 30.0f64;
-    let mut config_json = String::from("{}");
-    let mut result_path: Option<String> = None;
-
-    while let Some(arg) = argv.next() {
-        match arg.as_str() {
-            "--sid" => {
-                sid = take_value(&mut argv, "--sid")?;
-            }
-            "--acs-protocol" => {
-                acs_protocol = Protocol::parse(&take_value(&mut argv, "--acs-protocol")?)?;
-            }
-            "--nodes" => {
-                nodes = parse_usize_flag(&mut argv, "--nodes")?;
-            }
-            "--faulty" => {
-                faulty = parse_usize_flag(&mut argv, "--faulty")?;
-            }
-            "--rounds" => {
-                rounds = parse_usize_flag(&mut argv, "--rounds")?;
-            }
-            "--batch-size" => {
-                batch_size = parse_usize_flag(&mut argv, "--batch-size")?;
-            }
-            "--global-timeout" => {
-                global_timeout = parse_f64_flag(&mut argv, "--global-timeout")?;
-            }
-            "--config-json" => {
-                config_json = take_value(&mut argv, "--config-json")?;
-            }
-            "--result-path" => {
-                result_path = Some(take_value(&mut argv, "--result-path")?);
-            }
-            _ => return Err(format!("unknown argument: {arg}")),
-        }
-    }
-
-    if nodes == 0 {
-        return Err(String::from("--nodes must be > 0"));
-    }
-    if rounds == 0 {
-        return Err(String::from("--rounds must be > 0"));
-    }
-    if batch_size == 0 {
-        return Err(String::from("--batch-size must be > 0"));
-    }
-    if global_timeout <= 0.0 {
-        return Err(String::from("--global-timeout must be > 0"));
-    }
-
-    Ok(BenchDriverArgs {
-        sid,
-        acs_protocol,
-        nodes,
-        faulty,
-        rounds,
-        batch_size,
-        global_timeout,
-        config_json,
-        result_path,
-    })
-}
-
-fn parse_drive_acs_args<I>(mut argv: I) -> Result<DriveAcsArgs, String>
-where
-    I: Iterator<Item = String>,
-{
     let mut protocol = Protocol::HoneyBadger;
-    let mut sid = String::from("drive:acs");
-    let mut nodes = 4usize;
-    let mut faulty = 1usize;
-    let mut rounds = 1usize;
-    let mut global_timeout = 30.0f64;
-    let mut config_json = String::from("{}");
-    let mut result_path: Option<String> = None;
-
-    while let Some(arg) = argv.next() {
-        match arg.as_str() {
-            "--protocol" => {
-                protocol = Protocol::parse(&take_value(&mut argv, "--protocol")?)?;
-            }
-            "--sid" => {
-                sid = take_value(&mut argv, "--sid")?;
-            }
-            "--nodes" => {
-                nodes = parse_usize_flag(&mut argv, "--nodes")?;
-            }
-            "--faulty" => {
-                faulty = parse_usize_flag(&mut argv, "--faulty")?;
-            }
-            "--rounds" => {
-                rounds = parse_usize_flag(&mut argv, "--rounds")?;
-            }
-            "--global-timeout" => {
-                global_timeout = parse_f64_flag(&mut argv, "--global-timeout")?;
-            }
-            "--config-json" => {
-                config_json = take_value(&mut argv, "--config-json")?;
-            }
-            "--result-path" => {
-                result_path = Some(take_value(&mut argv, "--result-path")?);
-            }
-            _ => return Err(format!("unknown argument: {arg}")),
-        }
-    }
-
-    if nodes == 0 {
-        return Err(String::from("--nodes must be > 0"));
-    }
-    if rounds == 0 {
-        return Err(String::from("--rounds must be > 0"));
-    }
-    if global_timeout <= 0.0 {
-        return Err(String::from("--global-timeout must be > 0"));
-    }
-
-    Ok(DriveAcsArgs {
-        protocol,
-        sid,
-        nodes,
-        faulty,
-        rounds,
-        global_timeout,
-        config_json,
-        result_path,
-    })
-}
-
-fn parse_drive_honeybadger_args<I>(mut argv: I) -> Result<DriveHoneyBadgerArgs, String>
-where
-    I: Iterator<Item = String>,
-{
-    let mut sid = String::from("drive:hb");
     let mut acs_protocol = Protocol::HoneyBadger;
-    let mut nodes = 4usize;
-    let mut faulty = 1usize;
-    let mut rounds = 1usize;
-    let mut batch_size = 1usize;
-    let mut global_timeout = 30.0f64;
-    let mut config_json = String::from("{}");
-    let mut result_path: Option<String> = None;
-
-    while let Some(arg) = argv.next() {
-        match arg.as_str() {
-            "--sid" => {
-                sid = take_value(&mut argv, "--sid")?;
-            }
-            "--acs-protocol" => {
-                acs_protocol = Protocol::parse(&take_value(&mut argv, "--acs-protocol")?)?;
-            }
-            "--nodes" => {
-                nodes = parse_usize_flag(&mut argv, "--nodes")?;
-            }
-            "--faulty" => {
-                faulty = parse_usize_flag(&mut argv, "--faulty")?;
-            }
-            "--rounds" => {
-                rounds = parse_usize_flag(&mut argv, "--rounds")?;
-            }
-            "--batch-size" => {
-                batch_size = parse_usize_flag(&mut argv, "--batch-size")?;
-            }
-            "--global-timeout" => {
-                global_timeout = parse_f64_flag(&mut argv, "--global-timeout")?;
-            }
-            "--config-json" => {
-                config_json = take_value(&mut argv, "--config-json")?;
-            }
-            "--result-path" => {
-                result_path = Some(take_value(&mut argv, "--result-path")?);
-            }
-            _ => return Err(format!("unknown argument: {arg}")),
-        }
-    }
-
-    if nodes == 0 {
-        return Err(String::from("--nodes must be > 0"));
-    }
-    if rounds == 0 {
-        return Err(String::from("--rounds must be > 0"));
-    }
-    if batch_size == 0 {
-        return Err(String::from("--batch-size must be > 0"));
-    }
-    if global_timeout <= 0.0 {
-        return Err(String::from("--global-timeout must be > 0"));
-    }
-
-    Ok(DriveHoneyBadgerArgs {
-        sid,
-        acs_protocol,
-        nodes,
-        faulty,
-        rounds,
-        batch_size,
-        global_timeout,
-        config_json,
-        result_path,
-    })
-}
-
-fn parse_drive_dumbo_args<I>(mut argv: I) -> Result<DriveDumboArgs, String>
-where
-    I: Iterator<Item = String>,
-{
-    let mut sid = String::from("drive:dumbo");
     let mut nodes = 4usize;
     let mut faulty = 1usize;
     let mut rounds = 1usize;
@@ -351,8 +140,17 @@ where
 
     while let Some(arg) = argv.next() {
         match arg.as_str() {
+            "--mode" => {
+                mode = BenchDriverMode::parse(&take_value(&mut argv, "--mode")?)?;
+            }
             "--sid" => {
                 sid = take_value(&mut argv, "--sid")?;
+            }
+            "--protocol" => {
+                protocol = Protocol::parse(&take_value(&mut argv, "--protocol")?)?;
+            }
+            "--acs-protocol" => {
+                acs_protocol = Protocol::parse(&take_value(&mut argv, "--acs-protocol")?)?;
             }
             "--nodes" => {
                 nodes = parse_usize_flag(&mut argv, "--nodes")?;
@@ -391,15 +189,23 @@ where
     if rounds == 0 {
         return Err(String::from("--rounds must be > 0"));
     }
-    if batch_size == 0 {
+    if !matches!(mode, BenchDriverMode::Acs) && batch_size == 0 {
         return Err(String::from("--batch-size must be > 0"));
     }
     if global_timeout <= 0.0 {
         return Err(String::from("--global-timeout must be > 0"));
     }
+    if !matches!(mode, BenchDriverMode::Dumbo) && (ledger_dir.is_some() || tx_json.is_some()) {
+        return Err(String::from(
+            "--ledger-dir/--tx-json are supported only with bench-driver --mode dumbo",
+        ));
+    }
 
-    Ok(DriveDumboArgs {
+    Ok(BenchDriverArgs {
+        mode,
         sid,
+        protocol,
+        acs_protocol,
         nodes,
         faulty,
         rounds,

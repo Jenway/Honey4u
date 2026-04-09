@@ -172,28 +172,28 @@ fn aggregate_driver_phase_stats(
     aggregated
 }
 
-fn run_drive_honeybadger_multiprocess(args: &DriveHoneyBadgerArgs) -> Result<String, String> {
-    debug_drive_acs("hb-mp:serialize_hb_crypto_payloads:start");
+fn run_drive_honeybadger_multiprocess(args: &BenchHoneyBadgerArgs) -> Result<String, String> {
+    debug_acs_driver("hb-mp:serialize_hb_crypto_payloads:start");
     let hb_crypto_payloads =
         serialize_crypto_payloads(Protocol::HoneyBadger, args.nodes, args.faulty)?;
-    debug_drive_acs("hb-mp:serialize_hb_crypto_payloads:done");
+    debug_acs_driver("hb-mp:serialize_hb_crypto_payloads:done");
     let acs_crypto_payloads = if matches!(args.acs_protocol, Protocol::HoneyBadger) {
         hb_crypto_payloads.clone()
     } else {
-        debug_drive_acs("hb-mp:serialize_acs_crypto_payloads:start");
+        debug_acs_driver("hb-mp:serialize_acs_crypto_payloads:start");
         let payloads = serialize_crypto_payloads(args.acs_protocol, args.nodes, args.faulty)?;
-        debug_drive_acs("hb-mp:serialize_acs_crypto_payloads:done");
+        debug_acs_driver("hb-mp:serialize_acs_crypto_payloads:done");
         payloads
     };
 
     let addresses = allocate_loopback_addresses(args.nodes)?;
     let addresses_json = serde_json::to_string(&addresses).map_err(|err| err.to_string())?;
-    let result_dir = build_result_dir("drive-hb-mp", &args.sid)?;
+    let result_dir = build_result_dir("bench-driver-hb-mp", &args.sid)?;
     let start_at_ms = current_time_millis()?
         .checked_add(5_000)
-        .ok_or_else(|| String::from("drive-hb-mp: start time overflow"))?;
+        .ok_or_else(|| String::from("bench-driver:hb: start time overflow"))?;
     let binary = std::env::current_exe()
-        .map_err(|err| format!("drive-hb-mp: cannot determine binary path: {err}"))?;
+        .map_err(|err| format!("bench-driver:hb: cannot determine binary path: {err}"))?;
 
     let mut processes: Vec<SpawnedNode> = Vec::with_capacity(args.nodes);
     for pid in 0..args.nodes {
@@ -201,9 +201,9 @@ fn run_drive_honeybadger_multiprocess(args: &DriveHoneyBadgerArgs) -> Result<Str
         let stdout_path = result_dir.join(format!("node-{pid}.out.log"));
         let stderr_path = result_dir.join(format!("node-{pid}.err.log"));
         let stdout_handle = File::create(&stdout_path)
-            .map_err(|err| format!("drive-hb-mp pid={pid}: stdout log: {err}"))?;
+            .map_err(|err| format!("bench-driver:hb pid={pid}: stdout log: {err}"))?;
         let stderr_handle = File::create(&stderr_path)
-            .map_err(|err| format!("drive-hb-mp pid={pid}: stderr log: {err}"))?;
+            .map_err(|err| format!("bench-driver:hb pid={pid}: stderr log: {err}"))?;
 
         let child = Command::new(&binary)
             .arg("run-driver-node")
@@ -238,7 +238,7 @@ fn run_drive_honeybadger_multiprocess(args: &DriveHoneyBadgerArgs) -> Result<Str
             .stdout(Stdio::from(stdout_handle))
             .stderr(Stdio::from(stderr_handle))
             .spawn()
-            .map_err(|err| format!("drive-hb-mp: spawn pid={pid}: {err}"))?;
+            .map_err(|err| format!("bench-driver:hb: spawn pid={pid}: {err}"))?;
 
         processes.push(SpawnedNode {
             pid,
@@ -312,14 +312,14 @@ fn run_drive_honeybadger_multiprocess(args: &DriveHoneyBadgerArgs) -> Result<Str
 
     if !all_results_ready && errors.is_empty() {
         errors.push(format!(
-            "drive-hb-mp timed out after {:.3}s",
+            "bench-driver:hb timed out after {:.3}s",
             args.global_timeout
         ));
     }
 
     if !errors.is_empty() {
         let _ = fs::remove_dir_all(&result_dir);
-        return Err(format!("drive-hb-mp failed: {}", errors.join("; ")));
+        return Err(format!("bench-driver:hb failed: {}", errors.join("; ")));
     }
 
     let node_jsons = node_jsons
@@ -341,7 +341,7 @@ fn run_drive_honeybadger_multiprocess(args: &DriveHoneyBadgerArgs) -> Result<Str
         if node_chain != canonical_chain {
             let _ = fs::remove_dir_all(&result_dir);
             return Err(format!(
-                "drive-hb-mp: chain_digest diverged: node0={canonical_chain} vs node_other={node_chain}"
+                "bench-driver:hb: chain_digest diverged: node0={canonical_chain} vs node_other={node_chain}"
             ));
         }
     }
@@ -377,7 +377,7 @@ fn run_drive_honeybadger_multiprocess(args: &DriveHoneyBadgerArgs) -> Result<Str
             for (pid, node_json) in node_jsons.iter().enumerate() {
                 let node_rounds = json_array_field(node_json, "round_details")?;
                 let node_round = node_rounds.get(round_id).ok_or_else(|| {
-                    format!("drive-hb-mp: pid={pid} missing round detail {round_id}")
+                    format!("bench-driver:hb: pid={pid} missing round detail {round_id}")
                 })?;
                 let node_selected = json_array_field(node_round, "selected_pids")?
                     .iter()
@@ -392,17 +392,17 @@ fn run_drive_honeybadger_multiprocess(args: &DriveHoneyBadgerArgs) -> Result<Str
                 let node_chain_digest = json_string_owned_field(node_round, "chain_digest")?;
                 if node_selected != canonical_selected {
                     return Err(format!(
-                        "drive-hb-mp: round {round_id} selected_pids diverged at pid={pid}"
+                        "bench-driver:hb: round {round_id} selected_pids diverged at pid={pid}"
                     ));
                 }
                 if node_block_digest != canonical_block_digest {
                     return Err(format!(
-                        "drive-hb-mp: round {round_id} block_digest diverged at pid={pid}"
+                        "bench-driver:hb: round {round_id} block_digest diverged at pid={pid}"
                     ));
                 }
                 if node_chain_digest != canonical_chain_digest {
                     return Err(format!(
-                        "drive-hb-mp: round {round_id} chain_digest diverged at pid={pid}"
+                        "bench-driver:hb: round {round_id} chain_digest diverged at pid={pid}"
                     ));
                 }
 
@@ -422,7 +422,7 @@ fn run_drive_honeybadger_multiprocess(args: &DriveHoneyBadgerArgs) -> Result<Str
                 driver_stats.push(driver_phase_stats_from_value(
                     node_round.get("driver_phase_stats").ok_or_else(|| {
                         format!(
-                            "drive-hb-mp: round {round_id} missing driver_phase_stats at pid={pid}"
+                            "bench-driver:hb: round {round_id} missing driver_phase_stats at pid={pid}"
                         )
                     })?,
                 )?);
@@ -495,7 +495,7 @@ fn run_drive_honeybadger_multiprocess(args: &DriveHoneyBadgerArgs) -> Result<Str
     .map_err(|err| err.to_string())
 }
 
-pub(crate) fn run_drive_honeybadger(args: DriveHoneyBadgerArgs) -> Result<(), String> {
+pub(crate) fn run_drive_honeybadger(args: BenchHoneyBadgerArgs) -> Result<(), String> {
     let rendered = run_drive_honeybadger_multiprocess(&args)?;
     write_output(args.result_path.as_deref(), &rendered)
 }

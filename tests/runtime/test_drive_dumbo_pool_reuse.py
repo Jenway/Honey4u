@@ -1,8 +1,8 @@
-"""Tests for the Rust-native drive-dumbo command with Pool Reuse support.
+"""Tests for the Rust-native bench-driver Dumbo mode with Pool Reuse support.
 
 These tests exercise the `run_local_dumbo_new_driver` function which wraps the
-`drive-dumbo` honey-node command.  The command manages BroadcastMempool, PoolReference
-building, and carryover processing entirely in Rust.
+`bench-driver --mode dumbo` honey-node command path. The command manages
+BroadcastMempool, PoolReference building, and carryover processing entirely in Rust.
 """
 
 from __future__ import annotations
@@ -54,9 +54,9 @@ def _assert_dumbo_run_invariants(
 
 
 def test_drive_dumbo_new_driver_basic_correctness() -> None:
-    """The drive-dumbo command should complete one round and produce valid output."""
+    """The bench-driver Dumbo mode should complete one round and produce valid output."""
     result = run_local_dumbo_new_driver(
-        sid="test:drive-dumbo:basic",
+        sid="test:bench-driver:dumbo:basic",
         num_nodes=4,
         faulty=1,
         batch_size=1,
@@ -64,7 +64,7 @@ def test_drive_dumbo_new_driver_basic_correctness() -> None:
         global_timeout=30.0,
     )
     assert result.protocol == "dumbo"
-    assert result.sid == "test:drive-dumbo:basic"
+    assert result.sid == "test:bench-driver:dumbo:basic"
     assert not result.enable_pool_reuse
     _assert_dumbo_run_invariants(result, num_nodes=4, faulty=1, max_rounds=1)
     assert result.chain_digest is not None
@@ -73,7 +73,7 @@ def test_drive_dumbo_new_driver_basic_correctness() -> None:
 
 def test_drive_dumbo_new_driver_reports_non_empty_rounds() -> None:
     result = run_local_dumbo_new_driver(
-        sid="test:drive-dumbo:basic:mp",
+        sid="test:bench-driver:dumbo:basic:mp",
         num_nodes=4,
         faulty=1,
         batch_size=1,
@@ -91,7 +91,7 @@ def test_drive_dumbo_new_driver_reports_non_empty_rounds() -> None:
 def test_drive_dumbo_new_driver_chain_digest_evolves_across_rounds() -> None:
     """The chain digest must change with each round (deterministic chaining)."""
     result = run_local_dumbo_new_driver(
-        sid="test:drive-dumbo:chain",
+        sid="test:bench-driver:dumbo:chain",
         num_nodes=4,
         faulty=1,
         batch_size=1,
@@ -115,7 +115,7 @@ def test_drive_dumbo_new_driver_with_pool_reuse_produces_carryovers() -> None:
     """With pool reuse enabled, nodes should accumulate mempool entries after
     carryovers are processed."""
     result = run_local_dumbo_new_driver(
-        sid="test:drive-dumbo:pool-reuse",
+        sid="test:bench-driver:dumbo:pool-reuse",
         num_nodes=4,
         faulty=1,
         batch_size=1,
@@ -137,7 +137,7 @@ def test_drive_dumbo_new_driver_pool_reuse_chain_is_deterministic() -> None:
     """Running with pool reuse twice with the same SID should produce the same
     chain digest (assuming deterministic ACS and no external entropy)."""
     kwargs = {
-        "sid": "test:drive-dumbo:determinism",
+        "sid": "test:bench-driver:dumbo:determinism",
         "num_nodes": 4,
         "faulty": 1,
         "batch_size": 1,
@@ -160,7 +160,7 @@ def test_drive_dumbo_new_driver_pool_reuse_chain_is_deterministic() -> None:
 def test_drive_dumbo_new_driver_node_stats_are_non_zero() -> None:
     """Per-node stats (push/pull call counts) must be positive after running."""
     result = run_local_dumbo_new_driver(
-        sid="test:drive-dumbo:stats",
+        sid="test:bench-driver:dumbo:stats",
         num_nodes=4,
         faulty=1,
         batch_size=1,

@@ -4,7 +4,7 @@ use crate::pool_reuse::{
     AcsPayload, BroadcastMempool, PoolReference, decode_acs_payload, encode_bundle_acs_payload,
 };
 use bincode::{deserialize, serialize};
-use honey_native::transport::LocalTcpTransport;
+use honey_node::transport::LocalTcpTransport;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -213,7 +213,7 @@ struct DriverNodeResult {
     per_round_block_sizes: Vec<usize>,
     /// Per-round cumulative chain_digest (hex); index = round_id.
     per_round_chain_digests: Vec<String>,
-    /// Rich per-round telemetry used by the multi-process drive-hb coordinator.
+    /// Rich per-round telemetry used by bench-driver's aggregated report modes.
     round_details: Vec<DriverNodeRoundTelemetry>,
     rust_broadcast_mempool_size: usize,
     broadcast_pool_backend: BroadcastPoolBackend,
@@ -448,9 +448,34 @@ fn send_frame(
     frame: &DriverWireFrame,
 ) -> Result<(), String> {
     let payload = encode_driver_frame(frame)?;
+    send_encoded_payload(transport, recipient, &payload)
+}
+
+fn send_encoded_payload(
+    transport: &LocalTcpTransport,
+    recipient: usize,
+    payload: &[u8],
+) -> Result<(), String> {
     transport
-        .send(recipient, &payload)
+        .send(recipient, payload)
         .map_err(|err| err.to_string())
+}
+
+fn fanout_encoded_payload(
+    transport: &LocalTcpTransport,
+    nodes: usize,
+    payload: &[u8],
+    skip_recipient: Option<usize>,
+) -> Result<usize, String> {
+    let mut sent = 0usize;
+    for recipient in 0..nodes {
+        if skip_recipient == Some(recipient) {
+            continue;
+        }
+        send_encoded_payload(transport, recipient, payload)?;
+        sent += 1;
+    }
+    Ok(sent)
 }
 
 fn broadcast_frame(
@@ -458,9 +483,8 @@ fn broadcast_frame(
     nodes: usize,
     frame: &DriverWireFrame,
 ) -> Result<(), String> {
-    for recipient in 0..nodes {
-        send_frame(transport, recipient, frame)?;
-    }
+    let payload = encode_driver_frame(frame)?;
+    let _ = fanout_encoded_payload(transport, nodes, &payload, None)?;
     Ok(())
 }
 
@@ -859,6 +883,30 @@ fn run_driver_round(
                             &DriverWireFrame::AcsEnvelope { round_id, payload },
                         )?;
                     }
+                    PyAcsWireEvent::BroadcastSend {
+                        round_id: event_round_id,
+                        payload,
+                        include_self,
+                    } => {
+                        if event_round_id != round_id {
+                            return Err(format!(
+                                "driver round {round_id}: outbound ACS broadcast event carried mismatched round_id {event_round_id}"
+                            ));
+                        }
+                        let payload_len = payload.len();
+                        let frame_payload = encode_driver_frame(&DriverWireFrame::AcsEnvelope {
+                            round_id,
+                            payload,
+                        })?;
+                        let sent = fanout_encoded_payload(
+                            ctx.transport,
+                            ctx.args.nodes,
+                            &frame_payload,
+                            (!include_self).then_some(ctx.args.pid),
+                        )?;
+                        driver_stats.send_events += sent;
+                        driver_stats.send_payload_bytes += payload_len * sent;
+                    }
                     PyAcsWireEvent::Decision {
                         round_id: event_round_id,
                         selected_pids,
@@ -929,7 +977,6 @@ fn run_driver_round(
                     PyAcsWireEvent::BroadcastOutput {
                         round_id: event_round_id,
                         sender,
-                        payload_id: _,
                         payload,
                         roothash,
                     } => {

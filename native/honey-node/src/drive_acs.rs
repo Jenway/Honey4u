@@ -139,18 +139,38 @@ fn collect_exchange_events(
             } => {
                 if event_round_id != round_id {
                     return Err(format!(
-                        "drive-acs round {round_id}: send event carried mismatched round_id {event_round_id}"
+                        "bench-driver:acs round {round_id}: send event carried mismatched round_id {event_round_id}"
                     ));
                 }
                 if recipient >= host_count {
                     return Err(format!(
-                        "drive-acs round {round_id}: invalid recipient {recipient}"
+                        "bench-driver:acs round {round_id}: invalid recipient {recipient}"
                     ));
                 }
                 pending_deliveries
                     .entry(recipient)
                     .or_default()
                     .push(payload);
+            }
+            PyAcsWireEvent::BroadcastSend {
+                round_id: event_round_id,
+                payload,
+                include_self,
+            } => {
+                if event_round_id != round_id {
+                    return Err(format!(
+                        "bench-driver:acs round {round_id}: broadcast event carried mismatched round_id {event_round_id}"
+                    ));
+                }
+                for recipient in 0..host_count {
+                    if !include_self && recipient == pid {
+                        continue;
+                    }
+                    pending_deliveries
+                        .entry(recipient)
+                        .or_default()
+                        .push(payload.clone());
+                }
             }
             PyAcsWireEvent::Decision {
                 round_id: event_round_id,
@@ -159,10 +179,10 @@ fn collect_exchange_events(
             } => {
                 if event_round_id != round_id {
                     return Err(format!(
-                        "drive-acs round {round_id}: decision event carried mismatched round_id {event_round_id}"
+                        "bench-driver:acs round {round_id}: decision event carried mismatched round_id {event_round_id}"
                     ));
                 }
-                debug_drive_acs(&format!("round:decision round={round_id} pid={pid}"));
+                debug_acs_driver(&format!("round:decision round={round_id} pid={pid}"));
                 decisions[pid] = Some(selected_pids);
             }
             PyAcsWireEvent::Failure {
@@ -171,7 +191,7 @@ fn collect_exchange_events(
                 exception_type,
             } => {
                 return Err(format!(
-                    "drive-acs round {round_id}: node {pid} failed in event round {event_round_id} with {exception_type}: {error}"
+                    "bench-driver:acs round {round_id}: node {pid} failed in event round {event_round_id} with {exception_type}: {error}"
                 ));
             }
             PyAcsWireEvent::Carryovers {
@@ -199,21 +219,21 @@ pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
         ));
     }
 
-    debug_drive_acs(&format!("round:start round={round_id}"));
+    debug_acs_driver(&format!("round:start round={round_id}"));
     for (host, proposal_input) in hosts.iter().zip(proposal_inputs) {
-        debug_drive_acs(&format!(
+        debug_acs_driver(&format!(
             "round:start_round:call round={round_id} pid={}",
             host.pid()
         ));
         host.start_round(round_id, round_sid, proposal_input)?;
-        debug_drive_acs(&format!(
+        debug_acs_driver(&format!(
             "round:start_round:done round={round_id} pid={}",
             host.pid()
         ));
     }
     for host in hosts {
         let stats = host.stats()?;
-        debug_drive_acs(&format!(
+        debug_acs_driver(&format!(
             "round:stats round={round_id} pid={} running={} commands={} queue={} started={} finished={} worker_error={:?}",
             host.pid(),
             stats.worker_running,
@@ -293,18 +313,18 @@ pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
 
     if decisions.iter().any(Option::is_none) {
         return Err(format!(
-            "drive-acs timed out after {:.3}s in round {round_id}",
+            "bench-driver:acs timed out after {:.3}s in round {round_id}",
             global_timeout
         ));
     }
 
     let canonical = decisions[0]
         .clone()
-        .ok_or_else(|| format!("drive-acs round {round_id}: missing canonical decision"))?;
+        .ok_or_else(|| format!("bench-driver:acs round {round_id}: missing canonical decision"))?;
     for (pid, decision) in decisions.iter().enumerate().skip(1) {
         if decision.as_ref() != Some(&canonical) {
             return Err(format!(
-                "drive-acs round {round_id}: node {pid} decision diverged"
+                "bench-driver:acs round {round_id}: node {pid} decision diverged"
             ));
         }
     }
@@ -320,13 +340,13 @@ pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
     })
 }
 
-pub(crate) fn run_drive_acs(args: DriveAcsArgs) -> Result<(), String> {
-    debug_drive_acs("serialize_crypto_payloads:start");
+pub(crate) fn run_drive_acs(args: BenchAcsArgs) -> Result<(), String> {
+    debug_acs_driver("serialize_crypto_payloads:start");
     let crypto_payloads = serialize_crypto_payloads(args.protocol, args.nodes, args.faulty)?;
-    debug_drive_acs("serialize_crypto_payloads:done");
+    debug_acs_driver("serialize_crypto_payloads:done");
     let mut hosts = Vec::with_capacity(crypto_payloads.len());
     for (pid, payload) in crypto_payloads.iter().enumerate() {
-        debug_drive_acs(&format!("host:new:start pid={pid}"));
+        debug_acs_driver(&format!("host:new:start pid={pid}"));
         match PyAcsHost::new(
             args.protocol,
             pid,
@@ -336,7 +356,7 @@ pub(crate) fn run_drive_acs(args: DriveAcsArgs) -> Result<(), String> {
             &args.config_json,
         ) {
             Ok(host) => {
-                debug_drive_acs(&format!("host:new:done pid={pid}"));
+                debug_acs_driver(&format!("host:new:done pid={pid}"));
                 hosts.push(host)
             }
             Err(err) => {
@@ -360,7 +380,7 @@ pub(crate) fn run_drive_acs(args: DriveAcsArgs) -> Result<(), String> {
     let rendered = result?;
     if !shutdown_errors.is_empty() {
         return Err(format!(
-            "drive-acs shutdown failed: {}",
+            "bench-driver:acs shutdown failed: {}",
             shutdown_errors.join("; ")
         ));
     }
@@ -368,7 +388,7 @@ pub(crate) fn run_drive_acs(args: DriveAcsArgs) -> Result<(), String> {
     write_output(args.result_path.as_deref(), &rendered)
 }
 
-fn drive_acs_rounds(hosts: &[PyAcsHost], args: &DriveAcsArgs) -> Result<String, String> {
+fn drive_acs_rounds(hosts: &[PyAcsHost], args: &BenchAcsArgs) -> Result<String, String> {
     let mut rounds = Vec::with_capacity(args.rounds);
 
     for round_id in 0..args.rounds {
@@ -487,12 +507,12 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                     } => {
                         if event_round_id != round_id {
                             return Err(format!(
-                                "drive-acs round {round_id}: send event carried mismatched round_id {event_round_id} during settle"
+                                "bench-driver:acs round {round_id}: send event carried mismatched round_id {event_round_id} during settle"
                             ));
                         }
                         if recipient >= hosts.len() {
                             return Err(format!(
-                                "drive-acs round {round_id}: invalid recipient {recipient} during settle"
+                                "bench-driver:acs round {round_id}: invalid recipient {recipient} during settle"
                             ));
                         }
                         pending_deliveries
@@ -500,13 +520,33 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                             .or_default()
                             .push(payload);
                     }
+                    PyAcsWireEvent::BroadcastSend {
+                        round_id: event_round_id,
+                        payload,
+                        include_self,
+                    } => {
+                        if event_round_id != round_id {
+                            return Err(format!(
+                                "bench-driver:acs round {round_id}: broadcast event carried mismatched round_id {event_round_id} during settle"
+                            ));
+                        }
+                        for recipient in 0..hosts.len() {
+                            if !include_self && recipient == pid {
+                                continue;
+                            }
+                            pending_deliveries
+                                .entry(recipient)
+                                .or_default()
+                                .push(payload.clone());
+                        }
+                    }
                     PyAcsWireEvent::Failure {
                         round_id: event_round_id,
                         error,
                         exception_type,
                     } => {
                         return Err(format!(
-                            "drive-acs round {round_id}: node {pid} failed during settle in event round {event_round_id} with {exception_type}: {error}"
+                            "bench-driver:acs round {round_id}: node {pid} failed during settle in event round {event_round_id} with {exception_type}: {error}"
                         ));
                     }
                     PyAcsWireEvent::Decision { .. } => {}
@@ -516,7 +556,7 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                     } => {
                         if event_round_id != round_id {
                             return Err(format!(
-                                "drive-acs round {round_id}: carryovers event carried mismatched round_id {event_round_id} during settle"
+                                "bench-driver:acs round {round_id}: carryovers event carried mismatched round_id {event_round_id} during settle"
                             ));
                         }
                     }

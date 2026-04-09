@@ -8,10 +8,10 @@ mod threshold_pke;
 mod threshold_sig;
 mod tx_pool;
 
-// Not registered (zero Python call sites; Rust internals use these directly):
+// Not registered (zero Python call sites):
 // mod key_storage;       -- save/load_sig/pke_keys
-// mod ledger;            -- SqliteLedgerStore
-// mod local_transport;   -- LocalTcpTransport (honey-node uses transport::LocalTcpTransport directly)
+// mod ledger;            -- SqliteLedgerStore now lives in honey-node
+// mod local_transport;   -- LocalTcpTransport now lives in honey-node
 
 pub fn register_all(m: &Bound<'_, PyModule>) -> PyResult<()> {
     merkle::register(m)?;

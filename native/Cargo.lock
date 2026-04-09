@@ -529,9 +529,14 @@ dependencies = [
 name = "honey-crypto"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "blst",
+ "k256",
  "rand",
+ "reed-solomon-erasure",
+ "rkyv",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "thiserror",
 ]
@@ -540,19 +545,13 @@ dependencies = [
 name = "honey-native"
 version = "0.1.1"
 dependencies = [
- "aes-gcm",
- "crossbeam-channel",
  "honey-crypto",
+ "honey-node",
  "k256",
  "pyo3",
- "rand",
- "reed-solomon-erasure",
- "rkyv",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
 ]
 
 [[package]]
@@ -560,10 +559,13 @@ name = "honey-node"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "crossbeam-channel",
  "hex",
- "honey-native",
+ "honey-crypto",
  "pyo3",
  "pyo3-build-config",
+ "rkyv",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.11.0",

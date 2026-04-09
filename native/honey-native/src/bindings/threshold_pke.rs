@@ -1,44 +1,44 @@
+use honey_crypto::hb::{self, BatchDecryptor};
 use honey_crypto::threshold;
 use honey_crypto::threshold::utils::g1_to_bytes;
+use honey_crypto::wire::api::{decode_result, encode_result};
+use honey_crypto::wire::crypto_wire::{
+    CiphertextWire, PartialDecryptionShareWire, PkePrivateKeyShareWire, PkePublicParamsWire,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::wire::api as archive_api;
-use crate::wire::crypto_wire::{
-    CiphertextWire, PartialDecryptionShareWire, PkePrivateKeyShareWire, PkePublicParamsWire,
-};
-
 fn encode_ciphertext(value: &threshold::keygen::Ciphertext) -> PyResult<Vec<u8>> {
-    archive_api::encode(&CiphertextWire::from_runtime(value))
+    encode_result(&CiphertextWire::from_runtime(value)).map_err(PyValueError::new_err)
 }
 
 fn decode_ciphertext(payload: &[u8]) -> PyResult<threshold::keygen::Ciphertext> {
-    let wire: CiphertextWire = archive_api::decode(payload)?;
+    let wire: CiphertextWire = decode_result(payload).map_err(PyValueError::new_err)?;
     wire.into_runtime()
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 fn encode_share(value: &threshold::keygen::PartialDecryptionShare) -> PyResult<Vec<u8>> {
-    archive_api::encode(&PartialDecryptionShareWire::from_runtime(value))
+    encode_result(&PartialDecryptionShareWire::from_runtime(value)).map_err(PyValueError::new_err)
 }
 
 fn decode_share(payload: &[u8]) -> PyResult<threshold::keygen::PartialDecryptionShare> {
-    let wire: PartialDecryptionShareWire = archive_api::decode(payload)?;
+    let wire: PartialDecryptionShareWire = decode_result(payload).map_err(PyValueError::new_err)?;
     wire.into_runtime()
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 #[pyclass]
 pub struct PkeBatchDecryptor {
-    inner: crate::hb::BatchDecryptor,
+    inner: BatchDecryptor,
 }
 
 #[pymethods]
 impl PkeBatchDecryptor {
     #[new]
     fn new(pk: &PkePublicKey, batches: Vec<Vec<u8>>) -> PyResult<Self> {
-        let inner = crate::hb::BatchDecryptor::new(pk.inner.clone(), batches)
-            .map_err(PyValueError::new_err)?;
+        let inner =
+            BatchDecryptor::new(pk.inner.clone(), batches).map_err(PyValueError::new_err)?;
         Ok(Self { inner })
     }
 
@@ -160,12 +160,13 @@ impl PkePublicKey {
     }
 
     fn to_bytes(&self) -> PyResult<Vec<u8>> {
-        archive_api::encode(&PkePublicParamsWire::from_runtime(&self.inner))
+        encode_result(&PkePublicParamsWire::from_runtime(&self.inner))
+            .map_err(PyValueError::new_err)
     }
 
     #[staticmethod]
     fn from_bytes(b: &[u8]) -> PyResult<Self> {
-        let wire: PkePublicParamsWire = archive_api::decode(b)?;
+        let wire: PkePublicParamsWire = decode_result(b).map_err(PyValueError::new_err)?;
         let inner = wire
             .into_runtime()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -197,12 +198,13 @@ impl PkePrivateShare {
     }
 
     fn to_bytes(&self) -> PyResult<Vec<u8>> {
-        archive_api::encode(&PkePrivateKeyShareWire::from_runtime(&self.inner))
+        encode_result(&PkePrivateKeyShareWire::from_runtime(&self.inner))
+            .map_err(PyValueError::new_err)
     }
 
     #[staticmethod]
     fn from_bytes(b: &[u8]) -> PyResult<Self> {
-        let wire: PkePrivateKeyShareWire = archive_api::decode(b)?;
+        let wire: PkePrivateKeyShareWire = decode_result(b).map_err(PyValueError::new_err)?;
         let inner = wire
             .into_runtime()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -234,7 +236,7 @@ fn pke_generate(
 fn seal_encrypted_batch(py: Python<'_>, pk: &PkePublicKey, payload: &[u8]) -> PyResult<Vec<u8>> {
     let public_params = pk.inner.clone();
     let payload = payload.to_vec();
-    py.detach(move || crate::hb::seal_encrypted_batch(&public_params, &payload))
+    py.detach(move || hb::seal_encrypted_batch(&public_params, &payload))
         .map_err(PyValueError::new_err)
 }
 

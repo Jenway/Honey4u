@@ -1,5 +1,3 @@
-use pyo3::exceptions::PyValueError;
-use pyo3::prelude::*;
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
@@ -28,16 +26,15 @@ fn compute_chain_digest(prev_digest: &[u8], round_id: u64, block_payload: &[u8])
     hasher.finalize().into()
 }
 
-fn ensure_parent_dir(path: &Path) -> PyResult<()> {
+fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            PyValueError::new_err(format!("failed to create ledger directory: {e}"))
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create ledger directory: {e}"))?;
     }
     Ok(())
 }
 
-fn ensure_meta(conn: &Connection, key: &str, value: &str) -> PyResult<()> {
+fn ensure_meta(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
     let existing = conn
         .query_row(
             "SELECT value FROM meta WHERE key = ?1",
@@ -45,13 +42,13 @@ fn ensure_meta(conn: &Connection, key: &str, value: &str) -> PyResult<()> {
             |row| row.get::<_, String>(0),
         )
         .optional()
-        .map_err(|e| PyValueError::new_err(format!("failed to read ledger metadata: {e}")))?;
+        .map_err(|e| format!("failed to read ledger metadata: {e}"))?;
 
     if let Some(existing_value) = existing {
         if existing_value != value {
-            return Err(PyValueError::new_err(format!(
+            return Err(format!(
                 "ledger metadata mismatch for {key}: expected {value}, found {existing_value}"
-            )));
+            ));
         }
         return Ok(());
     }
@@ -60,26 +57,23 @@ fn ensure_meta(conn: &Connection, key: &str, value: &str) -> PyResult<()> {
         "INSERT INTO meta (key, value) VALUES (?1, ?2)",
         params![key, value],
     )
-    .map_err(|e| PyValueError::new_err(format!("failed to write ledger metadata: {e}")))?;
+    .map_err(|e| format!("failed to write ledger metadata: {e}"))?;
     Ok(())
 }
 
-#[pyclass(unsendable)]
 pub struct SqliteLedgerStore {
     path: String,
     conn: Connection,
     chain_digest: Option<String>,
 }
 
-#[pymethods]
 impl SqliteLedgerStore {
-    #[new]
-    fn new(path: &str, sid: &str, protocol: &str, pid: usize) -> PyResult<Self> {
+    pub fn new(path: &str, sid: &str, protocol: &str, pid: usize) -> Result<Self, String> {
         let path_buf = PathBuf::from(path);
         ensure_parent_dir(&path_buf)?;
 
         let conn = Connection::open(&path_buf)
-            .map_err(|e| PyValueError::new_err(format!("failed to open sqlite ledger: {e}")))?;
+            .map_err(|e| format!("failed to open sqlite ledger: {e}"))?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              CREATE TABLE IF NOT EXISTS meta (
@@ -96,7 +90,7 @@ impl SqliteLedgerStore {
                  block_payload BLOB NOT NULL
              );",
         )
-        .map_err(|e| PyValueError::new_err(format!("failed to initialize sqlite ledger: {e}")))?;
+        .map_err(|e| format!("failed to initialize sqlite ledger: {e}"))?;
 
         ensure_meta(&conn, "sid", sid)?;
         ensure_meta(&conn, "protocol", protocol)?;
@@ -109,7 +103,7 @@ impl SqliteLedgerStore {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|e| PyValueError::new_err(format!("failed to read ledger tip: {e}")))?;
+            .map_err(|e| format!("failed to read ledger tip: {e}"))?;
 
         Ok(Self {
             path: path.to_owned(),
@@ -118,30 +112,25 @@ impl SqliteLedgerStore {
         })
     }
 
-    #[getter]
-    fn path(&self) -> String {
-        self.path.clone()
+    pub fn path(&self) -> &str {
+        &self.path
     }
 
-    #[getter]
-    fn chain_digest(&self) -> Option<String> {
-        self.chain_digest.clone()
+    pub fn chain_digest(&self) -> Option<&str> {
+        self.chain_digest.as_deref()
     }
 
-    fn append_block(
+    pub fn append_block(
         &mut self,
         round_id: usize,
         tx_count: usize,
         delivered_at_ns: u64,
         block_payload: &[u8],
-    ) -> PyResult<(Option<String>, String, String)> {
+    ) -> Result<(Option<String>, String, String), String> {
         let prev_chain_digest = self.chain_digest.clone();
         let prev_digest_bytes = prev_chain_digest
             .as_deref()
-            .map(|digest| {
-                <[u8; 32]>::from_hex(digest)
-                    .map_err(|_| PyValueError::new_err("invalid chain digest state"))
-            })
+            .map(<[u8; 32]>::from_hex)
             .transpose()?
             .unwrap_or(GENESIS_CHAIN_DIGEST);
         let block_digest = sha256_hex(block_payload);
@@ -170,42 +159,39 @@ impl SqliteLedgerStore {
                     block_payload,
                 ],
             )
-            .map_err(|e| PyValueError::new_err(format!("failed to append ledger block: {e}")))?;
+            .map_err(|e| format!("failed to append ledger block: {e}"))?;
 
         self.chain_digest = Some(chain_digest.clone());
         Ok((prev_chain_digest, block_digest, chain_digest))
     }
 
-    fn close(&mut self) -> PyResult<()> {
+    pub fn close(&mut self) -> Result<(), String> {
         self.conn
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-            .map_err(|e| {
-                PyValueError::new_err(format!("failed to checkpoint sqlite ledger: {e}"))
-            })?;
+            .map_err(|e| format!("failed to checkpoint sqlite ledger: {e}"))?;
         Ok(())
     }
 }
 
 trait FromHex: Sized {
-    fn from_hex(value: &str) -> Result<Self, ()>;
+    fn from_hex(value: &str) -> Result<Self, String>;
 }
 
 impl FromHex for [u8; 32] {
-    fn from_hex(value: &str) -> Result<Self, ()> {
+    fn from_hex(value: &str) -> Result<Self, String> {
         if value.len() != 64 {
-            return Err(());
+            return Err(String::from("invalid chain digest length"));
         }
         let mut bytes = [0u8; 32];
         for (idx, chunk) in value.as_bytes().chunks(2).enumerate() {
-            let high = (chunk[0] as char).to_digit(16).ok_or(())?;
-            let low = (chunk[1] as char).to_digit(16).ok_or(())?;
+            let high = (chunk[0] as char)
+                .to_digit(16)
+                .ok_or_else(|| String::from("invalid chain digest state"))?;
+            let low = (chunk[1] as char)
+                .to_digit(16)
+                .ok_or_else(|| String::from("invalid chain digest state"))?;
             bytes[idx] = ((high << 4) | low) as u8;
         }
         Ok(bytes)
     }
-}
-
-pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<SqliteLedgerStore>()?;
-    Ok(())
 }

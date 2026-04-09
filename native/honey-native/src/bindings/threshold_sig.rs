@@ -1,11 +1,10 @@
 use honey_crypto::threshold;
 use honey_crypto::threshold::keygen::PartialSignature;
 use honey_crypto::threshold::utils::{g1_from_bytes, g1_to_bytes};
+use honey_crypto::wire::api::{decode_result, encode_result};
+use honey_crypto::wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-
-use crate::wire::api as archive_api;
-use crate::wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
 
 #[pyclass(from_py_object)]
 #[derive(Clone)]
@@ -135,13 +134,14 @@ impl SigPublicKey {
 
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
         let wire = SigPublicParamsWire::from_runtime(&self.inner);
-        py.detach(move || archive_api::encode(&wire))
+        py.detach(move || encode_result(&wire).map_err(PyValueError::new_err))
     }
 
     #[staticmethod]
     fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
         let payload = b.to_vec();
-        let wire: SigPublicParamsWire = py.detach(move || archive_api::decode(&payload))?;
+        let wire: SigPublicParamsWire =
+            py.detach(move || decode_result(&payload).map_err(PyValueError::new_err))?;
         let inner = wire
             .into_runtime()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -172,13 +172,14 @@ impl SigPrivateShare {
 
     fn to_bytes(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
         let wire = SigPrivateKeyShareWire::from_runtime(&self.inner);
-        py.detach(move || archive_api::encode(&wire))
+        py.detach(move || encode_result(&wire).map_err(PyValueError::new_err))
     }
 
     #[staticmethod]
     fn from_bytes(py: Python<'_>, b: &[u8]) -> PyResult<Self> {
         let payload = b.to_vec();
-        let wire: SigPrivateKeyShareWire = py.detach(move || archive_api::decode(&payload))?;
+        let wire: SigPrivateKeyShareWire =
+            py.detach(move || decode_result(&payload).map_err(PyValueError::new_err))?;
         let inner = wire
             .into_runtime()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;

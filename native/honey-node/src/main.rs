@@ -1,4 +1,4 @@
-use honey_native::hb::{
+use honey_crypto::hb::{
     BatchDecryptor as HbBatchDecryptor, HbPkePrivateKeyShare, HbPkePublicParams,
     decode_pke_private_share, decode_pke_public_params, decode_tx_batch as decode_hb_tx_batch,
     encode_json_string as encode_hb_json_string, encode_tx_batch as encode_hb_tx_batch,
@@ -24,7 +24,6 @@ mod drive_dumbo;
 mod drive_hb;
 mod network_driver;
 mod pool_reuse;
-mod prbc_proof;
 mod py_host;
 mod runner;
 
@@ -59,9 +58,26 @@ impl Protocol {
 enum CliCommand {
     RunDriverNode(RunDriverNodeArgs),
     BenchDriver(BenchDriverArgs),
-    DriveAcs(DriveAcsArgs),
-    DriveHoneyBadger(DriveHoneyBadgerArgs),
-    DriveDumbo(DriveDumboArgs),
+}
+
+#[derive(Clone, Copy)]
+enum BenchDriverMode {
+    Benchmark,
+    Acs,
+    HoneyBadger,
+    Dumbo,
+}
+
+impl BenchDriverMode {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "benchmark" => Ok(Self::Benchmark),
+            "acs" => Ok(Self::Acs),
+            "hb" | "honeybadger" => Ok(Self::HoneyBadger),
+            "dumbo" => Ok(Self::Dumbo),
+            _ => Err(format!("unsupported bench-driver mode: {value}")),
+        }
+    }
 }
 
 struct RunDriverNodeArgs {
@@ -82,7 +98,9 @@ struct RunDriverNodeArgs {
 }
 
 struct BenchDriverArgs {
+    mode: BenchDriverMode,
     sid: String,
+    protocol: Protocol,
     acs_protocol: Protocol,
     nodes: usize,
     faulty: usize,
@@ -91,9 +109,11 @@ struct BenchDriverArgs {
     global_timeout: f64,
     config_json: String,
     result_path: Option<String>,
+    ledger_dir: Option<String>,
+    tx_json: Option<String>,
 }
 
-struct DriveAcsArgs {
+struct BenchAcsArgs {
     protocol: Protocol,
     sid: String,
     nodes: usize,
@@ -104,7 +124,7 @@ struct DriveAcsArgs {
     result_path: Option<String>,
 }
 
-struct DriveHoneyBadgerArgs {
+struct BenchHoneyBadgerArgs {
     sid: String,
     acs_protocol: Protocol,
     nodes: usize,
@@ -116,7 +136,7 @@ struct DriveHoneyBadgerArgs {
     result_path: Option<String>,
 }
 
-struct DriveDumboArgs {
+struct BenchDumboArgs {
     sid: String,
     nodes: usize,
     faulty: usize,
@@ -182,14 +202,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         CliCommand::RunDriverNode(args) => {
             network_driver::run_rust_driver_node(args).map_err(Into::into)
         }
-        CliCommand::BenchDriver(args) => {
-            network_driver::run_bench_rust_driver(args).map_err(Into::into)
-        }
-        CliCommand::DriveAcs(args) => drive_acs::run_drive_acs(args).map_err(Into::into),
-        CliCommand::DriveHoneyBadger(args) => {
-            drive_hb::run_drive_honeybadger(args).map_err(Into::into)
-        }
-        CliCommand::DriveDumbo(args) => drive_dumbo::run_drive_dumbo(args).map_err(Into::into),
+        CliCommand::BenchDriver(args) => run_bench_driver(args).map_err(Into::into),
+    }
+}
+
+fn run_bench_driver(args: BenchDriverArgs) -> Result<(), String> {
+    match args.mode {
+        BenchDriverMode::Benchmark => network_driver::run_bench_rust_driver(args),
+        BenchDriverMode::Acs => drive_acs::run_drive_acs(BenchAcsArgs {
+            protocol: args.protocol,
+            sid: args.sid,
+            nodes: args.nodes,
+            faulty: args.faulty,
+            rounds: args.rounds,
+            global_timeout: args.global_timeout,
+            config_json: args.config_json,
+            result_path: args.result_path,
+        }),
+        BenchDriverMode::HoneyBadger => drive_hb::run_drive_honeybadger(BenchHoneyBadgerArgs {
+            sid: args.sid,
+            acs_protocol: args.acs_protocol,
+            nodes: args.nodes,
+            faulty: args.faulty,
+            rounds: args.rounds,
+            batch_size: args.batch_size,
+            global_timeout: args.global_timeout,
+            config_json: args.config_json,
+            result_path: args.result_path,
+        }),
+        BenchDriverMode::Dumbo => drive_dumbo::run_drive_dumbo(BenchDumboArgs {
+            sid: args.sid,
+            nodes: args.nodes,
+            faulty: args.faulty,
+            rounds: args.rounds,
+            batch_size: args.batch_size,
+            global_timeout: args.global_timeout,
+            config_json: args.config_json,
+            result_path: args.result_path,
+            ledger_dir: args.ledger_dir,
+            tx_json: args.tx_json,
+        }),
     }
 }
 
@@ -311,9 +363,9 @@ fn parse_honeybadger_crypto_payload(
     ))
 }
 
-fn debug_drive_acs(message: &str) {
+fn debug_acs_driver(message: &str) {
     if std::env::var_os("HONEY_DEBUG_ACS").is_some() {
-        eprintln!("[drive-acs] {message}");
+        eprintln!("[bench-driver:acs] {message}");
     }
 }
 

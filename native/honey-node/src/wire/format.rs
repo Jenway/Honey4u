@@ -1,13 +1,7 @@
 use rkyv::{Archive, Deserialize, Serialize};
 
 #[derive(Archive, Serialize, Deserialize)]
-pub(crate) struct EncryptedBatchWire {
-    pub(crate) encrypted_key: Vec<u8>,
-    pub(crate) ciphertext: Vec<u8>,
-}
-
-#[derive(Archive, Serialize, Deserialize)]
-pub(crate) enum ChannelWire {
+pub enum ChannelWire {
     AcsCoin,
     AcsRbc,
     AcsAba,
@@ -19,7 +13,7 @@ pub(crate) enum ChannelWire {
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-pub(crate) enum MessageWire {
+pub enum MessageWire {
     RbcVal {
         roothash: Vec<u8>,
         proof: Vec<u8>,
@@ -145,62 +139,37 @@ pub(crate) enum MessageWire {
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-pub(crate) enum AbaPayloadWire {
+pub enum AbaPayloadWire {
     BaEst { epoch: u32, value: u32 },
     BaAux { epoch: u32, value: u32 },
     BaConf { epoch: u32, values: Vec<u32> },
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-pub(crate) struct ProtocolEnvelopeWire {
-    pub(crate) sender: u32,
-    pub(crate) round_id: u32,
-    pub(crate) channel: ChannelWire,
-    pub(crate) instance_id: Option<u32>,
-    pub(crate) message: MessageWire,
+pub struct ProtocolEnvelopeWire {
+    pub sender: u32,
+    pub round_id: u32,
+    pub channel: ChannelWire,
+    pub instance_id: Option<u32>,
+    pub message: MessageWire,
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-pub(crate) struct TxBatchWire {
-    pub(crate) items: Vec<Vec<u8>>,
+pub struct PrbcProofWire {
+    pub roothash: Vec<u8>,
+    pub sigmas: Vec<(u32, Vec<u8>)>,
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-pub(crate) struct MerkleProofWire {
-    pub(crate) leaf_index: usize,
-    pub(crate) siblings: Vec<Vec<u8>>,
+pub struct ThresholdShareProofWire {
+    pub roothash: Vec<u8>,
+    pub signature: Vec<u8>,
 }
 
 #[derive(Archive, Serialize, Deserialize)]
-pub(crate) struct EncodedShardWire {
-    pub(crate) index: usize,
-    pub(crate) data: Vec<u8>,
-    pub(crate) proof: MerkleProofWire,
-}
-
-#[derive(Archive, Serialize, Deserialize)]
-pub(crate) struct MerkleResultWire {
-    pub(crate) root: Vec<u8>,
-    pub(crate) shards: Vec<Vec<u8>>,
-    pub(crate) proofs: Vec<MerkleProofWire>,
-}
-
-#[derive(Archive, Serialize, Deserialize)]
-pub(crate) struct PrbcProofWire {
-    pub(crate) roothash: Vec<u8>,
-    pub(crate) sigmas: Vec<(u32, Vec<u8>)>,
-}
-
-#[derive(Archive, Serialize, Deserialize)]
-pub(crate) struct ThresholdShareProofWire {
-    pub(crate) roothash: Vec<u8>,
-    pub(crate) signature: Vec<u8>,
-}
-
-#[derive(Archive, Serialize, Deserialize)]
-pub(crate) struct PdStoreRecordWire {
-    pub(crate) roothash: Vec<u8>,
-    pub(crate) stripe_owner: u32,
-    pub(crate) stripe: Vec<u8>,
-    pub(crate) merkle_proof: Vec<u8>,
+pub struct PdStoreRecordWire {
+    pub roothash: Vec<u8>,
+    pub stripe_owner: u32,
+    pub stripe: Vec<u8>,
+    pub merkle_proof: Vec<u8>,
 }

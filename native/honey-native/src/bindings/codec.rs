@@ -1,14 +1,20 @@
+use honey_crypto::hb;
+use honey_crypto::wire::api::{
+    decode_result as decode_crypto_result, encode_result as encode_crypto_result,
+};
+use honey_crypto::wire::format::EncryptedBatchWire;
+use honey_node::wire::api::{
+    decode_result as decode_protocol_result, encode_result as encode_protocol_result,
+};
+use honey_node::wire::format::{
+    AbaPayloadWire, ChannelWire, MessageWire, PdStoreRecordWire, PrbcProofWire,
+    ProtocolEnvelopeWire, ThresholdShareProofWire,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyModule, PyString, PyTuple};
 use serde_json::Value as JsonValue;
 use std::convert::TryFrom;
-
-use crate::wire::api as archive_api;
-use crate::wire::format::{
-    AbaPayloadWire, ChannelWire, EncryptedBatchWire, MessageWire, PdStoreRecordWire, PrbcProofWire,
-    ProtocolEnvelopeWire, ThresholdShareProofWire,
-};
 
 fn parse_tx_json(raw: &[u8]) -> PyResult<JsonValue> {
     serde_json::from_slice(raw).map_err(|e| PyValueError::new_err(e.to_string()))
@@ -626,17 +632,19 @@ fn encode_encrypted_batch_py(py: Python<'_>, batch: &Bound<'_, PyAny>) -> PyResu
     let encrypted_key = batch.getattr("encrypted_key")?.extract::<Vec<u8>>()?;
     let ciphertext = batch.getattr("ciphertext")?.extract::<Vec<u8>>()?;
     py.detach(move || {
-        archive_api::encode(&EncryptedBatchWire {
+        encode_crypto_result(&EncryptedBatchWire {
             encrypted_key,
             ciphertext,
         })
+        .map_err(PyValueError::new_err)
     })
 }
 
 #[pyfunction]
 fn decode_encrypted_batch_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAny>> {
     let payload = payload.to_vec();
-    let wire: EncryptedBatchWire = py.detach(move || archive_api::decode(&payload))?;
+    let wire: EncryptedBatchWire =
+        py.detach(move || decode_crypto_result(&payload).map_err(PyValueError::new_err))?;
     let messages_mod = PyModule::import(py, "honey_acs.messages")?;
     Ok(messages_mod
         .getattr("EncryptedBatch")?
@@ -649,14 +657,14 @@ fn decode_encrypted_batch_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAn
 
 #[pyfunction]
 fn encode_tx_batch(py: Python<'_>, items: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
-    py.detach(move || crate::hb::encode_tx_batch(items))
+    py.detach(move || hb::encode_tx_batch(items))
         .map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
 fn decode_tx_batch(py: Python<'_>, payload: &[u8]) -> PyResult<Vec<Vec<u8>>> {
     let payload = payload.to_vec();
-    py.detach(move || crate::hb::decode_tx_batch(&payload))
+    py.detach(move || hb::decode_tx_batch(&payload))
         .map_err(PyValueError::new_err)
 }
 
@@ -669,7 +677,7 @@ fn decode_tx_py(py: Python<'_>, payload: &[u8]) -> PyResult<Py<PyAny>> {
 
 #[pyfunction]
 fn merge_tx_batches_bytes(py: Python<'_>, blocks: Vec<Vec<u8>>) -> PyResult<Vec<u8>> {
-    py.detach(move || crate::hb::merge_tx_batches_bytes(blocks))
+    py.detach(move || hb::merge_tx_batches_bytes(blocks))
         .map_err(PyValueError::new_err)
 }
 
@@ -698,13 +706,14 @@ fn encode_protocol_envelope_py(
         },
         message: extract_message_wire(py, &message)?,
     };
-    py.detach(move || archive_api::encode(&wire))
+    py.detach(move || encode_protocol_result(&wire).map_err(PyValueError::new_err))
 }
 
 #[pyfunction]
 fn decode_protocol_envelope_py(py: Python<'_>, payload: &[u8]) -> PyResult<(usize, Py<PyAny>)> {
     let payload = payload.to_vec();
-    let wire: ProtocolEnvelopeWire = py.detach(move || archive_api::decode(&payload))?;
+    let wire: ProtocolEnvelopeWire =
+        py.detach(move || decode_protocol_result(&payload).map_err(PyValueError::new_err))?;
     let messages_mod = PyModule::import(py, "honey_acs.messages")?;
     let message = build_message_object(py, &messages_mod, wire.message)?;
     let channel = messages_mod

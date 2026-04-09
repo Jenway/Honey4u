@@ -1,13 +1,12 @@
 import asyncio
 import logging
-import time
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import honey_native
 
 from honey_acs.crypto.merkle import decode, encode
-from honey_acs.data.broadcast_mempool import BroadcastStore
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import RbcEcho, RbcReady, RbcVal
 from honey_acs.params import CommonParams
@@ -39,14 +38,27 @@ class BroadcastParams(CommonParams):
         return 2 * self.f + 1
 
 
+@dataclass(frozen=True, slots=True)
+class RbcOutput:
+    """Decoded RBC result for a single leader instance."""
+
+    payload: bytes
+    roothash: bytes
+    shards: tuple[bytes | None, ...]
+    proofs: tuple[bytes | None, ...]
+    leader: int
+
+
+type RbcBroadcastFn = Callable[[RbcVal | RbcEcho | RbcReady], Awaitable[None]]
+
+
 async def reliablebroadcast(
     params: CommonParams,
     input_queue: asyncio.Queue,
     receive_queue: asyncio.Queue,
     send_queue: asyncio.Queue,
-    mempool: BroadcastStore,
-    round_no: int,
-) -> str:
+    broadcast: RbcBroadcastFn | None = None,
+) -> RbcOutput:
     """Reliable broadcast (RBC) protocol."""
     N = params.N
     pid = params.pid
@@ -59,7 +71,10 @@ async def reliablebroadcast(
 
     logger = logging.LoggerAdapter(logging.getLogger(__name__), extra={"node": pid})
 
-    async def broadcast(o: RbcVal | RbcEcho | RbcReady) -> None:
+    async def broadcast_message(o: RbcVal | RbcEcho | RbcReady) -> None:
+        if broadcast is not None:
+            await broadcast(o)
+            return
         for i in range(N):
             await send_queue.put((i, o))
 
@@ -105,32 +120,25 @@ async def reliablebroadcast(
 
         return decode(available, roothash, K, N)
 
-    async def store_and_return(roothash: bytes) -> str:
+    async def build_output(roothash: bytes) -> RbcOutput:
         with timed_metric("rbc.decode.seconds", node=pid, leader=leader):
             payload = decode_output(roothash)
 
-        all_shards = [stripes[roothash].get(i) for i in range(N)]
-        all_proofs = [
+        all_shards = tuple(stripes[roothash].get(i) for i in range(N))
+        all_proofs = tuple(
             None if (proof := merkle_proofs[roothash].get(i)) is None else proof.to_bytes()
             for i in range(N)
-        ]
+        )
 
-        payload_id = mempool.add(
+        logger.debug("Decoded RBC output (%s bytes)", len(payload), extra={"node": pid})
+        METRICS.increment("rbc.output.completed", node=pid, leader=leader)
+        return RbcOutput(
             payload=payload,
             roothash=roothash,
             shards=all_shards,
             proofs=all_proofs,
-            round_no=round_no,
-            sender_id=leader,
-            timestamp=time.time(),
+            leader=leader,
         )
-
-        logger.debug(
-            f"Stored RBC output in mempool: payload_id={payload_id[:8]}...",
-            extra={"node": pid},
-        )
-        METRICS.increment("rbc.output.stored", node=pid, leader=leader)
-        return payload_id
 
     while True:
         sender, msg = await receive_queue.get()
@@ -161,7 +169,7 @@ async def reliablebroadcast(
             from_leader = roothash
             stripes[roothash][stripe_index] = stripe
             merkle_proofs[roothash][stripe_index] = proof
-            await broadcast(
+            await broadcast_message(
                 RbcEcho(
                     roothash=roothash,
                     proof=proof_bytes,
@@ -197,10 +205,10 @@ async def reliablebroadcast(
 
             if echoCounter[roothash] >= EchoThreshold and ready_root is None:
                 ready_root = roothash
-                await broadcast(RbcReady(roothash=roothash))
+                await broadcast_message(RbcReady(roothash=roothash))
 
             if len(ready[roothash]) >= OutputThreshold and echoCounter[roothash] >= K:
-                return await store_and_return(roothash)
+                return await build_output(roothash)
 
         elif isinstance(msg, RbcReady):
             roothash = msg.roothash
@@ -212,7 +220,7 @@ async def reliablebroadcast(
 
             if len(ready[roothash]) >= ReadyThreshold and ready_root is None:
                 ready_root = roothash
-                await broadcast(RbcReady(roothash=roothash))
+                await broadcast_message(RbcReady(roothash=roothash))
 
             if len(ready[roothash]) >= OutputThreshold and echoCounter[roothash] >= K:
-                return await store_and_return(roothash)
+                return await build_output(roothash)

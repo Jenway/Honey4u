@@ -6,10 +6,10 @@ use super::*;
 /// connections. TPKE partial-decryption shares are exchanged directly between
 /// sibling subprocesses over real TCP using the `HbShareBundle` wire frame,
 /// matching the distributed `bench-driver` execution model.
-fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String> {
+fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String> {
     if args.tx_json.is_some() {
         return Err(String::from(
-            "drive-dumbo-mp does not support --tx-json; only deterministic per-node dummy transactions are supported",
+            "bench-driver:dumbo does not support --tx-json; only deterministic per-node dummy transactions are supported",
         ));
     }
     let config: Value = serde_json::from_str(&args.config_json).map_err(|e| e.to_string())?;
@@ -18,25 +18,25 @@ fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String>
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    debug_drive_acs("dumbo-mp:serialize_hb_crypto_payloads:start");
+    debug_acs_driver("dumbo-mp:serialize_hb_crypto_payloads:start");
     let hb_crypto_payloads =
         serialize_crypto_payloads(Protocol::HoneyBadger, args.nodes, args.faulty)?;
-    debug_drive_acs("dumbo-mp:serialize_hb_crypto_payloads:done");
+    debug_acs_driver("dumbo-mp:serialize_hb_crypto_payloads:done");
 
-    debug_drive_acs("dumbo-mp:serialize_acs_crypto_payloads:start");
+    debug_acs_driver("dumbo-mp:serialize_acs_crypto_payloads:start");
     let acs_crypto_payloads = serialize_crypto_payloads(Protocol::Dumbo, args.nodes, args.faulty)?;
-    debug_drive_acs("dumbo-mp:serialize_acs_crypto_payloads:done");
+    debug_acs_driver("dumbo-mp:serialize_acs_crypto_payloads:done");
 
     let addresses = allocate_loopback_addresses(args.nodes)?;
     let addresses_json = serde_json::to_string(&addresses).map_err(|e| e.to_string())?;
 
-    let result_dir = build_result_dir("drive-dumbo-mp", &args.sid)?;
+    let result_dir = build_result_dir("bench-driver-dumbo-mp", &args.sid)?;
     let start_at_ms = current_time_millis()?
         .checked_add(5_000)
-        .ok_or_else(|| String::from("drive-dumbo-mp: start time overflow"))?;
+        .ok_or_else(|| String::from("bench-driver:dumbo: start time overflow"))?;
 
     let binary = std::env::current_exe()
-        .map_err(|e| format!("drive-dumbo-mp: cannot determine binary path: {e}"))?;
+        .map_err(|e| format!("bench-driver:dumbo: cannot determine binary path: {e}"))?;
 
     let mut processes: Vec<SpawnedNode> = Vec::with_capacity(args.nodes);
     for pid in 0..args.nodes {
@@ -44,9 +44,9 @@ fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String>
         let stdout_path = result_dir.join(format!("node-{pid}.out.log"));
         let stderr_path = result_dir.join(format!("node-{pid}.err.log"));
         let stdout_hdl = File::create(&stdout_path)
-            .map_err(|e| format!("drive-dumbo-mp pid={pid}: stdout log: {e}"))?;
+            .map_err(|e| format!("bench-driver:dumbo pid={pid}: stdout log: {e}"))?;
         let stderr_hdl = File::create(&stderr_path)
-            .map_err(|e| format!("drive-dumbo-mp pid={pid}: stderr log: {e}"))?;
+            .map_err(|e| format!("bench-driver:dumbo pid={pid}: stderr log: {e}"))?;
 
         let child = Command::new(&binary)
             .arg("run-driver-node")
@@ -81,7 +81,7 @@ fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String>
             .stdout(Stdio::from(stdout_hdl))
             .stderr(Stdio::from(stderr_hdl))
             .spawn()
-            .map_err(|e| format!("drive-dumbo-mp: spawn pid={pid}: {e}"))?;
+            .map_err(|e| format!("bench-driver:dumbo: spawn pid={pid}: {e}"))?;
 
         processes.push(SpawnedNode {
             pid,
@@ -152,13 +152,13 @@ fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String>
 
     if !all_ready && errors.is_empty() {
         errors.push(format!(
-            "drive-dumbo-mp timed out after {:.3}s",
+            "bench-driver:dumbo timed out after {:.3}s",
             args.global_timeout
         ));
     }
     if !errors.is_empty() {
         let _ = fs::remove_dir_all(&result_dir);
-        return Err(format!("drive-dumbo-mp failed: {}", errors.join("; ")));
+        return Err(format!("bench-driver:dumbo failed: {}", errors.join("; ")));
     }
 
     let node_jsons: Vec<Value> = node_jsons
@@ -186,14 +186,14 @@ fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String>
         if node_chain != canonical_chain {
             let _ = fs::remove_dir_all(&result_dir);
             return Err(format!(
-                "drive-dumbo-mp: chain_digest diverged: node0={canonical_chain} vs node_other={node_chain}"
+                "bench-driver:dumbo: chain_digest diverged: node0={canonical_chain} vs node_other={node_chain}"
             ));
         }
     }
 
     if let Some(dir) = &args.ledger_dir {
         std::fs::create_dir_all(dir)
-            .map_err(|e| format!("drive-dumbo-mp: create ledger dir '{dir}': {e}"))?;
+            .map_err(|e| format!("bench-driver:dumbo: create ledger dir '{dir}': {e}"))?;
     }
 
     let rounds: Vec<Value> = canonical_rounds
@@ -353,7 +353,7 @@ fn run_drive_dumbo_multiprocess(args: &DriveDumboArgs) -> Result<String, String>
     .map_err(|e| e.to_string())
 }
 
-pub(crate) fn run_drive_dumbo(args: DriveDumboArgs) -> Result<(), String> {
+pub(crate) fn run_drive_dumbo(args: BenchDumboArgs) -> Result<(), String> {
     let rendered = run_drive_dumbo_multiprocess(&args)?;
     write_output(args.result_path.as_deref(), &rendered)
 }

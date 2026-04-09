@@ -1,4 +1,4 @@
-use crate::crypto;
+use honey_crypto::ecdsa;
 use k256::elliptic_curve::rand_core::OsRng;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -20,7 +20,7 @@ fn ecdsa_generate_keys(py: Python<'_>, players: usize) -> PyResult<(Vec<Vec<u8>>
             let priv_key = signing_key.to_bytes();
             let priv_bytes = priv_key.to_vec();
             let priv_fixed = copy_fixed::<32>(&priv_bytes, "private key")?;
-            let pub_key = crypto::ecdsa::get_public_key(&priv_fixed)
+            let pub_key = ecdsa::get_public_key(&priv_fixed)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
             public_keys.push(pub_key.to_vec());
@@ -35,8 +35,8 @@ fn ecdsa_generate_keys(py: Python<'_>, players: usize) -> PyResult<(Vec<Vec<u8>>
 fn ecdsa_public_key_from_private(py: Python<'_>, priv_key: &[u8]) -> PyResult<Vec<u8>> {
     let priv_fixed = copy_fixed::<32>(priv_key, "private key")?;
     py.detach(move || {
-        let pub_key = crypto::ecdsa::get_public_key(&priv_fixed)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let pub_key =
+            ecdsa::get_public_key(&priv_fixed).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(pub_key.to_vec())
     })
 }
@@ -46,8 +46,8 @@ fn ecdsa_sign(py: Python<'_>, priv_key: &[u8], msg: &[u8]) -> PyResult<Vec<u8>> 
     let priv_fixed = copy_fixed::<32>(priv_key, "private key")?;
     let msg = msg.to_vec();
     py.detach(move || {
-        let sig = crypto::ecdsa::sign(&priv_fixed, &msg)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let sig =
+            ecdsa::sign(&priv_fixed, &msg).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(sig.to_vec())
     })
 }
@@ -57,7 +57,7 @@ fn ecdsa_verify(py: Python<'_>, pub_key: &[u8], msg: &[u8], sig_bytes: &[u8]) ->
     let pub_fixed = copy_fixed::<33>(pub_key, "public key")?;
     let sig_fixed = copy_fixed::<64>(sig_bytes, "signature")?;
     let msg = msg.to_vec();
-    py.detach(move || Ok(crypto::ecdsa::verify(&pub_fixed, &msg, &sig_fixed)))
+    py.detach(move || Ok(ecdsa::verify(&pub_fixed, &msg, &sig_fixed)))
 }
 
 #[pyfunction]
@@ -79,7 +79,7 @@ fn ecdsa_verify_threshold_sigs(
 
     let digest = digest.to_vec();
     py.detach(move || {
-        Ok(crypto::ecdsa::verify_threshold_sigs(
+        Ok(ecdsa::verify_threshold_sigs(
             &pub_keys_fixed,
             &digest,
             &sigmas_fixed,
