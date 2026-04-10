@@ -1,0 +1,242 @@
+
+@inproceedings{guo_dumbo_2020,
+	location = {New York, {NY}, {USA}},
+	title = {Dumbo: Faster Asynchronous {BFT} Protocols},
+	isbn = {978-1-4503-7089-9},
+	url = {https://dl.acm.org/doi/10.1145/3372297.3417262},
+	doi = {10.1145/3372297.3417262},
+	series = {{CCS} '20},
+	shorttitle = {Dumbo},
+	abstract = {{HoneyBadgerBFT}, proposed by Miller et al. [34] as the first practical asynchronous atomic broadcast protocol, demonstrated impressive performance. The core of {HoneyBadgerBFT} ({HB}-{BFT}) is to achieve batching consensus using asynchronous common subset protocol ({ACS}) of Ben-Or et al., constituted with n reliable broadcast protocol ({RBC}) to have each node propose its input, followed by n asynchronous binary agreement protocol ({ABA}) to make a decision for each proposed value (n is the total number of nodes).In this paper, we propose two new atomic broadcast protocols (called Dumbo1, Dumbo2) both of which have asymptotically and practically better efficiency. In particular, the {ACS} of Dumbo1 only runs a small κ (independent of n) instances of {ABA}, while that of Dumbo2 further reduces it to constant! At the core of our techniques are two major observations: (1) reducing the number of {ABA} instances significantly improves efficiency; and (2) using multi-valued validated Byzantine agreement ({MVBA}) which was considered sub-optimal for {ACS} in [34] in a more careful way could actually lead to a much more efficient {ACS}.We implement both Dumbo1, Dumbo2 and deploy them as well as {HB}-{BFT} on 100 Amazon {EC}2 t2.medium instances uniformly distributed throughout 10 different regions across the globe, and run extensive experiments in the same environments. The experimental results show that our protocols achieve multi-fold improvements over {HoneyBadgerBFT} on both latency and throughput, especially when the system scale becomes moderately large.},
+	pages = {803--818},
+	booktitle = {Proceedings of the 2020 {ACM} {SIGSAC} Conference on Computer and Communications Security},
+	publisher = {Association for Computing Machinery},
+	author = {Guo, Bingyong and Lu, Zhenliang and Tang, Qiang and Xu, Jing and Zhang, Zhenfeng},
+	urldate = {2026-03-09},
+	date = {2020-11-02},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\XJAZL3H6\\Guo 等 - 2020 - Dumbo Faster Asynchronous BFT Protocols.pdf:application/pdf},
+}
+
+@inproceedings{miller_honey_2016,
+	location = {New York, {NY}, {USA}},
+	title = {The Honey Badger of {BFT} Protocols},
+	isbn = {978-1-4503-4139-4},
+	url = {https://dl.acm.org/doi/10.1145/2976749.2978399},
+	doi = {10.1145/2976749.2978399},
+	series = {{CCS} '16},
+	abstract = {The surprising success of cryptocurrencies has led to a surge of interest in deploying large scale, highly robust, Byzantine fault tolerant ({BFT}) protocols for mission-critical applications, such as financial transactions. Although the conventional wisdom is to build atop a (weakly) synchronous protocol such as {PBFT} (or a variation thereof), such protocols rely critically on network timing assumptions, and only guarantee liveness when the network behaves as expected. We argue these protocols are ill-suited for this deployment scenario. We present an alternative, {HoneyBadgerBFT}, the first practical asynchronous {BFT} protocol, which guarantees liveness without making any timing assumptions. We base our solution on a novel atomic broadcast protocol that achieves optimal asymptotic efficiency. We present an implementation and experimental results to show our system can achieve throughput of tens of thousands of transactions per second, and scales to over a hundred nodes on a wide area network. We even conduct {BFT} experiments over Tor, without needing to tune any parameters. Unlike the alternatives, {HoneyBadgerBFT} simply does not care about the underlying network.},
+	pages = {31--42},
+	booktitle = {Proceedings of the 2016 {ACM} {SIGSAC} Conference on Computer and Communications Security},
+	publisher = {Association for Computing Machinery},
+	author = {Miller, Andrew and Xia, Yu and Croman, Kyle and Shi, Elaine and Song, Dawn},
+	urldate = {2026-03-09},
+	date = {2016-10-24},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\J9P4SYP7\\Miller 等 - 2016 - The Honey Badger of BFT Protocols.pdf:application/pdf},
+}
+
+@inproceedings{gao_dumbo-ng_2022,
+	location = {New York, {NY}, {USA}},
+	title = {Dumbo-{NG}: Fast Asynchronous {BFT} Consensus with Throughput-Oblivious Latency},
+	isbn = {978-1-4503-9450-5},
+	url = {https://dl.acm.org/doi/10.1145/3548606.3559379},
+	doi = {10.1145/3548606.3559379},
+	series = {{CCS} '22},
+	shorttitle = {Dumbo-{NG}},
+	abstract = {Despite recent progresses of practical asynchronous Byzantine-fault tolerant ({BFT}) consensus, the state-of-the-art designs still suffer from suboptimal performance. Particularly, to obtain maximum throughput, most existing protocols {\textbackslash}rev with guaranteed linear amortized communication complexity require each participating node to broadcast a huge batch of transactions, which dramatically sacrifices latency. Worse still, the ƒ slowest nodes' broadcasts might never be agreed to output and thus can be censored (where ƒ is the number of faults). Implementable mitigation to the threat either uses computationally costly threshold encryption or incurs communication blow-up by letting the honest nodes to broadcast redundant transactions, thus causing further efficiency issues.We present Dumbo {NG}, a novel asynchronous {BFT} consensus (atomic broadcast) to solve the remaining practical issues. Its technical core is a non-trivial direct reduction from asynchronous atomic broadcast to multi-valued validated Byzantine agreement ({MVBA}) with quality property (which ensures the {MVBA} output is from honest nodes with 1/2 probability). Most interestingly, the new protocol structure empowers concurrent execution of transaction dissemination and asynchronous agreement. This brings about two benefits: (i) the throughput-latency tension is resolved to approach peak throughput with minimal increase in latency; (ii) the transactions broadcasted by any honest node can be agreed to output, thus conquering the censorship threat with no extra cost.We implement Dumbo-{NG} with using the current fastest {GLL}+22 {MVBA} with quality ({NDSS}'22) and compare it to the state-of-the-art asynchronous {BFT} with guaranteed censorship resilience including Dumbo ({CCS}'20) and Speeding-Dumbo ({NDSS}'22). Along the way, we apply the techniques from Speeding-Dumbo to {DispersedLedger} ({NSDI}'22) and obtain an improved variant of {DispersedLedger} called Dumbo-{DLfor} a comprehensive comparison. Extensive experiments (over up to 64 {AWS} {EC}2 nodes across 16 {AWS} regions) reveal: Dumbo-{NG} realizes a peak throughput 4-8x over Dumbo, 2-4x over Speeding-Dumbo, and 2-3x over {sDumbo}-{DL} for varying scales; More importantly, Dumbo-{NG}'s latency, which is lowest among all tested protocols, can almost remain stable when throughput grows.},
+	pages = {1187--1201},
+	booktitle = {Proceedings of the 2022 {ACM} {SIGSAC} Conference on Computer and Communications Security},
+	publisher = {Association for Computing Machinery},
+	author = {Gao, Yingzi and Lu, Yuan and Lu, Zhenliang and Tang, Qiang and Xu, Jing and Zhang, Zhenfeng},
+	urldate = {2026-03-09},
+	date = {2022-11-07},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\UTUY92Y4\\Gao 等 - 2022 - Dumbo-NG Fast Asynchronous BFT Consensus with Throughput-Oblivious Latency.pdf:application/pdf},
+}
+
+@misc{guo_speeding_2022,
+	title = {Speeding Dumbo: Pushing Asynchronous {BFT} Closer to Practice},
+	url = {https://eprint.iacr.org/2022/027},
+	shorttitle = {Speeding Dumbo},
+	abstract = {Asynchronous {BFT} consensus can implement robust mission-critical decentralized services in the unstable or even adversarial wide-area network without relying on any form of timing assumption. Starting from the work of {HoneyBadgerBFT} ({CCS} 2016), several studies tried to push asynchronous {BFT} towards practice. In particular, in a recent work of Dumbo ({CCS} 2020), they redesigned the protocol backbone and used one multi-valued validated Byzantine agreement ({MVBA}) to replace n concurrent asynchronous binary agreement ({ABA}) protocols and dramatically improved the performance.
+
+Despite those efforts, asynchronous {BFT} protocols remain to be slow, and in particular, the latency is still quite large. There are two reasons contributing to the inferior performance: (1) the reliable broadcast ({RBC}) protocols still incur substantial costs; (2) the {MVBA} protocols are quite complicated and heavy, and all existing constructions need dozens of rounds and take the majority of he overall latency.
+
+We first present a new construction of asynchronous {BFT} that replaces {RBC} instance with a cheaper broadcast component. It not only reduces the O(n3) message complexity incurred by n {RBCs} to O(n2), but also saves up to 67\% communications (in the presence of a fair network scheduler). Moreover, our technical core is a new {MVBA} protocol, Speeding {MVBA}, which is concretely more efficient than all existing {MVBAs}. It requires only 6 rounds in the best case and expected 12 rounds in the worst case (by contrast, several dozens of rounds in the {MVBA} from Cachin et al. [12] and the recent Dumbo-{MVBA} [32], and around 20 rounds in the {MVBA} from Abraham et al. [4]). Our new technique of the construction might be of independent interests.
+
+We implemented Speeding Dumbo and did extensive tests among up to 150 {EC}2 t2.medium instances evenly allocated in 15 {AWS} regions across the globe. The experimental results show that Speeding Dumbo reduces the latency to about a half of Dumbo's, and also doubles the throughput of Dumbo, through all system scales from 4 nodes to 150 nodes. We also did tests to benchmark individual components such as the broadcasts and the {MVBA} protocols, which may be of interests for future improvements.},
+	number = {2022/027},
+	author = {Guo, Bingyong and Lu, Yuan and Lu, Zhenliang and Tang, Qiang and Xu, Jing and Zhang, Zhenfeng},
+	urldate = {2026-03-09},
+	date = {2022},
+	note = {Publication info: Published elsewhere. Minor revision. {NDSS} 22},
+	keywords = {Asynchronous protocols, Blockchain consensus, Byzantine-fault tolerance, multi-valued validated agreement},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\HC8PZM26\\Guo 等 - 2022 - Speeding Dumbo Pushing Asynchronous BFT Closer to Practice.pdf:application/pdf},
+}
+
+@inproceedings{duan_fin_2023,
+	location = {New York, {NY}, {USA}},
+	title = {{FIN}: Practical Signature-Free Asynchronous Common Subset in Constant Time},
+	isbn = {979-8-4007-0050-7},
+	url = {https://dl.acm.org/doi/10.1145/3576915.3616633},
+	doi = {10.1145/3576915.3616633},
+	series = {{CCS} '23},
+	shorttitle = {{FIN}},
+	abstract = {Asynchronous common subset ({ACS}) is a powerful paradigm enabling applications such as Byzantine fault-tolerance ({BFT}) and multi-party computation ({MPC}). The most efficient {ACS} framework in the information-theoretic setting is due to Ben-Or, Kelmer, and Rabin ({BKR}, 1994). The {BKR} {ACS} protocol has been both theoretically and practically impactful. However, the {BKR} protocol has an O(log n) running time (where n is the number of replicas) due to the usage of n parallel asynchronous binary agreement ({ABA}) instances, impacting both performance and scalability. Indeed, for a network of 16 {\textasciitilde} 64 replicas, the parallel {ABA} phase occupies about 95\% {\textasciitilde} 97\% of the total runtime in {BKR}. A long-standing open problem is whether we can build an {ACS} framework with O(1) time while not increasing the message or communication complexity of the {BKR} protocol.In this paper, we resolve the open problem, presenting the first constant-time {ACS} protocol with O(n3) messages in the information-theoretic and signature-free settings. Moreover, as a key ingredient of our new {ACS} framework and an interesting primitive in its own right, we provide the first information-theoretic multivalued validated Byzantine agreement ({MVBA}) protocol with O(1) time and O(n3) messages. Both results can improve-asymptotically and concretely-various applications using {ACS} and {MVBA} in the information-theoretic, quantum-safe, or signature-free settings. As an example, we implement {FIN}, a {BFT} protocol instantiated using our framework. Via a 121-server deployment on Amazon {EC}2, we show {FIN} is significantly more efficient than {PACE} ({CCS} 2022), the state-of-the-art asynchronous {BFT} protocol of the same type. In particular, {FIN} reduces the overhead of the {ABA} phase to as low as 1.23\% of the total runtime, and {FIN} achieves up to 3.41x the throughput of {PACE}. We also show that {FIN} outperforms other {BFT} protocols with the standard liveness property such as Dumbo and Speeding Dumbo.},
+	pages = {815--829},
+	booktitle = {Proceedings of the 2023 {ACM} {SIGSAC} Conference on Computer and Communications Security},
+	publisher = {Association for Computing Machinery},
+	author = {Duan, Sisi and Wang, Xin and Zhang, Haibin},
+	urldate = {2026-03-09},
+	date = {2023-11-21},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\BSGJI5B7\\Duan 等 - 2023 - FIN Practical Signature-Free Asynchronous Common Subset in Constant Time.pdf:application/pdf},
+}
+
+@inproceedings{lu_bolt-dumbo_2022,
+	location = {New York, {NY}, {USA}},
+	title = {Bolt-Dumbo Transformer: Asynchronous Consensus As Fast As the Pipelined {BFT}},
+	isbn = {978-1-4503-9450-5},
+	url = {https://dl.acm.org/doi/10.1145/3548606.3559346},
+	doi = {10.1145/3548606.3559346},
+	series = {{CCS} '22},
+	shorttitle = {Bolt-Dumbo Transformer},
+	abstract = {An urgent demand of deploying {BFT} consensus (e.g., atomic broadcast) over the Internet is raised for implementing (permissioned) blockchain services. The deterministic synchronous protocols can be simple and fast in good network conditions, but are subject to denial-of-service (or even safety vulnerability) when synchrony assumption fails. Asynchronous protocols, on the contrary, are robust against the adversarial network, but are substantially more complicated and slower for the inherent use of randomness.Facing the issues, optimistic asynchronous atomic broadcast (Kursawe-Shoup, 2002; Ramasamy-Cachin, 2005) was proposed to improve the normal-case performance of the slow asynchronous consensus. They run a deterministic fastlane if the network condition remains good, and can fall back to a fully asynchronous protocol via a pace-synchronization mechanism (analog to view-change with asynchronous securities) if the fastlane fails. Unfortunately, existing pace-synchronization directly uses a heavy tool of asynchronous multi-valued validated Byzantine agreement ({MVBA}). When such fallback frequently occurs in the fluctuating wide-area network setting, the benefits of adding fastlane can be eliminated.We present Bolt-Dumbo Transformer ({BDT}), a generic framework for practical optimistic asynchronous atomic broadcast. At the core of {BDT}, we set forth a new fastlane abstraction that is simple and fast, while preparing honest parties to gracefully face potential fastlane failures caused by malicious leader or bad network. This enables a highly efficient pace-synchronization to handle fallback. The resulting design reduces a cumbersome {MVBA} to a variant of the conceptually simplest binary agreement only. Besides detailed security analyses, we also give concrete instantiations of our framework and implement them. Extensive experiments demonstrate that {BDT} can enjoy both the low latency of deterministic protocols (e.g., 2-chain version of {HotStuff} and the robustness of state-of-the-art asynchronous protocols in practice.},
+	pages = {2159--2173},
+	booktitle = {Proceedings of the 2022 {ACM} {SIGSAC} Conference on Computer and Communications Security},
+	publisher = {Association for Computing Machinery},
+	author = {Lu, Yuan and Lu, Zhenliang and Tang, Qiang},
+	urldate = {2026-03-09},
+	date = {2022-11-07},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\E73EX7T3\\Lu 等 - 2022 - Bolt-Dumbo Transformer Asynchronous Consensus As Fast As the Pipelined BFT.pdf:application/pdf},
+}
+
+@inproceedings{yang_dispersedledger_2022,
+	title = {{DispersedLedger}: High-Throughput Byzantine Consensus on Variable Bandwidth Networks},
+	isbn = {978-1-939133-27-4},
+	url = {https://www.usenix.org/conference/nsdi22/presentation/yang},
+	shorttitle = {{DispersedLedger}},
+	eventtitle = {19th {USENIX} Symposium on Networked Systems Design and Implementation ({NSDI} 22)},
+	pages = {493--512},
+	author = {Yang, Lei and Park, Seo Jin and Alizadeh, Mohammad and Kannan, Sreeram and Tse, David},
+	urldate = {2026-03-09},
+	date = {2022},
+	langid = {english},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\5DRE8226\\Yang 等 - 2022 - DispersedLedger High-Throughput Byzantine Consensus on Variable Bandwidth Networks.pdf:application/pdf},
+}
+
+@article{cheng_mathsf_2025,
+	title = {{\textbackslash}mathsf {JUMBOJUMBO}: Fully Asynchronous {BFT} Consensus Made Truly Scalable},
+	volume = {22},
+	issn = {1941-0018},
+	url = {https://ieeexplore.ieee.org/document/11002681},
+	doi = {10.1109/TDSC.2025.3569608},
+	shorttitle = {{\textbackslash}mathsf {JUMBOJUMBO}},
+	abstract = {Recent progresses in asynchronous Byzantine fault-tolerant ({BFT}) consensus, e.g., {\textbackslash}mathsf Dumbo{\textbackslash}text -{\textbackslash}mathsf {NGDumbo}-{NG} ({CCS}’ 22) and {\textbackslash}mathsf {TuskTusk} ({EuroSys}’ 22), show promising performance through decoupling transaction dissemination and block agreement. However, when executed with a larger number nn of nodes, like several hundreds, they would suffer from significant degradation in performance. Their dominating scalability bottleneck is the huge authenticator complexity: each node has to multicast {\textbackslash}mathcal O(n)O(n) quorum certificates ({QCs}) and subsequently verify them for each block. This paper systematically investigates and resolves the above scalability issue. We first propose a signature-free asynchronous {BFT} consensus {\textbackslash}mathsf {FIN}{\textbackslash}text -{\textbackslash}mathsf {NGFIN}-{NG} that adapts a recent signature-free asynchronous common subset protocol {FIN} ({CCS}’ 23) into the state-of-the-art framework of concurrent broadcast and agreement. The liveness of {\textbackslash}mathsf {FIN}{\textbackslash}text -{\textbackslash}mathsf {NGFIN}-{NG} relies on our non-trivial redesign of {FIN}’s multi-valued validated Byzantine agreement towards achieving optimal quality. {\textbackslash}mathsf {FIN}{\textbackslash}text -{\textbackslash}mathsf {NGFIN}-{NG} greatly improves the performance of {FIN} and already outperforms {\textbackslash}mathsf Dumbo{\textbackslash}text -{\textbackslash}mathsf {NGDumbo}-{NG} in most deployment settings. To further overcome the scalability limit of {\textbackslash}mathsf {FIN}{\textbackslash}text -{\textbackslash}mathsf {NGFIN}-{NG} due to {\textbackslash}mathcal O(n{\textasciicircum}3)O(n3) messages, we propose {\textbackslash}mathsf {JUMBOJUMBO}, a scalable instantiation of {\textbackslash}mathsf Dumbo{\textbackslash}text -{\textbackslash}mathsf {NGDumbo}-{NG}, with only {\textbackslash}mathcal O(n{\textasciicircum}2)O(n2) complexities for both authenticators and messages. We use various aggregation and dispersal techniques for {QCs} to significantly reduce the authenticator complexity of original {\textbackslash}mathsf Dumbo{\textbackslash}text -{\textbackslash}mathsf {NGDumbo}-{NG} implementations by up to {\textbackslash}mathcal O(n{\textasciicircum}2)O(n2) orders. Finally, we implement our designs in Golang and experimentally demonstrated their enhanced scalability with hundreds of Amazon’s {AWS} instances. {\textbackslash}mathsf {JUMBOJUMBO} and {FIN}-{NG} significantly outperform the state-of-the-art in (nearly) all deployment settings. Especially, when n{\textbackslash}gen≥196, {\textbackslash}mathsf {JUMBOJUMBO} can attain a throughput that is more than 4× that of {FIN} and {\textbackslash}mathsf Dumbo{\textbackslash}text -{\textbackslash}mathsf {NGDumbo}-{NG}.},
+	pages = {5584--5602},
+	number = {5},
+	journaltitle = {{IEEE} Transactions on Dependable and Secure Computing},
+	author = {Cheng, Hao and Lu, Yuan and Lu, Zhenliang and Tang, Qiang and Zhang, Yuxuan and Zhang, Zhenfeng},
+	urldate = {2026-03-09},
+	date = {2025-09},
+	keywords = {Blockchain consensus, asynchronous byzantine agreement, Bandwidth, byzantine fault tolerance, Censorship, Complexity theory, Consensus protocol, Costs, Electronic mail, Local area networks, Scalability, Software, Throughput},
+	file = {PDF:C\:\\Users\\jenway\\Zotero\\storage\\ZWXGX2W9\\Cheng 等 - 2025 - mathsf JUMBOJUMBO Fully Asynchronous BFT Consensus Made Truly Scalable.pdf:application/pdf},
+}
+
+@inproceedings{babel_mysticeti_2025,
+	location = {San Diego, {CA}, {USA}},
+	title = {Mysticeti: Reaching the Latency Limits with Uncertified {DAGs}},
+	isbn = {979-8-9894372-8-3},
+	url = {https://www.ndss-symposium.org/wp-content/uploads/2025-929-paper.pdf},
+	doi = {10.14722/ndss.2025.240929},
+	shorttitle = {Mysticeti},
+	abstract = {We introduce Mysticeti-C, the first {DAG}-based Byzantine consensus protocol to achieve the lower bounds of latency of 3 message rounds. Since Mysticeti-C is built over {DAGs} it also achieves high resource efficiency and censorship resistance. Mysticeti-C achieves this latency improvement by avoiding explicit certification of the {DAG} blocks and by proposing a novel commit rule such that every block can be committed without delays, resulting in optimal latency in the steady state and under crash failures. We further extend Mysticeti-C to Mysticeti-{FPC}, which incorporates a fast commit path that achieves even lower latency for transferring assets. Unlike prior fast commit path protocols, {MysticetiFPC} minimizes the number of signatures and messages by weaving the fast path transactions into the {DAG}. This frees up resources, which subsequently result in better performance. We prove the safety and liveness in a Byzantine context. We evaluate both Mysticeti protocols and compare them with state-of-the-art consensus and fast path protocols to demonstrate their low latency and resource efficiency, as well as their more graceful degradation under crash failures. Mysticeti-C is the first Byzantine consensus protocol to achieve {WAN} latency of 0.5s for consensus commit while simultaneously maintaining state-of-the-art throughput of over 200k {TPS}. Finally, we report on integrating {MysticetiC} as the consensus protocol into the Sui blockchain [1], resulting in over 4x latency reduction.},
+	eventtitle = {Network and Distributed System Security Symposium},
+	booktitle = {Proceedings 2025 Network and Distributed System Security Symposium},
+	publisher = {Internet Society},
+	author = {Babel, Kushal and Chursin, Andrey and Danezis, George and Kichidis, Anastasios and Kokoris-Kogias, Lefteris and Koshy, Arun and Sonnino, Alberto and Tian, Mingwei},
+	urldate = {2026-03-09},
+	date = {2025},
+	langid = {english},
+	file = {PDF:C\:\\Users\\jenway\\Zotero\\storage\\SS6CCNRT\\Babel 等 - 2025 - Mysticeti Reaching the Latency Limits with Uncertified DAGs.pdf:application/pdf},
+}
+
+@inproceedings{zhang_pace_2022,
+	location = {New York, {NY}, {USA}},
+	title = {{PACE}: Fully Parallelizable {BFT} from Reproposable Byzantine Agreement},
+	isbn = {978-1-4503-9450-5},
+	url = {https://dl.acm.org/doi/10.1145/3548606.3559348},
+	doi = {10.1145/3548606.3559348},
+	series = {{CCS} '22},
+	shorttitle = {{PACE}},
+	abstract = {The classic asynchronous Byzantine fault tolerance ({BFT}) framework of Ben-Or, Kemler, and Rabin ({BKR}) and its descendants rely on reliable broadcast ({RBC}) and asynchronous binary agreement ({ABA}). However, {BKR} does not allow all {ABA} instances to run in parallel, a well-known performance bottleneck. We propose {PACE}, a generic framework that removes the bottleneck, allowing fully parallelizable {ABA} instances. {PACE} is built on {RBC} and reproposable {ABA} ({RABA}). Different from the conventional {ABA}, {RABA} allows a replica to change its mind and vote twice. We show how to efficiently build {RABA} protocols from existing {ABA} protocols and a new {ABA} protocol that we introduce.We implement six new {BFT} protocols: three in the {BKR} framework, and three in the {PACE} framework. Via a deployment using 91 replicas on Amazon {EC}2 across five continents, we show that all {PACE} instantiations, in both failure-free and failure scenarios, significantly outperform their {BKR} counterparts, and prior {BFT} protocols such as {BEAT} and Dumbo, in terms of latency, throughput, latency vs. throughput, and scalability.},
+	pages = {3151--3164},
+	booktitle = {Proceedings of the 2022 {ACM} {SIGSAC} Conference on Computer and Communications Security},
+	publisher = {Association for Computing Machinery},
+	author = {Zhang, Haibin and Duan, Sisi},
+	urldate = {2026-03-09},
+	date = {2022-11-07},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\M736GLY9\\Zhang和Duan - 2022 - PACE Fully Parallelizable BFT from Reproposable Byzantine Agreement.pdf:application/pdf},
+}
+
+@inproceedings{danezis_narwhal_2022,
+	location = {New York, {NY}, {USA}},
+	title = {Narwhal and Tusk: a {DAG}-based mempool and efficient {BFT} consensus},
+	isbn = {978-1-4503-9162-7},
+	url = {https://dl.acm.org/doi/10.1145/3492321.3519594},
+	doi = {10.1145/3492321.3519594},
+	series = {{EuroSys} '22},
+	shorttitle = {Narwhal and Tusk},
+	abstract = {We propose separating the task of reliable transaction dissemination from transaction ordering, to enable high-performance Byzantine fault-tolerant quorum-based consensus. We design and evaluate a mempool protocol, Narwhal, specializing in high-throughput reliable dissemination and storage of causal histories of transactions. Narwhal tolerates an asynchronous network and maintains high performance despite failures. Narwhal is designed to easily scale-out using multiple workers at each validator, and we demonstrate that there is no foreseeable limit to the throughput we can achieve.Composing Narwhal with a partially synchronous consensus protocol (Narwhal-{HotStuff}) yields significantly better throughput even in the presence of faults or intermittent loss of liveness due to asynchrony. However, loss of liveness can result in higher latency. To achieve overall good performance when faults occur we design Tusk, a zero-message overhead asynchronous consensus protocol, to work with Narwhal. We demonstrate its high performance under a variety of configurations and faults.As a summary of results, on a {WAN}, Narwhal-Hotstuff achieves over 130,000 tx/sec at less than 2-sec latency compared with 1,800 tx/sec at 1-sec latency for Hotstuff. Additional workers increase throughput linearly to 600,000 tx/sec without any latency increase. Tusk achieves 160,000 tx/sec with about 3 seconds latency. Under faults, both protocols maintain high throughput, but Narwhal-{HotStuff} suffers from increased latency.},
+	pages = {34--50},
+	booktitle = {Proceedings of the Seventeenth European Conference on Computer Systems},
+	publisher = {Association for Computing Machinery},
+	author = {Danezis, George and Kokoris-Kogias, Lefteris and Sonnino, Alberto and Spiegelman, Alexander},
+	urldate = {2026-03-09},
+	date = {2022-03-28},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\XWZUQXTN\\Danezis 等 - 2022 - Narwhal and Tusk a DAG-based mempool and efficient BFT consensus.pdf:application/pdf},
+}
+
+@inproceedings{ben-or_asynchronous_1994,
+	location = {New York, {NY}, {USA}},
+	title = {Asynchronous secure computations with optimal resilience (extended abstract)},
+	isbn = {978-0-89791-654-7},
+	url = {https://dl.acm.org/doi/10.1145/197917.198088},
+	doi = {10.1145/197917.198088},
+	series = {{PODC} '94},
+	pages = {183--192},
+	booktitle = {Proceedings of the thirteenth annual {ACM} symposium on Principles of distributed computing},
+	publisher = {Association for Computing Machinery},
+	author = {Ben-Or, Michael and Kelmer, Boaz and Rabin, Tal},
+	urldate = {2026-03-28},
+	date = {1994-08-14},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\VTEYLEX5\\Ben-Or 等 - 1994 - Asynchronous secure computations with optimal resilience (extended abstract).pdf:application/pdf},
+}
+
+@misc{cachin_secure_2001,
+	title = {Secure and Efficient Asynchronous Broadcast Protocols},
+	url = {https://eprint.iacr.org/2001/006},
+	abstract = {Reliable broadcast protocols are a fundamental building block for
+implementing replication in fault-tolerant distributed systems. This paper
+addresses secure service replication in an asynchronous environment with a
+static set of servers, where a malicious adversary may corrupt up to a
+threshold of servers and controls the network. We develop a formal model
+using concepts from modern cryptography, present modular definitions for
+several broadcast problems, including reliable, atomic, and secure causal
+broadcast, and present protocols implementing them. Reliable broadcast is a
+basic primitive, also known as the Byzantine generals problem, providing
+agreement on a delivered message. Atomic broadcast imposes additionally a
+total order on all delivered messages. We present a randomized atomic
+broadcast protocol based on a new, efficient multi-valued asynchronous
+Byzantine agreement primitive with an external validity condition.
+Apparently, no such efficient asynchronous atomic broadcast protocol
+maintaining liveness and safety in the Byzantine model has appeared
+previously in the literature. Secure causal broadcast extends atomic
+broadcast by encryption to guarantee a causal order among the delivered
+messages. Threshold-cryptographic protocols for signatures, encryption, and
+coin-tossing also play an important role.},
+	number = {2001/006},
+	author = {Cachin, Christian and Kursawe, Klaus and Petzold, Frank and Shoup, Victor},
+	urldate = {2026-03-29},
+	date = {2001},
+	note = {Publication info: Published elsewhere. Unknown where it was published},
+	keywords = {atomic broadcast, Byzantine agreement, distributed cryptography, reliable broadcast},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\UDWTQPFT\\Cachin 等 - 2001 - Secure and Efficient Asynchronous Broadcast Protocols.pdf:application/pdf;Full Text PS:C\:\\Users\\jenway\\Zotero\\storage\\XWHMCGNL\\Cachin 等 - 2001 - Secure and Efficient Asynchronous Broadcast Protocols.ps:application/postscript},
+}
