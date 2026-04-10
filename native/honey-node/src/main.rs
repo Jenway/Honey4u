@@ -5,11 +5,15 @@ use honey_crypto::hb::{
     merge_tx_batches_bytes as merge_hb_tx_batches_bytes,
     seal_encrypted_batch as seal_hb_encrypted_batch,
 };
+use honey_crypto::host_crypto::{
+    generate_dumbo_crypto_payloads_json, generate_hb_crypto_payloads_json,
+};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::types::{PyList, PyModule};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::net::TcpListener;
@@ -18,6 +22,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod acs_host;
 mod cli;
 mod drive_acs;
 mod drive_dumbo;
@@ -26,11 +31,26 @@ mod network_driver;
 mod pool_reuse;
 mod py_host;
 mod runner;
+mod rust_acs;
+mod rust_dumbo_acs;
+mod rust_hb_acs;
+mod threaded_acs_host;
 
 // Re-export types that live in submodules but must be visible across all drivers
 // via the `use super::*;` pattern used in the submodule files.
-pub(crate) use py_host::{AcsRoundOutcome, PyAcsHost, PyAcsHostStats, PyAcsWireEvent};
+pub(crate) use acs_host::{AcsHost, AcsHostStats, AcsRoundOutcome, AcsWireEvent, build_acs_host};
 pub(crate) use runner::SpawnedNode;
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProposalArtifact {
+    pub(crate) proposal_id: String,
+    pub(crate) proposer: usize,
+    pub(crate) payload: Vec<u8>,
+    pub(crate) digest: Vec<u8>,
+    pub(crate) certificate: Vec<u8>,
+}
+
+pub(crate) type ProposalStore = BTreeMap<String, ProposalArtifact>;
 
 #[derive(Clone, Copy)]
 enum Protocol {
@@ -188,12 +208,11 @@ struct DriverPhaseStats {
     total_pull_seconds: f64,
     send_events: usize,
     send_payload_bytes: usize,
+    proposal_ready_events: usize,
+    proposal_ready_payload_bytes: usize,
+    proposal_ready_certificate_bytes: usize,
     decision_events: usize,
     failure_events: usize,
-    carryover_events: usize,
-    broadcast_output_events: usize,
-    broadcast_output_payload_bytes: usize,
-    broadcast_output_roothash_bytes: usize,
     host_stats: Vec<DriverHostPhaseStats>,
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -374,19 +393,10 @@ fn serialize_crypto_payloads(
     nodes: usize,
     faulty: usize,
 ) -> Result<Vec<String>, String> {
-    Python::attach(|py| -> PyResult<Vec<String>> {
-        prepend_python_paths(py)?;
-        let materials = PyModule::import(py, "honey_acs.host_crypto")?;
-        let function_name = match protocol {
-            Protocol::HoneyBadger => "serialize_hb_crypto_payloads_json",
-            Protocol::Dumbo => "serialize_dumbo_crypto_payloads_json",
-        };
-        materials
-            .getattr(function_name)?
-            .call1((nodes, faulty))?
-            .extract::<Vec<String>>()
-    })
-    .map_err(|err| err.to_string())
+    match protocol {
+        Protocol::HoneyBadger => generate_hb_crypto_payloads_json(nodes, faulty),
+        Protocol::Dumbo => generate_dumbo_crypto_payloads_json(nodes, faulty),
+    }
 }
 
 fn allocate_loopback_addresses(num_nodes: usize) -> Result<Vec<(String, u16)>, String> {

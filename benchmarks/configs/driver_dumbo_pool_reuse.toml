@@ -1,0 +1,17 @@
+# Rust-owned Dumbo outer driver with broadcast pool reuse enabled.
+mode = "dumbo"
+sid = "bench:driver:dumbo:reuse"
+nodes = 4
+faulty = 1
+rounds = 3
+batch_size = 128
+global_timeout = 120.0
+
+[config]
+enable_broadcast_pool_reuse = true
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+pool_grace_ms = 200
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 1024

@@ -16,11 +16,10 @@ from typing import Any, cast
 
 import honey_native
 
-from honey_acs.host_crypto import build_crypto_params_from_json
+from honey_acs.host_crypto import build_crypto_params, build_crypto_params_from_json
 from honey_acs.messages import Channel, ProtocolEnvelope, ProtocolMessage
 from honey_acs.params import HBConfig
 from honey_acs.service import (
-    AcsOutputMode,
     AcsProtocol,
     AcsService,
 )
@@ -45,7 +44,6 @@ class PersistentAcsHost:
         faulty: int,
         crypto,
         config: HBConfig | None = None,
-        output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
         self._protocol = protocol
         self._pid = pid
@@ -53,7 +51,6 @@ class PersistentAcsHost:
         self._faulty = faulty
         self._crypto = crypto
         self._config = config
-        self._output_mode = output_mode
         self._service: AcsService | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
@@ -106,7 +103,6 @@ class PersistentAcsHost:
             crypto=self._crypto,
             config=self._config,
             event_notifier=self._mark_outbound_ready,
-            output_mode=self._output_mode,
         )
 
     def _worker_main(self) -> None:
@@ -321,7 +317,7 @@ class PersistentAcsHost:
         encoded: list[dict[str, object]] = []
         for event in events:
             kind = str(event.get("kind"))
-            if kind not in {"send", "broadcast_send"}:
+            if kind not in {"send", "broadcast"}:
                 encoded.append(event)
                 continue
 
@@ -347,7 +343,7 @@ class PersistentAcsHost:
 
             encoded.append(
                 {
-                    "kind": "broadcast_send",
+                    "kind": "broadcast",
                     "round_id": round_id,
                     "include_self": bool(event.get("include_self", True)),
                     "payload": payload,
@@ -444,23 +440,75 @@ def build_persistent_acs_host_from_json(
     faulty: int,
     crypto_json: str,
     config_json: str | None = None,
-    output_mode: AcsOutputMode = "selected_pids",
 ) -> PersistentAcsHost:
-    config_payload = cast(dict[str, object], json.loads(config_json)) if config_json else {}
-    # Allow config_json to carry "output_mode" (used by bench-driver --mode dumbo
-    # which cannot pass it as a separate kwarg).  Pop it before forwarding to HBConfig.
-    if "output_mode" in config_payload:
-        output_mode = cast(AcsOutputMode, config_payload.pop("output_mode"))
-    # Strip any keys that HBConfig doesn't recognise before forwarding to Python.
-    valid_hbconfig_fields = {f.name for f in dataclass_fields(HBConfig)}
-    config_payload = {k: v for k, v in config_payload.items() if k in valid_hbconfig_fields}
-    config_kwargs = cast(dict[str, Any], config_payload)
-    return PersistentAcsHost(
+    return _build_persistent_acs_host(
         protocol=protocol,
         pid=pid,
         nodes=nodes,
         faulty=faulty,
         crypto=build_crypto_params_from_json(protocol, crypto_json),
-        config=HBConfig(**config_kwargs),
-        output_mode=output_mode,
+        config_kwargs=_config_kwargs_from_json(config_json),
     )
+
+
+def build_persistent_acs_host(
+    *,
+    protocol: AcsProtocol,
+    pid: int,
+    nodes: int,
+    faulty: int,
+    sig_pk: bytes,
+    sig_sk: bytes,
+    ecdsa_pks: list[bytes],
+    ecdsa_sk: bytes,
+    config_json: str | None = None,
+    proof_sig_pk: bytes | None = None,
+    proof_sig_sk: bytes | None = None,
+) -> PersistentAcsHost:
+    return _build_persistent_acs_host(
+        protocol=protocol,
+        pid=pid,
+        nodes=nodes,
+        faulty=faulty,
+        crypto=build_crypto_params(
+            protocol,
+            sig_pk=sig_pk,
+            sig_sk=sig_sk,
+            ecdsa_pks=ecdsa_pks,
+            ecdsa_sk=ecdsa_sk,
+            proof_sig_pk=proof_sig_pk,
+            proof_sig_sk=proof_sig_sk,
+        ),
+        config_kwargs=_config_kwargs_from_json(config_json),
+    )
+
+
+def _build_persistent_acs_host(
+    *,
+    protocol: AcsProtocol,
+    pid: int,
+    nodes: int,
+    faulty: int,
+    crypto: object,
+    config_kwargs: dict[str, Any],
+) -> PersistentAcsHost:
+    return PersistentAcsHost(
+        protocol=protocol,
+        pid=pid,
+        nodes=nodes,
+        faulty=faulty,
+        crypto=crypto,
+        config=HBConfig(**config_kwargs),
+    )
+
+
+def _config_kwargs_from_json(config_json: str | None) -> dict[str, Any]:
+    config_payload = cast(dict[str, object], json.loads(config_json)) if config_json else {}
+    # Ignore legacy config_json["output_mode"]; ACS host events no longer expose
+    # protocol-specific decision shapes across the Rust/Python boundary.
+    if "output_mode" in config_payload:
+        config_payload.pop("output_mode")
+    # Strip any keys that HBConfig doesn't recognise before forwarding to Python.
+    valid_hbconfig_fields = {f.name for f in dataclass_fields(HBConfig)}
+    config_payload = {k: v for k, v in config_payload.items() if k in valid_hbconfig_fields}
+    return cast(dict[str, Any], config_payload)

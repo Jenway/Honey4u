@@ -14,7 +14,13 @@ from honey_acs.dumbo.dumbo_acs import (
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import Channel
 from honey_acs.params import CryptoParams, HBConfig
-from honey_acs.service.base import AcsOutputMode, AcsRoundContext, AcsService, ManagedRoundSession
+from honey_acs.service.base import (
+    AcsOutputMode,
+    AcsRoundContext,
+    AcsService,
+    ManagedRoundSession,
+    build_proposal_id,
+)
 from honey_acs.subprotocols.dumbo_mvba import (
     MvbaAbaCoinShare,
     MvbaAbaMessage,
@@ -51,8 +57,6 @@ _DUMBO_MVBA_MESSAGES = (
     MvbaAbaCoinShare,
 )
 
-type DumboServiceDecision = DumboACSDecision | tuple[bytes | None, ...]
-
 
 def _dumbo_channel_for_message(message: object) -> Channel:
     if isinstance(message, _DUMBO_PRBC_MESSAGES):
@@ -75,9 +79,13 @@ class DumboRoundSession(ManagedRoundSession):
     ) -> None:
         super().__init__(context=context, round_id=round_id, sid=sid)
         self.input_queue: asyncio.Queue[bytes] = asyncio.Queue(1)
-        self.decide_queue: asyncio.Queue[DumboServiceDecision] = asyncio.Queue(1)
+        self.decide_queue: asyncio.Queue[DumboACSDecision | tuple[bytes | None, ...]] = (
+            asyncio.Queue(1)
+        )
         self.receive_queue: asyncio.Queue[tuple[int, object]] = asyncio.Queue()
         self.input_queue.put_nowait(proposal_input)
+        self._proposal_ids: dict[int, str] = {}
+        self._emitted_proposers: set[int] = set()
 
     async def deliver_decoded(
         self,
@@ -123,7 +131,7 @@ class DumboRoundSession(ManagedRoundSession):
         async def broadcast(message: object, *, include_self: bool = True) -> None:
             self.context.emit_event(
                 {
-                    "kind": "broadcast_send",
+                    "kind": "broadcast",
                     "round_id": self.round_id,
                     "channel": _dumbo_channel_for_message(message).value,
                     "instance_id": int(message.leader)
@@ -131,6 +139,24 @@ class DumboRoundSession(ManagedRoundSession):
                     else None,
                     "include_self": include_self,
                     "message": message,
+                }
+            )
+
+        def on_prbc_output(outcome: PrbcOutcome) -> None:
+            if outcome.leader in self._emitted_proposers:
+                return
+            proposal_id = build_proposal_id(self.round_id, outcome.leader, outcome.proof.roothash)
+            self._proposal_ids[outcome.leader] = proposal_id
+            self._emitted_proposers.add(outcome.leader)
+            self.context.emit_event(
+                {
+                    "kind": "proposal_ready",
+                    "round_id": self.round_id,
+                    "proposer": outcome.leader,
+                    "proposal_id": proposal_id,
+                    "payload": outcome.value,
+                    "digest": outcome.proof.roothash,
+                    "certificate": serialize_prbc_proof(outcome.proof),
                 }
             )
 
@@ -158,45 +184,28 @@ class DumboRoundSession(ManagedRoundSession):
                 send,
                 broadcast=broadcast,
                 broadcast_others=lambda message: broadcast(message, include_self=False),
+                on_prbc_output=on_prbc_output,
                 carryover_queue=carryover_queue,
-                output_mode=self.context.output_mode,
+                output_mode="selected_pids",
             )
-            decision = await self.decide_queue.get()
-            if self.context.output_mode == "payloads":
-                self.context.emit_event(
-                    {
-                        "kind": "decision",
-                        "round_id": self.round_id,
-                        "selected_payloads": list(cast(tuple[bytes | None, ...], decision)),
-                    }
-                )
-            else:
-                self.context.emit_event(
-                    {
-                        "kind": "decision",
-                        "round_id": self.round_id,
-                        "selected_pids": [
-                            pid for pid in cast(tuple[int | None, ...], decision) if pid is not None
-                        ],
-                    }
-                )
-            if carryover_queue is not None:
-                carryovers = await carryover_queue.get()
-                self.context.emit_event(
-                    {
-                        "kind": "carryovers",
-                        "round_id": self.round_id,
-                        "items": [
-                            {
-                                "leader": outcome.leader,
-                                "value": outcome.value,
-                                "roothash": outcome.proof.roothash,
-                                "proof_payload": serialize_prbc_proof(outcome.proof),
-                            }
-                            for outcome in carryovers
-                        ],
-                    }
-                )
+            decision = cast(DumboACSDecision, await self.decide_queue.get())
+            selected_proposal_ids = []
+            for pid in decision:
+                if pid is None:
+                    continue
+                proposal_id = self._proposal_ids.get(pid)
+                if proposal_id is None:
+                    raise ProtocolInvariantError(
+                        f"Dumbo ACS decided proposer {pid} before proposal_ready was emitted"
+                    )
+                selected_proposal_ids.append(proposal_id)
+            self.context.emit_event(
+                {
+                    "kind": "decision",
+                    "round_id": self.round_id,
+                    "selected_proposal_ids": selected_proposal_ids,
+                }
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:

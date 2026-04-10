@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 
+import honey_native
 from honey_acs.crypto import ecdsa
-from honey_acs.host_crypto import build_crypto_params_from_json, serialize_hb_crypto_payloads_json
+from honey_acs.host_crypto import build_crypto_params_from_json
 from honey_acs.params import CryptoParams
 
 
@@ -25,11 +26,11 @@ def test_ecdsa_api_round_trip_and_threshold_verify() -> None:
     )
 
 
-def test_generate_hb_crypto_payloads_json_produces_valid_material() -> None:
-    """generate_hb_crypto_payloads_json returns well-formed per-node JSON payloads
+def test_native_generate_hb_crypto_payloads_json_produces_valid_material() -> None:
+    """honey_native.generate_hb_crypto_payloads_json returns well-formed per-node JSON payloads
     that can be round-tripped through build_crypto_params_from_json."""
     N, f = 4, 1
-    payloads = serialize_hb_crypto_payloads_json(N, f)
+    payloads = honey_native.generate_hb_crypto_payloads_json(N, f)
 
     assert len(payloads) == N
 

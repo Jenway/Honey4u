@@ -3,6 +3,7 @@ pub mod bls;
 pub mod crypto_error;
 pub mod ecdsa;
 pub mod hb;
+pub mod host_crypto;
 pub mod merkle;
 pub mod threshold;
 pub mod wire;

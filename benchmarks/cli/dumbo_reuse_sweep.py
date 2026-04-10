@@ -447,7 +447,7 @@ def _build_chart_payloads(
     rounds: int,
 ) -> dict[str, str]:
     subtitle = (
-        f"bench-driver --mode dumbo, real multiprocess local TCP, repeats={repeats}, rounds={rounds}, "
+        f"bench-driver TOML config, real multiprocess local TCP, repeats={repeats}, rounds={rounds}, "
         "pool refs enabled"
     )
     chart_specs = [

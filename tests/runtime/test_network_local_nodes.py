@@ -75,6 +75,27 @@ def test_local_honeybadger_outer_can_be_rust_driven_with_persistent_python_hosts
     assert all(round_data.acs_drive_stats.total_pull_seconds >= 0.0 for round_data in result.rounds)
 
 
+def test_local_honeybadger_outer_can_use_prbc_broadcast_mode() -> None:
+    result = run_local_honeybadger_rust_driven(
+        sid="test:bench-driver:hb:outer:prbc",
+        num_nodes=4,
+        faulty=1,
+        batch_size=1,
+        max_rounds=1,
+        global_timeout=10.0,
+        hb_broadcast_protocol="prbc",
+    )
+
+    assert result.protocol == "hb"
+    assert result.acs_protocol == "hb"
+    assert len(result.nodes) == 4
+    assert len(result.rounds) == 1
+    assert all(node.worker_error is None for node in result.nodes)
+    assert result.rounds[0].selected_count == 4
+    assert result.rounds[0].delivered_count == 4
+    assert result.rounds[0].acs_send_events > 0
+
+
 @pytest.mark.parametrize("broadcast_mempool_backend", ["none", "rust"])
 def test_local_honeybadger_outer_supports_non_python_broadcast_pools(
     broadcast_mempool_backend: str,

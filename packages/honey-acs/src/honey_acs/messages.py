@@ -30,7 +30,6 @@ class Channel(StrEnum):
     DUMBO_PROOF = "DUMBO_PROOF"
     DUMBO_MVBA = "DUMBO_MVBA"
     DUMBO_POOL = "DUMBO_POOL"
-    TPKE = "TPKE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,11 +75,6 @@ class BaConf:
 class CoinShareMessage:
     round_id: int
     signature: bytes
-
-
-@dataclass(frozen=True, slots=True)
-class TpkeShareBundle:
-    shares: tuple[bytes | None, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,15 +152,7 @@ def merge_tx_batches(blocks: tuple[bytes, ...] | list[bytes]) -> list[object]:
 
 
 ProtocolMessage = (
-    RbcVal
-    | RbcEcho
-    | RbcReady
-    | BaEst
-    | BaAux
-    | BaConf
-    | CoinShareMessage
-    | TpkeShareBundle
-    | RawPayload
+    RbcVal | RbcEcho | RbcReady | BaEst | BaAux | BaConf | CoinShareMessage | RawPayload
 )
 
 

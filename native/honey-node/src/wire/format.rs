@@ -9,7 +9,6 @@ pub enum ChannelWire {
     DumboProof,
     DumboMvba,
     DumboPool,
-    Tpke,
 }
 
 #[derive(Archive, Serialize, Deserialize)]
@@ -129,9 +128,6 @@ pub enum MessageWire {
     PoolFetchResponse {
         item_id: String,
         payload: Vec<u8>,
-    },
-    TpkeShareBundle {
-        shares: Vec<Option<Vec<u8>>>,
     },
     RawPayload {
         data: Vec<u8>,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::acs_host::{AcsCryptoMaterial, AcsHost, AcsHostStats, AcsWireEvent};
 
 // ---------------------------------------------------------------------------
 // Python IPC wire types
@@ -6,92 +7,9 @@ use super::*;
 // ACS host over the PyO3 GIL-locked call boundary.
 // ---------------------------------------------------------------------------
 
-/// A single carry-over item from a Dumbo ACS round (PRBC outputs not included
-/// in the ACS decision but eligible for reuse in the next round).
-pub(crate) struct CarryoverItem {
-    pub(crate) leader: u32,
-    pub(crate) value: Vec<u8>,
-    pub(crate) roothash: Vec<u8>,
-    pub(crate) proof_payload: Vec<u8>,
-}
-
 pub(crate) struct PyAcsHost {
     pub(crate) pid: usize,
     pub(crate) inner: Py<PyAny>,
-}
-
-pub(crate) struct PyAcsHostStats {
-    pub(crate) worker_ident: u64,
-    pub(crate) rounds_started: usize,
-    pub(crate) rounds_finished: usize,
-    pub(crate) processed_commands: usize,
-    pub(crate) bridge_queue_size: usize,
-    pub(crate) worker_running: bool,
-    pub(crate) worker_error: Option<String>,
-    pub(crate) start_round_calls: usize,
-    pub(crate) push_inbound_wire_batch_calls: usize,
-    pub(crate) push_inbound_wire_batch_items: usize,
-    pub(crate) pull_outbound_wire_batch_calls: usize,
-    pub(crate) pull_outbound_wire_batch_items: usize,
-    pub(crate) stats_calls: usize,
-}
-
-pub(crate) enum PyAcsWireEvent {
-    Send {
-        round_id: usize,
-        recipient: usize,
-        payload: Vec<u8>,
-    },
-    BroadcastSend {
-        round_id: usize,
-        payload: Vec<u8>,
-        include_self: bool,
-    },
-    Decision {
-        round_id: usize,
-        /// Set when `output_mode = "selected_pids"` (HB / bench mode).
-        selected_pids: Vec<usize>,
-        /// Set when `output_mode = "payloads"` (Dumbo drive mode with pool reuse).
-        selected_payloads: Option<Vec<Option<Vec<u8>>>>,
-    },
-    Failure {
-        round_id: isize,
-        error: String,
-        exception_type: String,
-    },
-    Carryovers {
-        round_id: usize,
-        /// Carry-over items from Dumbo with pool reuse enabled.
-        items: Vec<CarryoverItem>,
-    },
-    BroadcastOutput {
-        round_id: usize,
-        sender: usize,
-        payload: Vec<u8>,
-        roothash: Vec<u8>,
-    },
-}
-
-#[allow(dead_code)]
-pub(crate) struct AcsRoundOutcome {
-    pub(crate) selected_pids: Vec<usize>,
-    /// Raw payloads from a Dumbo `"payloads"` output-mode decision event.
-    /// Empty when running in `"selected_pids"` mode (HB).
-    pub(crate) selected_payloads: Vec<Option<Vec<u8>>>,
-    /// Carry-over items from Dumbo with pool reuse enabled.
-    /// Empty when pool reuse is disabled or when running HB.
-    pub(crate) carryovers: Vec<CarryoverItem>,
-    pub(crate) send_events: usize,
-    pub(crate) drive_stats: DriverPhaseStats,
-    pub(crate) settle_stats: DriverPhaseStats,
-}
-
-#[allow(dead_code)]
-pub(crate) struct HbBlockOutcome {
-    pub(crate) block_payload: Vec<u8>,
-    pub(crate) tpke_bundle_events: usize,
-    pub(crate) local_share_seconds: f64,
-    pub(crate) combine_seconds: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -103,15 +21,15 @@ fn dict_item<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, P
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("missing key: {key}")))
 }
 
-fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
+fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<AcsWireEvent> {
     let kind = dict_item(&dict, "kind")?.extract::<String>()?;
     match kind.as_str() {
-        "send" => Ok(PyAcsWireEvent::Send {
+        "send" => Ok(AcsWireEvent::Send {
             round_id: dict_item(&dict, "round_id")?.extract()?,
             recipient: dict_item(&dict, "recipient")?.extract()?,
             payload: dict_item(&dict, "payload")?.extract()?,
         }),
-        "broadcast_send" => Ok(PyAcsWireEvent::BroadcastSend {
+        "broadcast" => Ok(AcsWireEvent::Broadcast {
             round_id: dict_item(&dict, "round_id")?.extract()?,
             payload: dict_item(&dict, "payload")?.extract()?,
             include_self: dict
@@ -120,70 +38,31 @@ fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
                 .transpose()?
                 .unwrap_or(true),
         }),
+        "proposal_ready" => Ok(AcsWireEvent::ProposalReady {
+            round_id: dict_item(&dict, "round_id")?.extract()?,
+            proposal: ProposalArtifact {
+                proposal_id: dict_item(&dict, "proposal_id")?.extract()?,
+                proposer: dict_item(&dict, "proposer")?.extract()?,
+                payload: dict_item(&dict, "payload")?.extract()?,
+                digest: dict_item(&dict, "digest")?.extract()?,
+                certificate: dict_item(&dict, "certificate")?.extract()?,
+            },
+        }),
         "decision" => {
             let round_id = dict_item(&dict, "round_id")?.extract()?;
-            // `selected_pids` is present in HB / "selected_pids" output mode.
-            // In Dumbo "payloads" mode this key may be absent.
-            let selected_pids = if let Some(pids_val) = dict.get_item("selected_pids")? {
-                pids_val
-                    .try_iter()?
-                    .map(|item| item?.extract::<usize>())
-                    .collect::<PyResult<Vec<_>>>()?
-            } else {
-                Vec::new()
-            };
-            // `selected_payloads` is present in Dumbo "payloads" output mode.
-            let selected_payloads =
-                if let Some(payloads_val) = dict.get_item("selected_payloads")? {
-                    Some(
-                        payloads_val
-                            .try_iter()?
-                            .map(|item| item?.extract::<Option<Vec<u8>>>())
-                            .collect::<PyResult<Vec<_>>>()?,
-                    )
-                } else {
-                    None
-                };
-            Ok(PyAcsWireEvent::Decision {
+            let selected_proposal_ids = dict_item(&dict, "selected_proposal_ids")?
+                .try_iter()?
+                .map(|item| item?.extract::<String>())
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(AcsWireEvent::Decision {
                 round_id,
-                selected_pids,
-                selected_payloads,
+                selected_proposal_ids,
             })
         }
-        "failure" => Ok(PyAcsWireEvent::Failure {
+        "failure" => Ok(AcsWireEvent::Failure {
             round_id: dict_item(&dict, "round_id")?.extract()?,
             error: dict_item(&dict, "error")?.extract()?,
             exception_type: dict_item(&dict, "exception_type")?.extract()?,
-        }),
-        "carryovers" => {
-            let round_id = dict_item(&dict, "round_id")?.extract()?;
-            // `items` is present when pool reuse is enabled.
-            let items = if let Some(items_val) = dict.get_item("items")? {
-                items_val
-                    .try_iter()?
-                    .map(|item| {
-                        let item = item?;
-                        let d = item.extract::<Bound<'_, PyDict>>().map_err(|_| {
-                            pyo3::exceptions::PyTypeError::new_err("carryover item must be a dict")
-                        })?;
-                        Ok(CarryoverItem {
-                            leader: dict_item(&d, "leader")?.extract()?,
-                            value: dict_item(&d, "value")?.extract()?,
-                            roothash: dict_item(&d, "roothash")?.extract()?,
-                            proof_payload: dict_item(&d, "proof_payload")?.extract()?,
-                        })
-                    })
-                    .collect::<PyResult<Vec<_>>>()?
-            } else {
-                Vec::new()
-            };
-            Ok(PyAcsWireEvent::Carryovers { round_id, items })
-        }
-        "broadcast_output" => Ok(PyAcsWireEvent::BroadcastOutput {
-            round_id: dict_item(&dict, "round_id")?.extract()?,
-            sender: dict_item(&dict, "sender")?.extract()?,
-            payload: dict_item(&dict, "payload")?.extract()?,
-            roothash: dict_item(&dict, "roothash")?.extract()?,
         }),
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "unknown ACS wire event kind: {kind}"
@@ -191,26 +70,13 @@ fn parse_acs_wire_event(dict: Bound<'_, PyDict>) -> PyResult<PyAcsWireEvent> {
     }
 }
 
-// ---------------------------------------------------------------------------
-
-#[allow(dead_code)]
-pub(crate) trait RustDrivenAcsHost {
-    fn pid(&self) -> usize;
-    fn start_round(&self, round_id: usize, sid: &str, proposal_input: &[u8]) -> Result<(), String>;
-    fn push_inbound_wire_batch(&self, items: &[Vec<u8>]) -> Result<usize, String>;
-    fn begin_pull_outbound_wire_batch(&self, limit: usize) -> Result<(), String>;
-    fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<PyAcsWireEvent>, String>;
-    fn stats(&self) -> Result<PyAcsHostStats, String>;
-    fn shutdown(&self) -> Result<(), String>;
-}
-
 impl PyAcsHost {
-    pub(crate) fn new(
+    pub(crate) fn new_with_material(
         protocol: Protocol,
         pid: usize,
         nodes: usize,
         faulty: usize,
-        crypto_json: &str,
+        crypto: &AcsCryptoMaterial,
         config_json: &str,
     ) -> Result<Self, String> {
         Python::attach(|py| -> PyResult<Self> {
@@ -221,10 +87,15 @@ impl PyAcsHost {
             kwargs.set_item("pid", pid)?;
             kwargs.set_item("nodes", nodes)?;
             kwargs.set_item("faulty", faulty)?;
-            kwargs.set_item("crypto_json", crypto_json)?;
+            kwargs.set_item("sig_pk", &crypto.sig_pk)?;
+            kwargs.set_item("sig_sk", &crypto.sig_sk)?;
+            kwargs.set_item("ecdsa_pks", &crypto.ecdsa_pks)?;
+            kwargs.set_item("ecdsa_sk", &crypto.ecdsa_sk)?;
+            kwargs.set_item("proof_sig_pk", &crypto.proof_sig_pk)?;
+            kwargs.set_item("proof_sig_sk", &crypto.proof_sig_sk)?;
             kwargs.set_item("config_json", config_json)?;
             let host = module
-                .getattr("build_persistent_acs_host_from_json")?
+                .getattr("build_persistent_acs_host")?
                 .call((), Some(&kwargs))?;
             Ok(Self {
                 pid,
@@ -287,8 +158,8 @@ impl PyAcsHost {
         .map_err(|err| err.to_string())
     }
 
-    pub(crate) fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<PyAcsWireEvent>, String> {
-        Python::attach(|py| -> PyResult<Vec<PyAcsWireEvent>> {
+    pub(crate) fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<AcsWireEvent>, String> {
+        Python::attach(|py| -> PyResult<Vec<AcsWireEvent>> {
             let events = self
                 .inner
                 .bind(py)
@@ -301,8 +172,8 @@ impl PyAcsHost {
         .map_err(|err| err.to_string())
     }
 
-    pub(crate) fn stats(&self) -> Result<PyAcsHostStats, String> {
-        Python::attach(|py| -> PyResult<PyAcsHostStats> {
+    pub(crate) fn stats(&self) -> Result<AcsHostStats, String> {
+        Python::attach(|py| -> PyResult<AcsHostStats> {
             let stats = self
                 .inner
                 .bind(py)
@@ -311,7 +182,7 @@ impl PyAcsHost {
             let command_counts = dict_item(&stats, "command_counts")?.cast_into::<PyDict>()?;
             let batch_item_counts =
                 dict_item(&stats, "batch_item_counts")?.cast_into::<PyDict>()?;
-            Ok(PyAcsHostStats {
+            Ok(AcsHostStats {
                 worker_ident: dict_item(&stats, "worker_ident")?.extract()?,
                 rounds_started: dict_item(&stats, "rounds_started")?.extract()?,
                 rounds_finished: dict_item(&stats, "rounds_finished")?.extract()?,
@@ -355,7 +226,7 @@ impl PyAcsHost {
     }
 }
 
-impl RustDrivenAcsHost for PyAcsHost {
+impl AcsHost for PyAcsHost {
     fn pid(&self) -> usize {
         self.pid
     }
@@ -368,15 +239,19 @@ impl RustDrivenAcsHost for PyAcsHost {
         PyAcsHost::push_inbound_wire_batch(self, items)
     }
 
+    fn outbound_ready(&self) -> Result<bool, String> {
+        PyAcsHost::outbound_ready(self)
+    }
+
     fn begin_pull_outbound_wire_batch(&self, limit: usize) -> Result<(), String> {
         PyAcsHost::begin_pull_outbound_wire_batch(self, limit)
     }
 
-    fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<PyAcsWireEvent>, String> {
+    fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<AcsWireEvent>, String> {
         PyAcsHost::finish_pull_outbound_wire_batch(self)
     }
 
-    fn stats(&self) -> Result<PyAcsHostStats, String> {
+    fn stats(&self) -> Result<AcsHostStats, String> {
         PyAcsHost::stats(self)
     }
 

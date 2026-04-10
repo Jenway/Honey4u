@@ -1,0 +1,2678 @@
+//! Rust-native Dumbo ACS host implementing PRBC + Dumbo-MVBA.
+
+use super::*;
+use crate::acs_host::{AcsCryptoMaterial, AcsHost, AcsHostStats, AcsWireEvent};
+use honey_crypto::ecdsa;
+use honey_crypto::merkle::{self, MerkleProof};
+use honey_crypto::threshold;
+use honey_crypto::threshold::keygen::{PartialSignature, SigPrivateKeyShare, SigPublicParams};
+use honey_crypto::threshold::utils::{g1_from_bytes, g1_to_bytes};
+use honey_crypto::wire::api::decode_result;
+use honey_crypto::wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Mutex;
+
+const PRBC_READY_DOMAIN: &[u8] = b"prbc-ready|";
+const PD_STORED_DOMAIN: &[u8] = b"stored|";
+const PD_LOCKED_DOMAIN: &[u8] = b"locked|";
+
+#[derive(Clone, Serialize, Deserialize)]
+struct PrbcProof {
+    roothash: [u8; 32],
+    sigmas: Vec<(usize, Vec<u8>)>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ThresholdProof {
+    roothash: [u8; 32],
+    signature: Vec<u8>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct PdStoreRecord {
+    roothash: [u8; 32],
+    stripe_owner: u32,
+    stripe: Vec<u8>,
+    merkle_proof: MerkleProof,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+enum DumboCoinScope {
+    Election { permutation_round: u32 },
+    Aba { mvba_round: u32, epoch: u32 },
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct RustDumboEnvelope {
+    round_id: u32,
+    sender: u32,
+    message: RustDumboMessage,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+enum RustDumboMessage {
+    PrbcVal {
+        leader: u32,
+        roothash: [u8; 32],
+        proof: MerkleProof,
+        stripe: Vec<u8>,
+        stripe_index: u32,
+    },
+    PrbcEcho {
+        leader: u32,
+        roothash: [u8; 32],
+        proof: MerkleProof,
+        stripe: Vec<u8>,
+        stripe_index: u32,
+    },
+    PrbcReady {
+        leader: u32,
+        roothash: [u8; 32],
+        signature: Vec<u8>,
+    },
+    ProofDiffuse {
+        leader: u32,
+        proof: PrbcProof,
+    },
+    PdStore {
+        leader: u32,
+        roothash: [u8; 32],
+        stripe: Vec<u8>,
+        merkle_proof: MerkleProof,
+    },
+    PdStored {
+        leader: u32,
+        roothash: [u8; 32],
+        share: Vec<u8>,
+    },
+    PdLock {
+        leader: u32,
+        proof: ThresholdProof,
+    },
+    PdLocked {
+        leader: u32,
+        roothash: [u8; 32],
+        share: Vec<u8>,
+    },
+    PdDone {
+        leader: u32,
+        proof: ThresholdProof,
+    },
+    RcPrepare {
+        mvba_round: u32,
+        leader: u32,
+        proof: Option<ThresholdProof>,
+    },
+    RcLock {
+        mvba_round: u32,
+        leader: u32,
+        proof: ThresholdProof,
+    },
+    RcStore {
+        mvba_round: u32,
+        leader: u32,
+        store: PdStoreRecord,
+    },
+    AbaEst {
+        mvba_round: u32,
+        epoch: u32,
+        value: bool,
+    },
+    AbaAux {
+        mvba_round: u32,
+        epoch: u32,
+        value: bool,
+    },
+    AbaConf {
+        mvba_round: u32,
+        epoch: u32,
+        values: [bool; 2],
+    },
+    CoinShare {
+        scope: DumboCoinScope,
+        share: Vec<u8>,
+    },
+}
+
+#[derive(Default)]
+struct CommandCounts {
+    start_round: usize,
+    push_inbound_wire_batch: usize,
+    pull_outbound_wire_batch: usize,
+    stats: usize,
+}
+
+#[derive(Default)]
+struct BatchItemCounts {
+    push_inbound_wire_batch_items: usize,
+    pull_outbound_wire_batch_items: usize,
+}
+
+#[derive(Default)]
+struct PrbcState {
+    leader_root: Option<[u8; 32]>,
+    payload: Option<Vec<u8>>,
+    output: Option<PrbcProof>,
+    proposal_ready: Option<ProposalArtifact>,
+    ready_sent: bool,
+    local_ready: Option<([u8; 32], [u8; 64])>,
+    stripes: BTreeMap<[u8; 32], BTreeMap<usize, Vec<u8>>>,
+    proofs: BTreeMap<[u8; 32], BTreeMap<usize, MerkleProof>>,
+    echo_by_sender: BTreeMap<usize, [u8; 32]>,
+    ready_by_sender: BTreeMap<usize, [u8; 32]>,
+    ready_signatures: BTreeMap<[u8; 32], BTreeMap<usize, [u8; 64]>>,
+    proof_diffused: bool,
+}
+
+#[derive(Default)]
+struct PdState {
+    input_root: Option<[u8; 32]>,
+    input_sent: bool,
+    local_store: Option<PdStoreRecord>,
+    local_lock: Option<ThresholdProof>,
+    local_done: Option<ThresholdProof>,
+    stored_shares: BTreeMap<usize, Vec<u8>>,
+    locked_shares: BTreeMap<usize, Vec<u8>>,
+    lock_sent: bool,
+    done_sent: bool,
+    local_lock_proof: Option<ThresholdProof>,
+    local_done_proof: Option<ThresholdProof>,
+}
+
+#[derive(Default)]
+struct CoinState {
+    local_sent: bool,
+    shares: BTreeMap<usize, Vec<u8>>,
+    output: Option<u8>,
+}
+
+#[derive(Default)]
+struct RcPrepareInbox {
+    none_senders: BTreeSet<usize>,
+    proofs: BTreeMap<usize, ThresholdProof>,
+}
+
+#[derive(Default)]
+struct RcRecastInbox {
+    locks: BTreeMap<usize, ThresholdProof>,
+    stores: BTreeMap<([u8; 32], u32), PdStoreRecord>,
+}
+
+#[derive(Default)]
+struct AbaEpochInbox {
+    est_by_sender: BTreeMap<usize, [bool; 2]>,
+    aux_by_sender: BTreeMap<usize, [bool; 2]>,
+    conf_by_sender: BTreeMap<usize, [bool; 2]>,
+    bin_values: [bool; 2],
+}
+
+#[derive(Default)]
+struct AbaEpochProgress {
+    est_sent: [bool; 2],
+    aux_sent: Option<bool>,
+    conf_sent: [bool; 3],
+    conf_result: Option<[bool; 2]>,
+    coin_value: Option<bool>,
+}
+
+struct AbaState {
+    current_epoch: usize,
+    est: bool,
+    output: Option<bool>,
+    epochs: BTreeMap<usize, AbaEpochProgress>,
+}
+
+impl AbaState {
+    fn new(est: bool) -> Self {
+        Self {
+            current_epoch: 0,
+            est,
+            output: None,
+            epochs: BTreeMap::new(),
+        }
+    }
+}
+
+type RecastShardsByRoot = BTreeMap<[u8; 32], BTreeMap<usize, (Vec<u8>, MerkleProof)>>;
+
+struct RecastState {
+    selected_lock: ThresholdProof,
+    lock_sent: bool,
+    store_sent: bool,
+    stripes_by_root: RecastShardsByRoot,
+    output_value: Option<Vec<u8>>,
+}
+
+impl RecastState {
+    fn new(selected_lock: ThresholdProof) -> Self {
+        Self {
+            selected_lock,
+            lock_sent: false,
+            store_sent: false,
+            stripes_by_root: BTreeMap::new(),
+            output_value: None,
+        }
+    }
+}
+
+struct ActiveMvbaRound {
+    round_id: usize,
+    leader: usize,
+    prepare_sent: bool,
+    ballot: Option<bool>,
+    selected_lock: Option<ThresholdProof>,
+    aba: Option<AbaState>,
+    recast: Option<RecastState>,
+}
+
+impl ActiveMvbaRound {
+    fn new(round_id: usize, leader: usize) -> Self {
+        Self {
+            round_id,
+            leader,
+            prepare_sent: false,
+            ballot: None,
+            selected_lock: None,
+            aba: None,
+            recast: None,
+        }
+    }
+}
+
+struct DumboMvbaState {
+    local_input: Option<Vec<u8>>,
+    proof_vector: Vec<Option<PrbcProof>>,
+    pd: Vec<PdState>,
+    stores: BTreeMap<usize, PdStoreRecord>,
+    locks: BTreeMap<usize, ThresholdProof>,
+    dones: BTreeMap<usize, ThresholdProof>,
+    coin_states: BTreeMap<DumboCoinScope, CoinState>,
+    permutations: BTreeMap<usize, Vec<usize>>,
+    next_mvba_round: usize,
+    active_round: Option<ActiveMvbaRound>,
+    rc_prepare_inboxes: BTreeMap<usize, RcPrepareInbox>,
+    rc_recast_inboxes: BTreeMap<usize, RcRecastInbox>,
+    aba_inboxes: BTreeMap<usize, BTreeMap<usize, AbaEpochInbox>>,
+    output_value: Option<Vec<u8>>,
+}
+
+impl DumboMvbaState {
+    fn new(nodes: usize) -> Self {
+        Self {
+            local_input: None,
+            proof_vector: (0..nodes).map(|_| None).collect(),
+            pd: (0..nodes).map(|_| PdState::default()).collect(),
+            stores: BTreeMap::new(),
+            locks: BTreeMap::new(),
+            dones: BTreeMap::new(),
+            coin_states: BTreeMap::new(),
+            permutations: BTreeMap::new(),
+            next_mvba_round: 0,
+            active_round: None,
+            rc_prepare_inboxes: BTreeMap::new(),
+            rc_recast_inboxes: BTreeMap::new(),
+            aba_inboxes: BTreeMap::new(),
+            output_value: None,
+        }
+    }
+}
+
+struct RoundState {
+    round_id: usize,
+    sid: String,
+    decision_emitted: bool,
+    selected_proofs: Option<Vec<Option<PrbcProof>>>,
+    proposals: Vec<PrbcState>,
+    mvba: DumboMvbaState,
+    dirty_prbc_leaders: BTreeSet<usize>,
+    mvba_dirty: bool,
+    outbound: VecDeque<AcsWireEvent>,
+}
+
+impl RoundState {
+    fn new(round_id: usize, sid: String, nodes: usize) -> Self {
+        Self {
+            round_id,
+            sid,
+            decision_emitted: false,
+            selected_proofs: None,
+            proposals: (0..nodes).map(|_| PrbcState::default()).collect(),
+            mvba: DumboMvbaState::new(nodes),
+            dirty_prbc_leaders: BTreeSet::new(),
+            mvba_dirty: false,
+            outbound: VecDeque::new(),
+        }
+    }
+
+    fn nodes(&self) -> usize {
+        self.proposals.len()
+    }
+
+    fn mark_prbc_dirty(&mut self, leader: usize) {
+        self.dirty_prbc_leaders.insert(leader);
+    }
+
+    fn take_dirty_prbc_leaders(&mut self) -> Vec<usize> {
+        self.dirty_prbc_leaders.iter().copied().collect::<Vec<_>>()
+    }
+
+    fn clear_dirty_prbc_leader(&mut self, leader: usize) {
+        self.dirty_prbc_leaders.remove(&leader);
+    }
+
+    fn mark_mvba_dirty(&mut self) {
+        self.mvba_dirty = true;
+    }
+
+    fn valid_diffuse_count(&self) -> usize {
+        self.mvba
+            .proof_vector
+            .iter()
+            .filter(|proof| proof.is_some())
+            .count()
+    }
+}
+
+#[derive(Default)]
+struct RustDumboState {
+    current_round: Option<RoundState>,
+    rounds_started: usize,
+    rounds_finished: usize,
+    processed_commands: usize,
+    command_counts: CommandCounts,
+    batch_item_counts: BatchItemCounts,
+    pending_pull_limit: Option<usize>,
+}
+
+pub(crate) struct RustDumboAcsHost {
+    pid: usize,
+    faulty: usize,
+    crypto: RustDumboCryptoMaterial,
+    state: Mutex<RustDumboState>,
+}
+
+struct RustDumboCryptoMaterial {
+    ecdsa_pks: Vec<[u8; 33]>,
+    ecdsa_sk: [u8; 32],
+    coin_pk: SigPublicParams,
+    coin_sk: SigPrivateKeyShare,
+    proof_pk: SigPublicParams,
+    proof_sk: SigPrivateKeyShare,
+}
+
+impl RustDumboCryptoMaterial {
+    fn decode_sig_pk(payload: &[u8]) -> Result<SigPublicParams, String> {
+        let wire: SigPublicParamsWire = decode_result(payload)?;
+        wire.into_runtime()
+    }
+
+    fn decode_sig_sk(payload: &[u8]) -> Result<SigPrivateKeyShare, String> {
+        let wire: SigPrivateKeyShareWire = decode_result(payload)?;
+        wire.into_runtime()
+    }
+
+    fn try_from_material(
+        material: AcsCryptoMaterial,
+        pid: usize,
+        nodes: usize,
+        faulty: usize,
+    ) -> Result<Self, String> {
+        let ecdsa_sk: [u8; 32] = material
+            .ecdsa_sk
+            .try_into()
+            .map_err(|_| String::from("Rust Dumbo ACS requires 32-byte ecdsa_sk"))?;
+        let ecdsa_pks = material
+            .ecdsa_pks
+            .into_iter()
+            .map(|value| {
+                value
+                    .try_into()
+                    .map_err(|_| String::from("Rust Dumbo ACS requires 33-byte ECDSA public keys"))
+            })
+            .collect::<Result<Vec<[u8; 33]>, _>>()?;
+        let Some(proof_sig_pk) = material.proof_sig_pk else {
+            return Err(String::from(
+                "Rust Dumbo ACS requires proof_sig_pk in ACS crypto payload",
+            ));
+        };
+        let Some(proof_sig_sk) = material.proof_sig_sk else {
+            return Err(String::from(
+                "Rust Dumbo ACS requires proof_sig_sk in ACS crypto payload",
+            ));
+        };
+        let coin_pk = Self::decode_sig_pk(&material.sig_pk)?;
+        let coin_sk = Self::decode_sig_sk(&material.sig_sk)?;
+        let proof_pk = Self::decode_sig_pk(&proof_sig_pk)?;
+        let proof_sk = Self::decode_sig_sk(&proof_sig_sk)?;
+        if coin_pk.total_players != nodes {
+            return Err(format!(
+                "Rust Dumbo ACS coin players mismatch: expected {nodes}, got {}",
+                coin_pk.total_players
+            ));
+        }
+        if coin_pk.threshold != faulty + 1 {
+            return Err(format!(
+                "Rust Dumbo ACS coin threshold mismatch: expected {}, got {}",
+                faulty + 1,
+                coin_pk.threshold
+            ));
+        }
+        if proof_pk.total_players != nodes {
+            return Err(format!(
+                "Rust Dumbo ACS proof players mismatch: expected {nodes}, got {}",
+                proof_pk.total_players
+            ));
+        }
+        if proof_pk.threshold != nodes - faulty {
+            return Err(format!(
+                "Rust Dumbo ACS proof threshold mismatch: expected {}, got {}",
+                nodes - faulty,
+                proof_pk.threshold
+            ));
+        }
+        if coin_sk.player_id != pid + 1 {
+            return Err(format!(
+                "Rust Dumbo ACS coin share player mismatch: expected {}, got {}",
+                pid + 1,
+                coin_sk.player_id
+            ));
+        }
+        if proof_sk.player_id != pid + 1 {
+            return Err(format!(
+                "Rust Dumbo ACS proof share player mismatch: expected {}, got {}",
+                pid + 1,
+                proof_sk.player_id
+            ));
+        }
+        Ok(Self {
+            ecdsa_pks,
+            ecdsa_sk,
+            coin_pk,
+            coin_sk,
+            proof_pk,
+            proof_sk,
+        })
+    }
+}
+
+impl RustDumboAcsHost {
+    pub(crate) fn new(
+        pid: usize,
+        nodes: usize,
+        faulty: usize,
+        crypto: AcsCryptoMaterial,
+        _config_json: &str,
+    ) -> Result<Self, String> {
+        let crypto = RustDumboCryptoMaterial::try_from_material(crypto, pid, nodes, faulty)?;
+        if crypto.ecdsa_pks.len() != nodes {
+            return Err(format!(
+                "Rust Dumbo ACS expected {nodes} ECDSA public keys, got {}",
+                crypto.ecdsa_pks.len()
+            ));
+        }
+        Ok(Self {
+            pid,
+            faulty,
+            crypto,
+            state: Mutex::new(RustDumboState::default()),
+        })
+    }
+
+    fn threshold(&self, round: &RoundState) -> usize {
+        round.nodes() - self.faulty
+    }
+
+    fn data_threshold(&self, round: &RoundState) -> usize {
+        round.nodes() - 2 * self.faulty
+    }
+
+    fn coin_threshold(&self) -> usize {
+        self.faulty + 1
+    }
+
+    fn prbc_sid(sid: &str, leader: usize) -> String {
+        format!("{sid}prbc:{leader}")
+    }
+
+    fn pd_sid(sid: &str, leader: usize) -> String {
+        format!("{sid}pd:{leader}")
+    }
+
+    fn ready_digest(sid: &str, roothash: &[u8; 32]) -> Vec<u8> {
+        let mut message = Vec::with_capacity(PRBC_READY_DOMAIN.len() + sid.len() + 1 + 32);
+        message.extend_from_slice(PRBC_READY_DOMAIN);
+        message.extend_from_slice(sid.as_bytes());
+        message.push(b'|');
+        message.extend_from_slice(roothash);
+        message
+    }
+
+    fn pd_digest(domain: &[u8], pd_sid: &str, roothash: &[u8; 32]) -> Vec<u8> {
+        let mut message = Vec::with_capacity(domain.len() + pd_sid.len() + 1 + 32);
+        message.extend_from_slice(domain);
+        message.extend_from_slice(pd_sid.as_bytes());
+        message.push(b'|');
+        message.extend_from_slice(roothash);
+        message
+    }
+
+    fn encode_envelope(
+        &self,
+        round_id: usize,
+        message: RustDumboMessage,
+    ) -> Result<Vec<u8>, String> {
+        bincode::serialize(&RustDumboEnvelope {
+            round_id: round_id as u32,
+            sender: self.pid as u32,
+            message,
+        })
+        .map_err(|err| err.to_string())
+    }
+
+    fn decode_envelope(payload: &[u8]) -> Result<RustDumboEnvelope, String> {
+        bincode::deserialize(payload).map_err(|err| err.to_string())
+    }
+
+    fn build_proposal_id(round_id: usize, proposer: usize, digest: &[u8; 32]) -> String {
+        format!("{round_id}:{proposer}:{}", hex_encode(digest))
+    }
+
+    fn serialize_prbc_proof(proof: &PrbcProof) -> Vec<u8> {
+        let mut chunks = Vec::with_capacity(2 + 32 + 2 + proof.sigmas.len() * (2 + 4 + 64));
+        chunks.extend_from_slice(&(proof.roothash.len() as u16).to_be_bytes());
+        chunks.extend_from_slice(&proof.roothash);
+        chunks.extend_from_slice(&(proof.sigmas.len() as u16).to_be_bytes());
+        for (sender, signature) in &proof.sigmas {
+            chunks.extend_from_slice(&(*sender as u16).to_be_bytes());
+            chunks.extend_from_slice(&(signature.len() as u32).to_be_bytes());
+            chunks.extend_from_slice(signature);
+        }
+        chunks
+    }
+
+    fn serialize_prbc_vector(entries: &[Option<PrbcProof>]) -> Vec<u8> {
+        let mut chunks = Vec::new();
+        chunks.extend_from_slice(&(entries.len() as u16).to_be_bytes());
+        for proof in entries {
+            match proof {
+                None => chunks.push(0),
+                Some(proof) => {
+                    chunks.push(1);
+                    chunks.extend_from_slice(&(proof.roothash.len() as u16).to_be_bytes());
+                    chunks.extend_from_slice(&proof.roothash);
+                    chunks.extend_from_slice(&(proof.sigmas.len() as u16).to_be_bytes());
+                    for (sender, signature) in &proof.sigmas {
+                        chunks.extend_from_slice(&(*sender as u16).to_be_bytes());
+                        chunks.extend_from_slice(&(signature.len() as u32).to_be_bytes());
+                        chunks.extend_from_slice(signature);
+                    }
+                }
+            }
+        }
+        chunks
+    }
+
+    fn deserialize_prbc_vector(
+        raw: &[u8],
+        expected_nodes: usize,
+    ) -> Result<Vec<Option<PrbcProof>>, String> {
+        if raw.len() < 2 {
+            return Err(String::from("invalid PRBC vector header"));
+        }
+        let size = u16::from_be_bytes([raw[0], raw[1]]) as usize;
+        if size != expected_nodes {
+            return Err(format!(
+                "PRBC vector size mismatch: expected {expected_nodes}, got {size}"
+            ));
+        }
+        let mut offset = 2usize;
+        let mut entries = Vec::with_capacity(size);
+        for _ in 0..size {
+            let Some(&present) = raw.get(offset) else {
+                return Err(String::from("truncated PRBC vector"));
+            };
+            offset += 1;
+            if present == 0 {
+                entries.push(None);
+                continue;
+            }
+            if present != 1 {
+                return Err(String::from("invalid PRBC vector presence flag"));
+            }
+            if offset + 2 > raw.len() {
+                return Err(String::from("truncated PRBC vector roothash header"));
+            }
+            let root_len = u16::from_be_bytes([raw[offset], raw[offset + 1]]) as usize;
+            offset += 2;
+            if offset + root_len > raw.len() {
+                return Err(String::from("truncated PRBC vector roothash"));
+            }
+            let roothash: [u8; 32] = raw[offset..offset + root_len]
+                .try_into()
+                .map_err(|_| String::from("invalid PRBC vector roothash length"))?;
+            offset += root_len;
+            if offset + 2 > raw.len() {
+                return Err(String::from("truncated PRBC vector signature count"));
+            }
+            let count = u16::from_be_bytes([raw[offset], raw[offset + 1]]) as usize;
+            offset += 2;
+            let mut sigmas = Vec::with_capacity(count);
+            for _ in 0..count {
+                if offset + 6 > raw.len() {
+                    return Err(String::from("truncated PRBC vector signature header"));
+                }
+                let sender = u16::from_be_bytes([raw[offset], raw[offset + 1]]) as usize;
+                let sig_len = u32::from_be_bytes([
+                    raw[offset + 2],
+                    raw[offset + 3],
+                    raw[offset + 4],
+                    raw[offset + 5],
+                ]) as usize;
+                offset += 6;
+                if offset + sig_len > raw.len() {
+                    return Err(String::from("truncated PRBC vector signature"));
+                }
+                let signature = raw[offset..offset + sig_len].to_vec();
+                offset += sig_len;
+                sigmas.push((sender, signature));
+            }
+            entries.push(Some(PrbcProof { roothash, sigmas }));
+        }
+        if offset != raw.len() {
+            return Err(String::from("PRBC vector has trailing bytes"));
+        }
+        Ok(entries)
+    }
+
+    fn validate_prbc_proof(&self, round: &RoundState, leader: usize, proof: &PrbcProof) -> bool {
+        if leader >= round.nodes() || self.crypto.ecdsa_pks.len() != round.nodes() {
+            return false;
+        }
+        let sid = Self::prbc_sid(&round.sid, leader);
+        let digest = Self::ready_digest(&sid, &proof.roothash);
+        let signatures = proof
+            .sigmas
+            .iter()
+            .filter_map(|(sender, signature)| {
+                let signature: [u8; 64] = signature.as_slice().try_into().ok()?;
+                let id = i32::try_from(*sender).ok()?;
+                Some((id, signature))
+            })
+            .collect::<Vec<_>>();
+        ecdsa::verify_threshold_sigs(
+            &self.crypto.ecdsa_pks,
+            &digest,
+            &signatures,
+            self.threshold(round),
+        )
+    }
+
+    fn validate_proof_vector(&self, round: &RoundState, raw: &[u8]) -> bool {
+        let Ok(entries) = Self::deserialize_prbc_vector(raw, round.nodes()) else {
+            return false;
+        };
+        let valid = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(leader, proof)| proof.as_ref().map(|proof| (leader, proof)))
+            .filter(|(leader, proof)| self.validate_prbc_proof(round, *leader, proof))
+            .count();
+        valid >= self.threshold(round)
+    }
+
+    fn build_threshold_proof(
+        params: &SigPublicParams,
+        shares: &BTreeMap<usize, Vec<u8>>,
+        threshold: usize,
+        roothash: [u8; 32],
+        msg: &[u8],
+    ) -> Result<ThresholdProof, String> {
+        let partials = shares
+            .iter()
+            .take(threshold)
+            .map(|(sender, share)| {
+                let value = g1_from_bytes(share)?;
+                Ok::<_, String>(PartialSignature {
+                    player_id: sender + 1,
+                    value,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let combined = threshold::sig::combine_trusted(params, msg, &partials)
+            .map_err(|err| err.to_string())?;
+        Ok(ThresholdProof {
+            roothash,
+            signature: g1_to_bytes(&combined),
+        })
+    }
+
+    fn verify_threshold_proof(
+        params: &SigPublicParams,
+        proof: &ThresholdProof,
+        msg: &[u8],
+    ) -> bool {
+        let Ok(signature) = g1_from_bytes(&proof.signature) else {
+            return false;
+        };
+        threshold::sig::verify_combined(params, &signature, msg).is_ok()
+    }
+
+    fn coin_message(sid: &str, scope: DumboCoinScope) -> Vec<u8> {
+        match scope {
+            DumboCoinScope::Election { permutation_round } => {
+                format!("{sid}mvba:election:{permutation_round}").into_bytes()
+            }
+            DumboCoinScope::Aba { mvba_round, epoch } => {
+                format!("{sid}mvba:{mvba_round}:coin:{epoch}").into_bytes()
+            }
+        }
+    }
+
+    fn leader_permutation(seed: u8, nodes: usize) -> Vec<usize> {
+        let mut ranked = (0..nodes)
+            .map(|leader| {
+                let mut payload = Vec::with_capacity(1 + 8);
+                payload.push(seed);
+                payload.extend_from_slice(&(leader as u64).to_be_bytes());
+                (Sha256::digest(&payload).to_vec(), leader)
+            })
+            .collect::<Vec<_>>();
+        ranked.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+        ranked.into_iter().map(|(_, leader)| leader).collect()
+    }
+
+    fn record_bool_message(
+        map: &mut BTreeMap<usize, [bool; 2]>,
+        sender: usize,
+        value: bool,
+    ) -> bool {
+        let entry = map.entry(sender).or_insert([false, false]);
+        let idx = usize::from(value);
+        if entry[idx] {
+            return false;
+        }
+        entry[idx] = true;
+        true
+    }
+
+    fn count_bool_messages(map: &BTreeMap<usize, [bool; 2]>, value: bool) -> usize {
+        let idx = usize::from(value);
+        map.values().filter(|flags| flags[idx]).count()
+    }
+
+    fn queue_send(
+        &self,
+        round: &mut RoundState,
+        recipient: usize,
+        message: RustDumboMessage,
+    ) -> Result<(), String> {
+        let payload = self.encode_envelope(round.round_id, message)?;
+        round.outbound.push_back(AcsWireEvent::Send {
+            round_id: round.round_id,
+            recipient,
+            payload,
+        });
+        Ok(())
+    }
+
+    fn queue_broadcast(
+        &self,
+        round: &mut RoundState,
+        message: RustDumboMessage,
+    ) -> Result<(), String> {
+        let payload = self.encode_envelope(round.round_id, message)?;
+        round.outbound.push_back(AcsWireEvent::Broadcast {
+            round_id: round.round_id,
+            payload,
+            include_self: false,
+        });
+        Ok(())
+    }
+
+    fn output_prbc(
+        &self,
+        round: &mut RoundState,
+        leader: usize,
+        roothash: [u8; 32],
+    ) -> Result<bool, String> {
+        let threshold = self.threshold(round);
+        let data_threshold = self.data_threshold(round);
+        let nodes = round.nodes();
+        let (available, sigmas) = {
+            let proposal = &round.proposals[leader];
+            if proposal.output.is_some() {
+                return Ok(false);
+            }
+            let Some(stripes) = proposal.stripes.get(&roothash) else {
+                return Ok(false);
+            };
+            if stripes.len() < data_threshold {
+                return Ok(false);
+            }
+            let Some(proofs) = proposal.proofs.get(&roothash) else {
+                return Ok(false);
+            };
+            let Some(signatures) = proposal.ready_signatures.get(&roothash) else {
+                return Ok(false);
+            };
+            if signatures.len() < threshold {
+                return Ok(false);
+            }
+            let available = stripes
+                .iter()
+                .filter_map(|(index, stripe)| {
+                    proofs
+                        .get(index)
+                        .cloned()
+                        .map(|proof| (*index, stripe.clone(), proof))
+                })
+                .collect::<Vec<_>>();
+            if available.len() < data_threshold {
+                return Ok(false);
+            }
+            let sigmas = signatures
+                .iter()
+                .take(threshold)
+                .map(|(sender, signature)| (*sender, signature.to_vec()))
+                .collect::<Vec<_>>();
+            (available, sigmas)
+        };
+        let payload = merkle::decode_owned(available, &roothash, data_threshold, nodes)
+            .map_err(|err| err.to_string())?;
+        let proof = PrbcProof { roothash, sigmas };
+        let proposal_id = Self::build_proposal_id(round.round_id, leader, &roothash);
+        let artifact = ProposalArtifact {
+            proposal_id,
+            proposer: leader,
+            payload: payload.clone(),
+            digest: roothash.to_vec(),
+            certificate: Self::serialize_prbc_proof(&proof),
+        };
+        let proposal = &mut round.proposals[leader];
+        proposal.payload = Some(payload);
+        proposal.output = Some(proof);
+        proposal.proposal_ready = Some(artifact.clone());
+        round.mark_mvba_dirty();
+        round.outbound.push_back(AcsWireEvent::ProposalReady {
+            round_id: round.round_id,
+            proposal: artifact,
+        });
+        Ok(true)
+    }
+
+    fn drive_prbc_leader(&self, round: &mut RoundState, leader: usize) -> Result<bool, String> {
+        let mut changed_any = false;
+        let threshold = self.threshold(round);
+        let data_threshold = self.data_threshold(round);
+        loop {
+            let mut changed = false;
+            let mut send_ready_for = None;
+            let mut maybe_output_for = None;
+            {
+                let proposal = &round.proposals[leader];
+                if proposal.output.is_none() {
+                    for roothash in proposal.stripes.keys() {
+                        let echo_count = proposal
+                            .echo_by_sender
+                            .values()
+                            .filter(|value| **value == *roothash)
+                            .count();
+                        let ready_count = proposal
+                            .ready_by_sender
+                            .values()
+                            .filter(|value| **value == *roothash)
+                            .count();
+                        if !proposal.ready_sent
+                            && (echo_count >= threshold || ready_count > self.faulty)
+                        {
+                            send_ready_for = Some(*roothash);
+                        }
+                        if ready_count >= threshold {
+                            let stripe_count = proposal
+                                .stripes
+                                .get(roothash)
+                                .map(BTreeMap::len)
+                                .unwrap_or_default();
+                            if stripe_count >= data_threshold {
+                                maybe_output_for = Some(*roothash);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(roothash) = send_ready_for {
+                let proposal = &mut round.proposals[leader];
+                if !proposal.ready_sent {
+                    proposal.ready_sent = true;
+                    let sid = Self::prbc_sid(&round.sid, leader);
+                    let digest = Self::ready_digest(&sid, &roothash);
+                    let signature = ecdsa::sign(&self.crypto.ecdsa_sk, &digest)
+                        .map_err(|err| err.to_string())?;
+                    proposal.local_ready = Some((roothash, signature));
+                    proposal.ready_by_sender.insert(self.pid, roothash);
+                    proposal
+                        .ready_signatures
+                        .entry(roothash)
+                        .or_default()
+                        .insert(self.pid, signature);
+                    self.queue_broadcast(
+                        round,
+                        RustDumboMessage::PrbcReady {
+                            leader: leader as u32,
+                            roothash,
+                            signature: signature.to_vec(),
+                        },
+                    )?;
+                    changed = true;
+                }
+            }
+            if let Some(roothash) = maybe_output_for {
+                changed |= self.output_prbc(round, leader, roothash)?;
+            }
+            if !changed {
+                return Ok(changed_any);
+            }
+            changed_any = true;
+        }
+    }
+
+    fn drive_prbc(&self, round: &mut RoundState) -> Result<bool, String> {
+        let mut changed = false;
+        let leaders = round.take_dirty_prbc_leaders();
+        for leader in leaders {
+            changed |= self.drive_prbc_leader(round, leader)?;
+            round.clear_dirty_prbc_leader(leader);
+        }
+        Ok(changed)
+    }
+
+    fn maybe_diffuse_local_proof(&self, round: &mut RoundState) -> Result<bool, String> {
+        let Some(proof) = round.proposals[self.pid].output.clone() else {
+            return Ok(false);
+        };
+        if round.proposals[self.pid].proof_diffused {
+            return Ok(false);
+        }
+        round.proposals[self.pid].proof_diffused = true;
+        round.mvba.proof_vector[self.pid] = Some(proof.clone());
+        self.queue_broadcast(
+            round,
+            RustDumboMessage::ProofDiffuse {
+                leader: self.pid as u32,
+                proof,
+            },
+        )?;
+        Ok(true)
+    }
+
+    fn maybe_start_mvba_input(&self, round: &mut RoundState) -> Result<bool, String> {
+        if round.mvba.local_input.is_some() || round.valid_diffuse_count() < self.threshold(round) {
+            return Ok(false);
+        }
+        let raw = Self::serialize_prbc_vector(&round.mvba.proof_vector);
+        if !self.validate_proof_vector(round, &raw) {
+            return Err(String::from("local Dumbo proof vector failed validation"));
+        }
+        round.mvba.local_input = Some(raw);
+        Ok(true)
+    }
+
+    fn ensure_pd_local_input(&self, round: &mut RoundState) -> Result<bool, String> {
+        let Some(local_input) = round.mvba.local_input.clone() else {
+            return Ok(false);
+        };
+        let leader = self.pid;
+        if round.mvba.pd[leader].input_sent {
+            return Ok(false);
+        }
+        let data_threshold = self.data_threshold(round);
+        let nodes = round.nodes();
+        let encoded =
+            merkle::encode(&local_input, data_threshold, nodes).map_err(|err| err.to_string())?;
+        {
+            let pd = &mut round.mvba.pd[leader];
+            pd.input_sent = true;
+            pd.input_root = Some(encoded.root);
+        }
+        let mut changed = false;
+        for recipient in 0..nodes {
+            if recipient == self.pid {
+                changed |= self.process_pd_store(
+                    round,
+                    self.pid,
+                    leader,
+                    encoded.root,
+                    encoded.proofs[recipient].clone(),
+                    encoded.shards[recipient].clone(),
+                )?;
+                continue;
+            }
+            self.queue_send(
+                round,
+                recipient,
+                RustDumboMessage::PdStore {
+                    leader: leader as u32,
+                    roothash: encoded.root,
+                    stripe: encoded.shards[recipient].clone(),
+                    merkle_proof: encoded.proofs[recipient].clone(),
+                },
+            )?;
+            changed = true;
+        }
+        Ok(changed)
+    }
+
+    fn process_pd_store(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        leader: usize,
+        roothash: [u8; 32],
+        merkle_proof: MerkleProof,
+        stripe: Vec<u8>,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes()
+            || sender != leader
+            || !merkle::verify_shard(&stripe, &merkle_proof, &roothash)
+        {
+            return Ok(false);
+        }
+        let pd = &mut round.mvba.pd[leader];
+        if pd.local_store.is_some() {
+            return Ok(false);
+        }
+        let store = PdStoreRecord {
+            roothash,
+            stripe_owner: self.pid as u32,
+            stripe,
+            merkle_proof,
+        };
+        pd.local_store = Some(store.clone());
+        round.mvba.stores.entry(leader).or_insert(store.clone());
+        let share_message = Self::pd_digest(
+            PD_STORED_DOMAIN,
+            &Self::pd_sid(&round.sid, leader),
+            &roothash,
+        );
+        let share = g1_to_bytes(&threshold::sig::sign(&self.crypto.proof_sk, &share_message).value);
+        if self.pid == leader {
+            pd.stored_shares.insert(self.pid, share);
+        } else {
+            self.queue_send(
+                round,
+                leader,
+                RustDumboMessage::PdStored {
+                    leader: leader as u32,
+                    roothash,
+                    share,
+                },
+            )?;
+        }
+        Ok(true)
+    }
+
+    fn process_pd_stored(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        leader: usize,
+        roothash: [u8; 32],
+        share: Vec<u8>,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes() || self.pid != leader {
+            return Ok(false);
+        }
+        let threshold = self.threshold(round);
+        let pd_sid = Self::pd_sid(&round.sid, leader);
+        let digest = Self::pd_digest(PD_STORED_DOMAIN, &pd_sid, &roothash);
+        let pd = &mut round.mvba.pd[leader];
+        if pd.input_root != Some(roothash) || pd.stored_shares.contains_key(&sender) {
+            return Ok(false);
+        }
+        if sender != self.pid {
+            let Ok(value) = g1_from_bytes(&share) else {
+                return Ok(false);
+            };
+            let partial = PartialSignature {
+                player_id: sender + 1,
+                value,
+            };
+            if threshold::sig::verify_share(&self.crypto.proof_pk, &partial, &digest).is_err() {
+                return Ok(false);
+            }
+        }
+        pd.stored_shares.insert(sender, share);
+        if pd.lock_sent || pd.stored_shares.len() < threshold {
+            return Ok(true);
+        }
+        pd.lock_sent = true;
+        let proof = Self::build_threshold_proof(
+            &self.crypto.proof_pk,
+            &pd.stored_shares,
+            threshold,
+            roothash,
+            &digest,
+        )?;
+        pd.local_lock_proof = Some(proof.clone());
+        let _ = pd;
+        let _ = self.process_pd_lock(round, self.pid, leader, proof.clone())?;
+        self.queue_broadcast(
+            round,
+            RustDumboMessage::PdLock {
+                leader: leader as u32,
+                proof,
+            },
+        )?;
+        Ok(true)
+    }
+
+    fn process_pd_lock(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        leader: usize,
+        proof: ThresholdProof,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes() || sender != leader {
+            return Ok(false);
+        }
+        let pd = &mut round.mvba.pd[leader];
+        if pd.local_lock.is_some() {
+            return Ok(false);
+        }
+        let pd_sid = Self::pd_sid(&round.sid, leader);
+        let digest = Self::pd_digest(PD_STORED_DOMAIN, &pd_sid, &proof.roothash);
+        if sender == self.pid {
+            if pd
+                .local_lock_proof
+                .as_ref()
+                .map(|local| local.signature.as_slice())
+                != Some(proof.signature.as_slice())
+            {
+                return Ok(false);
+            }
+        } else if !Self::verify_threshold_proof(&self.crypto.proof_pk, &proof, &digest) {
+            return Ok(false);
+        }
+        pd.local_lock = Some(proof.clone());
+        round.mvba.locks.entry(leader).or_insert(proof.clone());
+        let locked_digest = Self::pd_digest(PD_LOCKED_DOMAIN, &pd_sid, &proof.roothash);
+        let share = g1_to_bytes(&threshold::sig::sign(&self.crypto.proof_sk, &locked_digest).value);
+        if self.pid == leader {
+            pd.locked_shares.insert(self.pid, share);
+        } else {
+            self.queue_send(
+                round,
+                leader,
+                RustDumboMessage::PdLocked {
+                    leader: leader as u32,
+                    roothash: proof.roothash,
+                    share,
+                },
+            )?;
+        }
+        Ok(true)
+    }
+
+    fn process_pd_locked(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        leader: usize,
+        roothash: [u8; 32],
+        share: Vec<u8>,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes() || self.pid != leader {
+            return Ok(false);
+        }
+        let threshold = self.threshold(round);
+        let pd = &mut round.mvba.pd[leader];
+        if pd.input_root != Some(roothash) || pd.locked_shares.contains_key(&sender) {
+            return Ok(false);
+        }
+        let pd_sid = Self::pd_sid(&round.sid, leader);
+        let digest = Self::pd_digest(PD_LOCKED_DOMAIN, &pd_sid, &roothash);
+        if sender != self.pid {
+            let Ok(value) = g1_from_bytes(&share) else {
+                return Ok(false);
+            };
+            let partial = PartialSignature {
+                player_id: sender + 1,
+                value,
+            };
+            if threshold::sig::verify_share(&self.crypto.proof_pk, &partial, &digest).is_err() {
+                return Ok(false);
+            }
+        }
+        pd.locked_shares.insert(sender, share);
+        if pd.done_sent || pd.locked_shares.len() < threshold {
+            return Ok(true);
+        }
+        pd.done_sent = true;
+        let proof = Self::build_threshold_proof(
+            &self.crypto.proof_pk,
+            &pd.locked_shares,
+            threshold,
+            roothash,
+            &digest,
+        )?;
+        pd.local_done_proof = Some(proof.clone());
+        let _ = pd;
+        let _ = self.process_pd_done(round, self.pid, leader, proof.clone())?;
+        self.queue_broadcast(
+            round,
+            RustDumboMessage::PdDone {
+                leader: leader as u32,
+                proof,
+            },
+        )?;
+        Ok(true)
+    }
+
+    fn process_pd_done(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        leader: usize,
+        proof: ThresholdProof,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes() || sender != leader {
+            return Ok(false);
+        }
+        let pd = &mut round.mvba.pd[leader];
+        if pd.local_done.is_some() {
+            return Ok(false);
+        }
+        let pd_sid = Self::pd_sid(&round.sid, leader);
+        let digest = Self::pd_digest(PD_LOCKED_DOMAIN, &pd_sid, &proof.roothash);
+        if sender == self.pid {
+            if pd
+                .local_done_proof
+                .as_ref()
+                .map(|local| local.signature.as_slice())
+                != Some(proof.signature.as_slice())
+            {
+                return Ok(false);
+            }
+        } else if !Self::verify_threshold_proof(&self.crypto.proof_pk, &proof, &digest) {
+            return Ok(false);
+        }
+        pd.local_done = Some(proof.clone());
+        round.mvba.dones.entry(leader).or_insert(proof);
+        Ok(true)
+    }
+
+    fn drive_pd(&self, round: &mut RoundState) -> Result<bool, String> {
+        self.ensure_pd_local_input(round)
+    }
+
+    fn drive_coin(&self, round: &mut RoundState, scope: DumboCoinScope) -> Result<bool, String> {
+        let mut changed = false;
+        let mut outbound_share = None;
+        {
+            let state = round.mvba.coin_states.entry(scope).or_default();
+            if !state.local_sent {
+                state.local_sent = true;
+                let message = Self::coin_message(&round.sid, scope);
+                let partial = threshold::sig::sign(&self.crypto.coin_sk, &message);
+                let share = g1_to_bytes(&partial.value);
+                state.shares.insert(self.pid, share.clone());
+                outbound_share = Some(share);
+                changed = true;
+            }
+        }
+        if let Some(share) = outbound_share {
+            self.queue_broadcast(round, RustDumboMessage::CoinShare { scope, share })?;
+        }
+        let should_combine = round
+            .mvba
+            .coin_states
+            .get(&scope)
+            .map(|state| state.output.is_none() && state.shares.len() >= self.coin_threshold())
+            .unwrap_or(false);
+        if should_combine {
+            let message = Self::coin_message(&round.sid, scope);
+            let partials = round
+                .mvba
+                .coin_states
+                .get(&scope)
+                .into_iter()
+                .flat_map(|state| state.shares.iter().take(self.coin_threshold()))
+                .map(|(sender, share)| {
+                    let value = g1_from_bytes(share)?;
+                    Ok::<_, String>(PartialSignature {
+                        player_id: sender + 1,
+                        value,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let combined =
+                threshold::sig::combine_trusted(&self.crypto.coin_pk, &message, &partials)
+                    .map_err(|err| err.to_string())?;
+            let digest = Sha256::digest(g1_to_bytes(&combined));
+            if let Some(state) = round.mvba.coin_states.get_mut(&scope)
+                && state.output.is_none()
+            {
+                state.output = Some(digest[0]);
+            }
+            changed = true;
+        }
+        Ok(changed)
+    }
+
+    fn current_prepare_inbox(mvba: &mut DumboMvbaState, round_id: usize) -> &mut RcPrepareInbox {
+        mvba.rc_prepare_inboxes.entry(round_id).or_default()
+    }
+
+    fn current_aba_inbox(
+        mvba: &mut DumboMvbaState,
+        round_id: usize,
+        epoch: usize,
+    ) -> &mut AbaEpochInbox {
+        mvba.aba_inboxes
+            .entry(round_id)
+            .or_default()
+            .entry(epoch)
+            .or_default()
+    }
+
+    fn current_recast_inbox(mvba: &mut DumboMvbaState, round_id: usize) -> &mut RcRecastInbox {
+        mvba.rc_recast_inboxes.entry(round_id).or_default()
+    }
+
+    fn aba_conf_index(values: [bool; 2]) -> Option<usize> {
+        match values {
+            [true, false] => Some(0),
+            [false, true] => Some(1),
+            [true, true] => Some(2),
+            _ => None,
+        }
+    }
+
+    fn aba_aux_result(&self, threshold: usize, inbox: &AbaEpochInbox) -> Option<[bool; 2]> {
+        if inbox.bin_values[1] && Self::count_bool_messages(&inbox.aux_by_sender, true) >= threshold
+        {
+            return Some([false, true]);
+        }
+        if inbox.bin_values[0]
+            && Self::count_bool_messages(&inbox.aux_by_sender, false) >= threshold
+        {
+            return Some([true, false]);
+        }
+        let mut total = 0usize;
+        if inbox.bin_values[0] {
+            total += Self::count_bool_messages(&inbox.aux_by_sender, false);
+        }
+        if inbox.bin_values[1] {
+            total += Self::count_bool_messages(&inbox.aux_by_sender, true);
+        }
+        if total >= threshold {
+            return Some(inbox.bin_values);
+        }
+        None
+    }
+
+    fn aba_conf_result(&self, threshold: usize, inbox: &AbaEpochInbox) -> Option<[bool; 2]> {
+        let conf0 = inbox
+            .conf_by_sender
+            .values()
+            .filter(|values| **values == [true, false])
+            .count();
+        let conf1 = inbox
+            .conf_by_sender
+            .values()
+            .filter(|values| **values == [false, true])
+            .count();
+        let subset = inbox
+            .conf_by_sender
+            .values()
+            .filter(|values| {
+                (!values[0] || inbox.bin_values[0])
+                    && (!values[1] || inbox.bin_values[1])
+                    && (values[0] || values[1])
+            })
+            .count();
+        if inbox.bin_values[1] && conf1 >= threshold {
+            return Some([false, true]);
+        }
+        if inbox.bin_values[0] && conf0 >= threshold {
+            return Some([true, false]);
+        }
+        if subset >= threshold {
+            return Some(inbox.bin_values);
+        }
+        None
+    }
+
+    fn single_conf_value(values: [bool; 2]) -> Option<bool> {
+        match values {
+            [true, false] => Some(false),
+            [false, true] => Some(true),
+            _ => None,
+        }
+    }
+
+    fn ensure_active_mvba_round(&self, round: &mut RoundState) -> Result<bool, String> {
+        if round.mvba.output_value.is_some()
+            || round.mvba.active_round.is_some()
+            || round.mvba.local_input.is_none()
+            || round.mvba.dones.len() < self.threshold(round)
+        {
+            return Ok(false);
+        }
+        let round_id = round.mvba.next_mvba_round;
+        let permutation_round = round_id / round.nodes();
+        let permutation_index = round_id % round.nodes();
+        let scope = DumboCoinScope::Election {
+            permutation_round: permutation_round as u32,
+        };
+        let mut changed = self.drive_coin(round, scope)?;
+        let Some(seed) = round
+            .mvba
+            .coin_states
+            .get(&scope)
+            .and_then(|state| state.output)
+        else {
+            return Ok(changed);
+        };
+        let nodes = round.nodes();
+        round
+            .mvba
+            .permutations
+            .entry(permutation_round)
+            .or_insert_with(|| Self::leader_permutation(seed, nodes));
+        let leader = round.mvba.permutations[&permutation_round][permutation_index];
+        round.mvba.active_round = Some(ActiveMvbaRound::new(round_id, leader));
+        changed = true;
+        Ok(changed)
+    }
+
+    fn drive_rc_prepare(
+        &self,
+        round: &mut RoundState,
+        active: &mut ActiveMvbaRound,
+    ) -> Result<bool, String> {
+        let mut changed = false;
+        if !active.prepare_sent {
+            let local_lock = round.mvba.locks.get(&active.leader).cloned();
+            active.prepare_sent = true;
+            let inbox = Self::current_prepare_inbox(&mut round.mvba, active.round_id);
+            match local_lock.clone() {
+                Some(proof) => {
+                    inbox.proofs.insert(self.pid, proof.clone());
+                    active.selected_lock = Some(proof.clone());
+                    active.ballot = Some(true);
+                    self.queue_broadcast(
+                        round,
+                        RustDumboMessage::RcPrepare {
+                            mvba_round: active.round_id as u32,
+                            leader: active.leader as u32,
+                            proof: Some(proof),
+                        },
+                    )?;
+                }
+                None => {
+                    inbox.none_senders.insert(self.pid);
+                    self.queue_broadcast(
+                        round,
+                        RustDumboMessage::RcPrepare {
+                            mvba_round: active.round_id as u32,
+                            leader: active.leader as u32,
+                            proof: None,
+                        },
+                    )?;
+                }
+            }
+            changed = true;
+        }
+        if active.ballot.is_none() {
+            let inbox = Self::current_prepare_inbox(&mut round.mvba, active.round_id);
+            if let Some(proof) = inbox.proofs.values().next().cloned() {
+                active.ballot = Some(true);
+                active.selected_lock = Some(proof);
+                changed = true;
+            } else if inbox.none_senders.len() > 2 * self.faulty {
+                active.ballot = Some(false);
+                changed = true;
+            }
+        }
+        Ok(changed)
+    }
+
+    fn drive_aba(
+        &self,
+        round: &mut RoundState,
+        mvba_round: usize,
+        aba: &mut AbaState,
+    ) -> Result<bool, String> {
+        if aba.output.is_some() {
+            return Ok(false);
+        }
+        let mut changed = false;
+        let epoch = aba.current_epoch;
+        let threshold = self.threshold(round);
+        let est_value = aba.est;
+
+        let mut broadcast_est = None;
+        {
+            let inbox = Self::current_aba_inbox(&mut round.mvba, mvba_round, epoch);
+            let progress = aba.epochs.entry(epoch).or_default();
+            if !progress.est_sent[usize::from(est_value)] {
+                progress.est_sent[usize::from(est_value)] = true;
+                Self::record_bool_message(&mut inbox.est_by_sender, self.pid, est_value);
+                if Self::count_bool_messages(&inbox.est_by_sender, est_value) > 2 * self.faulty {
+                    inbox.bin_values[usize::from(est_value)] = true;
+                }
+                broadcast_est = Some(est_value);
+                changed = true;
+            }
+        }
+        if let Some(value) = broadcast_est {
+            self.queue_broadcast(
+                round,
+                RustDumboMessage::AbaEst {
+                    mvba_round: mvba_round as u32,
+                    epoch: epoch as u32,
+                    value,
+                },
+            )?;
+        }
+
+        let mut broadcast_aux = None;
+        {
+            let bin_values = {
+                let inbox = Self::current_aba_inbox(&mut round.mvba, mvba_round, epoch);
+                inbox.bin_values
+            };
+            let progress = aba.epochs.entry(epoch).or_default();
+            if progress.aux_sent.is_none() && (bin_values[0] || bin_values[1]) {
+                let value = !bin_values[0];
+                progress.aux_sent = Some(value);
+                let inbox = Self::current_aba_inbox(&mut round.mvba, mvba_round, epoch);
+                Self::record_bool_message(&mut inbox.aux_by_sender, self.pid, value);
+                broadcast_aux = Some(value);
+                changed = true;
+            }
+        }
+        if let Some(value) = broadcast_aux {
+            self.queue_broadcast(
+                round,
+                RustDumboMessage::AbaAux {
+                    mvba_round: mvba_round as u32,
+                    epoch: epoch as u32,
+                    value,
+                },
+            )?;
+        }
+
+        let mut broadcast_conf = None;
+        {
+            let aux_result = {
+                let inbox = Self::current_aba_inbox(&mut round.mvba, mvba_round, epoch);
+                self.aba_aux_result(threshold, inbox)
+            };
+            if let Some(values) = aux_result
+                && let Some(index) = Self::aba_conf_index(values)
+            {
+                let progress = aba.epochs.entry(epoch).or_default();
+                if !progress.conf_sent[index] {
+                    progress.conf_sent[index] = true;
+                    let inbox = Self::current_aba_inbox(&mut round.mvba, mvba_round, epoch);
+                    inbox.conf_by_sender.insert(self.pid, values);
+                    broadcast_conf = Some(values);
+                    changed = true;
+                }
+            }
+        }
+        if let Some(values) = broadcast_conf {
+            self.queue_broadcast(
+                round,
+                RustDumboMessage::AbaConf {
+                    mvba_round: mvba_round as u32,
+                    epoch: epoch as u32,
+                    values,
+                },
+            )?;
+        }
+
+        {
+            let conf_result = {
+                let inbox = Self::current_aba_inbox(&mut round.mvba, mvba_round, epoch);
+                self.aba_conf_result(threshold, inbox)
+            };
+            let progress = aba.epochs.entry(epoch).or_default();
+            if progress.conf_result.is_none() {
+                progress.conf_result = conf_result;
+            }
+        }
+        let Some(values) = aba
+            .epochs
+            .get(&epoch)
+            .and_then(|progress| progress.conf_result)
+        else {
+            return Ok(changed);
+        };
+
+        let scope = DumboCoinScope::Aba {
+            mvba_round: mvba_round as u32,
+            epoch: epoch as u32,
+        };
+        changed |= self.drive_coin(round, scope)?;
+        let coin_value = round
+            .mvba
+            .coin_states
+            .get(&scope)
+            .and_then(|state| state.output)
+            .map(|value| value % 2 == 0);
+        let progress = aba.epochs.entry(epoch).or_default();
+        progress.coin_value = coin_value;
+        let Some(coin_value) = progress.coin_value else {
+            return Ok(changed);
+        };
+
+        if let Some(single) = Self::single_conf_value(values) {
+            if single == coin_value {
+                aba.output = Some(single);
+                return Ok(true);
+            }
+            aba.current_epoch += 1;
+            aba.est = single;
+            aba.epochs
+                .retain(|existing, _| *existing + 2 >= aba.current_epoch);
+            return Ok(true);
+        }
+
+        aba.current_epoch += 1;
+        aba.est = coin_value;
+        aba.epochs
+            .retain(|existing, _| *existing + 2 >= aba.current_epoch);
+        Ok(true)
+    }
+
+    fn drive_recast(
+        &self,
+        round: &mut RoundState,
+        leader: usize,
+        mvba_round: usize,
+        recast: &mut RecastState,
+    ) -> Result<bool, String> {
+        let mut changed = false;
+        if !recast.lock_sent {
+            recast.lock_sent = true;
+            self.queue_broadcast(
+                round,
+                RustDumboMessage::RcLock {
+                    mvba_round: mvba_round as u32,
+                    leader: leader as u32,
+                    proof: recast.selected_lock.clone(),
+                },
+            )?;
+            changed = true;
+        }
+        if !recast.store_sent
+            && let Some(store) = round.mvba.stores.get(&leader).cloned()
+        {
+            recast.store_sent = true;
+            recast
+                .stripes_by_root
+                .entry(store.roothash)
+                .or_default()
+                .insert(
+                    store.stripe_owner as usize,
+                    (store.stripe.clone(), store.merkle_proof.clone()),
+                );
+            self.queue_broadcast(
+                round,
+                RustDumboMessage::RcStore {
+                    mvba_round: mvba_round as u32,
+                    leader: leader as u32,
+                    store,
+                },
+            )?;
+            changed = true;
+        }
+        if let Some(inbox) = round.mvba.rc_recast_inboxes.get(&mvba_round) {
+            for proof in inbox.locks.values() {
+                recast.selected_lock = proof.clone();
+            }
+            for store in inbox.stores.values() {
+                recast
+                    .stripes_by_root
+                    .entry(store.roothash)
+                    .or_default()
+                    .insert(
+                        store.stripe_owner as usize,
+                        (store.stripe.clone(), store.merkle_proof.clone()),
+                    );
+            }
+        }
+        let Some(stripes) = recast.stripes_by_root.get(&recast.selected_lock.roothash) else {
+            return Ok(changed);
+        };
+        if stripes.len() < self.data_threshold(round) {
+            return Ok(changed);
+        }
+        let available = stripes
+            .iter()
+            .map(|(owner, (stripe, proof))| (*owner, stripe.clone(), proof.clone()))
+            .collect::<Vec<_>>();
+        let value = merkle::decode_owned(
+            available,
+            &recast.selected_lock.roothash,
+            self.data_threshold(round),
+            round.nodes(),
+        )
+        .map_err(|err| err.to_string())?;
+        let check = merkle::encode(&value, self.data_threshold(round), round.nodes())
+            .map_err(|err| err.to_string())?;
+        if check.root != recast.selected_lock.roothash {
+            return Ok(changed);
+        }
+        if recast.output_value.is_none() {
+            recast.output_value = Some(value);
+            changed = true;
+        }
+        Ok(changed)
+    }
+
+    fn drive_mvba(&self, round: &mut RoundState) -> Result<bool, String> {
+        let mut changed = false;
+        changed |= self.ensure_active_mvba_round(round)?;
+
+        let Some(mut active) = round.mvba.active_round.take() else {
+            return Ok(changed);
+        };
+        changed |= self.drive_rc_prepare(round, &mut active)?;
+
+        if active.aba.is_none()
+            && let Some(ballot) = active.ballot
+        {
+            active.aba = Some(AbaState::new(ballot));
+            changed = true;
+        }
+
+        if let Some(aba) = active.aba.as_mut() {
+            changed |= self.drive_aba(round, active.round_id, aba)?;
+            if let Some(output) = aba.output {
+                if !output {
+                    round.mvba.next_mvba_round = active.round_id + 1;
+                    changed = true;
+                    return Ok(changed);
+                }
+                if active.recast.is_none() {
+                    let lock = active
+                        .selected_lock
+                        .clone()
+                        .or_else(|| round.mvba.locks.get(&active.leader).cloned())
+                        .ok_or_else(|| {
+                            String::from("Dumbo ABA selected a leader without a lock proof")
+                        })?;
+                    active.recast = Some(RecastState::new(lock));
+                    changed = true;
+                }
+            }
+        }
+
+        if let Some(recast) = active.recast.as_mut() {
+            changed |= self.drive_recast(round, active.leader, active.round_id, recast)?;
+            if let Some(value) = recast.output_value.clone() {
+                round.mvba.output_value = Some(value);
+                changed = true;
+                return Ok(changed);
+            }
+        }
+
+        round.mvba.active_round = Some(active);
+        Ok(changed)
+    }
+
+    fn maybe_finalize_decision(&self, round: &mut RoundState) -> Result<bool, String> {
+        if round.decision_emitted {
+            return Ok(false);
+        }
+        if round.selected_proofs.is_none() {
+            let Some(raw_value) = round.mvba.output_value.as_ref() else {
+                return Ok(false);
+            };
+            let proofs = Self::deserialize_prbc_vector(raw_value, round.nodes())?;
+            if proofs.iter().filter(|proof| proof.is_some()).count() < self.threshold(round) {
+                return Err(String::from(
+                    "Dumbo MVBA decided fewer than N-f PRBC proofs",
+                ));
+            }
+            round.selected_proofs = Some(proofs);
+        }
+        let selected = round
+            .selected_proofs
+            .as_ref()
+            .ok_or_else(|| String::from("missing Dumbo selected proof vector"))?;
+        let mut selected_ids = Vec::new();
+        for (leader, selected_proof) in selected.iter().enumerate() {
+            let Some(selected_proof) = selected_proof.as_ref() else {
+                continue;
+            };
+            let Some(local_proof) = round.proposals[leader].output.as_ref() else {
+                return Ok(false);
+            };
+            if local_proof.roothash != selected_proof.roothash {
+                return Err(format!(
+                    "selected PRBC proof for leader {leader} mismatched local PRBC output"
+                ));
+            }
+            let Some(artifact) = round.proposals[leader].proposal_ready.as_ref() else {
+                return Ok(false);
+            };
+            selected_ids.push(artifact.proposal_id.clone());
+        }
+        round.decision_emitted = true;
+        round.outbound.push_back(AcsWireEvent::Decision {
+            round_id: round.round_id,
+            selected_proposal_ids: selected_ids,
+        });
+        Ok(true)
+    }
+
+    fn drive_round(&self, round: &mut RoundState) -> Result<(), String> {
+        loop {
+            let mut progressed = false;
+            if !round.dirty_prbc_leaders.is_empty() {
+                progressed |= self.drive_prbc(round)?;
+            }
+            if round.mvba_dirty {
+                round.mvba_dirty = false;
+                let mut mvba_progress = false;
+                loop {
+                    let mut changed = false;
+                    changed |= self.maybe_diffuse_local_proof(round)?;
+                    changed |= self.maybe_start_mvba_input(round)?;
+                    changed |= self.drive_pd(round)?;
+                    changed |= self.drive_mvba(round)?;
+                    changed |= self.maybe_finalize_decision(round)?;
+                    if !changed {
+                        break;
+                    }
+                    mvba_progress = true;
+                }
+                progressed |= mvba_progress;
+            }
+            if !progressed {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_prbc_val(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        leader: usize,
+        roothash: [u8; 32],
+        proof: MerkleProof,
+        stripe: Vec<u8>,
+        stripe_index: usize,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes() || sender != leader || stripe_index != self.pid {
+            return Ok(false);
+        }
+        if !merkle::verify_shard(&stripe, &proof, &roothash) {
+            return Ok(false);
+        }
+        let proposal = &mut round.proposals[leader];
+        if proposal.leader_root.is_some() {
+            return Ok(false);
+        }
+        proposal.leader_root = Some(roothash);
+        proposal
+            .stripes
+            .entry(roothash)
+            .or_default()
+            .insert(stripe_index, stripe.clone());
+        proposal
+            .proofs
+            .entry(roothash)
+            .or_default()
+            .insert(stripe_index, proof.clone());
+        proposal.echo_by_sender.insert(self.pid, roothash);
+        self.queue_broadcast(
+            round,
+            RustDumboMessage::PrbcEcho {
+                leader: leader as u32,
+                roothash,
+                proof,
+                stripe,
+                stripe_index: self.pid as u32,
+            },
+        )?;
+        Ok(true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_prbc_echo(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        leader: usize,
+        roothash: [u8; 32],
+        proof: MerkleProof,
+        stripe: Vec<u8>,
+        stripe_index: usize,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes() || stripe_index != sender {
+            return Ok(false);
+        }
+        if !merkle::verify_shard(&stripe, &proof, &roothash) {
+            return Ok(false);
+        }
+        let proposal = &mut round.proposals[leader];
+        if let Some(existing) = proposal.echo_by_sender.get(&sender) {
+            if *existing != roothash {
+                return Ok(false);
+            }
+            return Ok(false);
+        }
+        proposal.echo_by_sender.insert(sender, roothash);
+        proposal
+            .stripes
+            .entry(roothash)
+            .or_default()
+            .insert(stripe_index, stripe);
+        proposal
+            .proofs
+            .entry(roothash)
+            .or_default()
+            .insert(stripe_index, proof);
+        Ok(true)
+    }
+
+    fn handle_prbc_ready(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        leader: usize,
+        roothash: [u8; 32],
+        signature: Vec<u8>,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes() || sender >= self.crypto.ecdsa_pks.len() {
+            return Ok(false);
+        }
+        let signature: [u8; 64] = match signature.as_slice().try_into() {
+            Ok(signature) => signature,
+            Err(_) => return Ok(false),
+        };
+        let proposal = &mut round.proposals[leader];
+        if let Some(existing) = proposal.ready_by_sender.get(&sender) {
+            if *existing != roothash {
+                return Ok(false);
+            }
+            return Ok(false);
+        }
+        let sid = Self::prbc_sid(&round.sid, leader);
+        let digest = Self::ready_digest(&sid, &roothash);
+        if sender == self.pid {
+            match proposal.local_ready {
+                Some((local_root, local_signature))
+                    if local_root == roothash && local_signature == signature => {}
+                _ => return Ok(false),
+            }
+        } else if !ecdsa::verify(&self.crypto.ecdsa_pks[sender], &digest, &signature) {
+            return Ok(false);
+        }
+        proposal.ready_by_sender.insert(sender, roothash);
+        proposal
+            .ready_signatures
+            .entry(roothash)
+            .or_default()
+            .insert(sender, signature);
+        Ok(true)
+    }
+
+    fn handle_proof_diffuse(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        leader: usize,
+        proof: PrbcProof,
+    ) -> Result<bool, String> {
+        if leader != sender || leader >= round.nodes() || round.mvba.proof_vector[leader].is_some()
+        {
+            return Ok(false);
+        }
+        let accepted = match round.proposals[leader].output.as_ref() {
+            Some(local) if local.roothash == proof.roothash => Some(local.clone()),
+            _ if self.validate_prbc_proof(round, leader, &proof) => Some(proof),
+            _ => None,
+        };
+        let Some(proof) = accepted else {
+            return Ok(false);
+        };
+        round.mvba.proof_vector[leader] = Some(proof);
+        Ok(true)
+    }
+
+    fn handle_rc_prepare(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        mvba_round: usize,
+        leader: usize,
+        proof: Option<ThresholdProof>,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes() {
+            return Ok(false);
+        }
+        let inbox = Self::current_prepare_inbox(&mut round.mvba, mvba_round);
+        match proof {
+            None => Ok(inbox.none_senders.insert(sender)),
+            Some(proof) => {
+                if inbox.proofs.contains_key(&sender) {
+                    return Ok(false);
+                }
+                let digest = Self::pd_digest(
+                    PD_STORED_DOMAIN,
+                    &Self::pd_sid(&round.sid, leader),
+                    &proof.roothash,
+                );
+                if !Self::verify_threshold_proof(&self.crypto.proof_pk, &proof, &digest) {
+                    return Ok(false);
+                }
+                inbox.proofs.insert(sender, proof);
+                Ok(true)
+            }
+        }
+    }
+
+    fn handle_rc_lock(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        mvba_round: usize,
+        leader: usize,
+        proof: ThresholdProof,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes() {
+            return Ok(false);
+        }
+        let digest = Self::pd_digest(
+            PD_STORED_DOMAIN,
+            &Self::pd_sid(&round.sid, leader),
+            &proof.roothash,
+        );
+        if !Self::verify_threshold_proof(&self.crypto.proof_pk, &proof, &digest) {
+            return Ok(false);
+        }
+        let inbox = Self::current_recast_inbox(&mut round.mvba, mvba_round);
+        Ok(inbox.locks.insert(sender, proof).is_none())
+    }
+
+    fn handle_rc_store(
+        &self,
+        round: &mut RoundState,
+        _sender: usize,
+        mvba_round: usize,
+        leader: usize,
+        store: PdStoreRecord,
+    ) -> Result<bool, String> {
+        if leader >= round.nodes()
+            || store.stripe_owner as usize >= round.nodes()
+            || !merkle::verify_shard(&store.stripe, &store.merkle_proof, &store.roothash)
+        {
+            return Ok(false);
+        }
+        let key = (store.roothash, store.stripe_owner);
+        let inbox = Self::current_recast_inbox(&mut round.mvba, mvba_round);
+        Ok(inbox.stores.insert(key, store).is_none())
+    }
+
+    fn handle_aba_est(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        mvba_round: usize,
+        epoch: usize,
+        value: bool,
+    ) -> Result<bool, String> {
+        let inbox = Self::current_aba_inbox(&mut round.mvba, mvba_round, epoch);
+        let changed = Self::record_bool_message(&mut inbox.est_by_sender, sender, value);
+        if changed && Self::count_bool_messages(&inbox.est_by_sender, value) > 2 * self.faulty {
+            inbox.bin_values[usize::from(value)] = true;
+        }
+        Ok(changed)
+    }
+
+    fn handle_aba_aux(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        mvba_round: usize,
+        epoch: usize,
+        value: bool,
+    ) -> Result<bool, String> {
+        let inbox = Self::current_aba_inbox(&mut round.mvba, mvba_round, epoch);
+        Ok(Self::record_bool_message(
+            &mut inbox.aux_by_sender,
+            sender,
+            value,
+        ))
+    }
+
+    fn handle_aba_conf(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        mvba_round: usize,
+        epoch: usize,
+        values: [bool; 2],
+    ) -> Result<bool, String> {
+        if Self::aba_conf_index(values).is_none() {
+            return Ok(false);
+        }
+        let inbox = Self::current_aba_inbox(&mut round.mvba, mvba_round, epoch);
+        Ok(inbox.conf_by_sender.insert(sender, values).is_none())
+    }
+
+    fn handle_coin_share(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        scope: DumboCoinScope,
+        share: Vec<u8>,
+    ) -> Result<bool, String> {
+        if sender >= round.nodes() {
+            return Ok(false);
+        }
+        let state = round.mvba.coin_states.entry(scope).or_default();
+        if state.shares.contains_key(&sender) {
+            return Ok(false);
+        }
+        let message = Self::coin_message(&round.sid, scope);
+        let value = match g1_from_bytes(&share) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+        let partial = PartialSignature {
+            player_id: sender + 1,
+            value,
+        };
+        if sender != self.pid
+            && threshold::sig::verify_share(&self.crypto.coin_pk, &partial, &message).is_err()
+        {
+            return Ok(false);
+        }
+        state.shares.insert(sender, share);
+        Ok(true)
+    }
+
+    fn handle_message(
+        &self,
+        round: &mut RoundState,
+        sender: usize,
+        message: RustDumboMessage,
+    ) -> Result<bool, String> {
+        if round.decision_emitted {
+            return Ok(false);
+        }
+        match message {
+            RustDumboMessage::PrbcVal {
+                leader,
+                roothash,
+                proof,
+                stripe,
+                stripe_index,
+            } => {
+                let leader = leader as usize;
+                let changed = self.handle_prbc_val(
+                    round,
+                    sender,
+                    leader,
+                    roothash,
+                    proof,
+                    stripe,
+                    stripe_index as usize,
+                )?;
+                if changed {
+                    round.mark_prbc_dirty(leader);
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::PrbcEcho {
+                leader,
+                roothash,
+                proof,
+                stripe,
+                stripe_index,
+            } => {
+                let leader = leader as usize;
+                let changed = self.handle_prbc_echo(
+                    round,
+                    sender,
+                    leader,
+                    roothash,
+                    proof,
+                    stripe,
+                    stripe_index as usize,
+                )?;
+                if changed {
+                    round.mark_prbc_dirty(leader);
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::PrbcReady {
+                leader,
+                roothash,
+                signature,
+            } => {
+                let leader = leader as usize;
+                let changed = self.handle_prbc_ready(round, sender, leader, roothash, signature)?;
+                if changed {
+                    round.mark_prbc_dirty(leader);
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::ProofDiffuse { leader, proof } => {
+                let changed = self.handle_proof_diffuse(round, sender, leader as usize, proof)?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::PdStore {
+                leader,
+                roothash,
+                stripe,
+                merkle_proof,
+            } => {
+                let changed = self.process_pd_store(
+                    round,
+                    sender,
+                    leader as usize,
+                    roothash,
+                    merkle_proof,
+                    stripe,
+                )?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::PdStored {
+                leader,
+                roothash,
+                share,
+            } => {
+                let changed =
+                    self.process_pd_stored(round, sender, leader as usize, roothash, share)?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::PdLock { leader, proof } => {
+                let changed = self.process_pd_lock(round, sender, leader as usize, proof)?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::PdLocked {
+                leader,
+                roothash,
+                share,
+            } => {
+                let changed =
+                    self.process_pd_locked(round, sender, leader as usize, roothash, share)?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::PdDone { leader, proof } => {
+                let changed = self.process_pd_done(round, sender, leader as usize, proof)?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::RcPrepare {
+                mvba_round,
+                leader,
+                proof,
+            } => {
+                let changed = self.handle_rc_prepare(
+                    round,
+                    sender,
+                    mvba_round as usize,
+                    leader as usize,
+                    proof,
+                )?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::RcLock {
+                mvba_round,
+                leader,
+                proof,
+            } => {
+                let changed = self.handle_rc_lock(
+                    round,
+                    sender,
+                    mvba_round as usize,
+                    leader as usize,
+                    proof,
+                )?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::RcStore {
+                mvba_round,
+                leader,
+                store,
+            } => {
+                let changed = self.handle_rc_store(
+                    round,
+                    sender,
+                    mvba_round as usize,
+                    leader as usize,
+                    store,
+                )?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::AbaEst {
+                mvba_round,
+                epoch,
+                value,
+            } => {
+                let changed =
+                    self.handle_aba_est(round, sender, mvba_round as usize, epoch as usize, value)?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::AbaAux {
+                mvba_round,
+                epoch,
+                value,
+            } => {
+                let changed =
+                    self.handle_aba_aux(round, sender, mvba_round as usize, epoch as usize, value)?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::AbaConf {
+                mvba_round,
+                epoch,
+                values,
+            } => {
+                let changed = self.handle_aba_conf(
+                    round,
+                    sender,
+                    mvba_round as usize,
+                    epoch as usize,
+                    values,
+                )?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+            RustDumboMessage::CoinShare { scope, share } => {
+                let changed = self.handle_coin_share(round, sender, scope, share)?;
+                if changed {
+                    round.mark_mvba_dirty();
+                }
+                Ok(changed)
+            }
+        }
+    }
+}
+
+impl AcsHost for RustDumboAcsHost {
+    fn pid(&self) -> usize {
+        self.pid
+    }
+
+    fn start_round(&self, round_id: usize, sid: &str, proposal_input: &[u8]) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust Dumbo ACS state poisoned"))?;
+        if let Some(round) = state.current_round.as_ref()
+            && !round.decision_emitted
+        {
+            return Err(format!(
+                "Rust Dumbo ACS host pid={} cannot start round {round_id} before finishing round {}",
+                self.pid, round.round_id
+            ));
+        }
+        state.processed_commands += 1;
+        state.command_counts.start_round += 1;
+        state.rounds_started += 1;
+        state.pending_pull_limit = None;
+        state.current_round = Some(RoundState::new(
+            round_id,
+            sid.to_owned(),
+            self.crypto.ecdsa_pks.len(),
+        ));
+        let round = state
+            .current_round
+            .as_mut()
+            .ok_or_else(|| String::from("Rust Dumbo ACS failed to initialize round"))?;
+
+        let merkle_result =
+            merkle::encode(proposal_input, self.data_threshold(round), round.nodes())
+                .map_err(|err| err.to_string())?;
+        for recipient in 0..round.nodes() {
+            let message = RustDumboMessage::PrbcVal {
+                leader: self.pid as u32,
+                roothash: merkle_result.root,
+                proof: merkle_result.proofs[recipient].clone(),
+                stripe: merkle_result.shards[recipient].clone(),
+                stripe_index: recipient as u32,
+            };
+            if recipient == self.pid {
+                let _ = self.handle_message(round, self.pid, message)?;
+            } else {
+                self.queue_send(round, recipient, message)?;
+            }
+        }
+        self.drive_round(round)?;
+        Ok(())
+    }
+
+    fn push_inbound_wire_batch(&self, items: &[Vec<u8>]) -> Result<usize, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust Dumbo ACS state poisoned"))?;
+        state.processed_commands += 1;
+        state.command_counts.push_inbound_wire_batch += 1;
+        state.batch_item_counts.push_inbound_wire_batch_items += items.len();
+        let Some(round) = state.current_round.as_mut() else {
+            return Ok(0);
+        };
+        let mut changed = false;
+        for item in items {
+            let envelope = Self::decode_envelope(item)?;
+            if envelope.round_id as usize != round.round_id {
+                continue;
+            }
+            changed |= self.handle_message(round, envelope.sender as usize, envelope.message)?;
+        }
+        if changed {
+            self.drive_round(round)?;
+        }
+        if round.decision_emitted {
+            state.rounds_finished = state.rounds_finished.max(state.rounds_started);
+        }
+        Ok(items.len())
+    }
+
+    fn outbound_ready(&self) -> Result<bool, String> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust Dumbo ACS state poisoned"))?;
+        Ok(state
+            .current_round
+            .as_ref()
+            .map(|round| !round.outbound.is_empty())
+            .unwrap_or(false))
+    }
+
+    fn begin_pull_outbound_wire_batch(&self, limit: usize) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust Dumbo ACS state poisoned"))?;
+        if state.pending_pull_limit.is_some() {
+            return Err(String::from(
+                "Rust Dumbo ACS pull_outbound_wire_batch is already pending",
+            ));
+        }
+        state.processed_commands += 1;
+        state.command_counts.pull_outbound_wire_batch += 1;
+        state.pending_pull_limit = Some(limit);
+        Ok(())
+    }
+
+    fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<AcsWireEvent>, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust Dumbo ACS state poisoned"))?;
+        let limit = state.pending_pull_limit.take().ok_or_else(|| {
+            String::from("Rust Dumbo ACS pull_outbound_wire_batch was not started")
+        })?;
+        let rounds_started = state.rounds_started;
+        let Some(round) = state.current_round.as_mut() else {
+            return Ok(Vec::new());
+        };
+        let mut drained = Vec::with_capacity(limit);
+        for _ in 0..limit {
+            let Some(event) = round.outbound.pop_front() else {
+                break;
+            };
+            drained.push(event);
+        }
+        let finished = round.decision_emitted && round.outbound.is_empty();
+        let drained_len = drained.len();
+        let _ = round;
+        state.batch_item_counts.pull_outbound_wire_batch_items += drained_len;
+        if finished {
+            state.rounds_finished = state.rounds_finished.max(rounds_started);
+        }
+        Ok(drained)
+    }
+
+    fn stats(&self) -> Result<AcsHostStats, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust Dumbo ACS state poisoned"))?;
+        state.processed_commands += 1;
+        state.command_counts.stats += 1;
+        Ok(AcsHostStats {
+            worker_ident: 0,
+            rounds_started: state.rounds_started,
+            rounds_finished: state.rounds_finished,
+            processed_commands: state.processed_commands,
+            bridge_queue_size: state
+                .current_round
+                .as_ref()
+                .map(|round| round.outbound.len())
+                .unwrap_or(0),
+            worker_running: true,
+            worker_error: None,
+            start_round_calls: state.command_counts.start_round,
+            push_inbound_wire_batch_calls: state.command_counts.push_inbound_wire_batch,
+            push_inbound_wire_batch_items: state.batch_item_counts.push_inbound_wire_batch_items,
+            pull_outbound_wire_batch_calls: state.command_counts.pull_outbound_wire_batch,
+            pull_outbound_wire_batch_items: state.batch_item_counts.pull_outbound_wire_batch_items,
+            stats_calls: state.command_counts.stats,
+        })
+    }
+
+    fn shutdown(&self) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust Dumbo ACS state poisoned"))?;
+        state.current_round = None;
+        state.pending_pull_limit = None;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::drive_acs::run_acs_round;
+
+    fn build_hosts(nodes: usize, faulty: usize) -> Vec<RustDumboAcsHost> {
+        serialize_crypto_payloads(Protocol::Dumbo, nodes, faulty)
+            .expect("crypto payloads should serialize")
+            .into_iter()
+            .enumerate()
+            .map(|(pid, payload)| {
+                RustDumboAcsHost::new(
+                    pid,
+                    nodes,
+                    faulty,
+                    crate::acs_host::parse_acs_crypto_payload(Protocol::Dumbo, &payload)
+                        .expect("crypto payload should parse"),
+                    r#"{"acs_host_backend":"rust_dumbo"}"#,
+                )
+                .expect("Rust Dumbo ACS host should construct")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn prbc_vector_roundtrip() {
+        let proof = PrbcProof {
+            roothash: [7; 32],
+            sigmas: vec![(0, vec![1; 64]), (2, vec![3; 64])],
+        };
+        let encoded = RustDumboAcsHost::serialize_prbc_vector(&[
+            Some(proof.clone()),
+            None,
+            Some(proof.clone()),
+            None,
+        ]);
+        let decoded =
+            RustDumboAcsHost::deserialize_prbc_vector(&encoded, 4).expect("vector decodes");
+        assert!(decoded[0].is_some());
+        assert!(decoded[1].is_none());
+        assert_eq!(decoded[2].as_ref().expect("proof").roothash, proof.roothash);
+    }
+
+    #[test]
+    fn rust_dumbo_acs_round_reaches_consistent_decision() {
+        let hosts = build_hosts(4, 1);
+        let proposals = (0..4)
+            .map(|pid| format!("rust-dumbo-acs-proposal-{pid}").into_bytes())
+            .collect::<Vec<_>>();
+        let outcome = run_acs_round(&hosts, 0, "test:rust-dumbo-acs:0:", &proposals, 5.0)
+            .expect("round succeeds");
+
+        assert!(outcome.selected_proposal_ids.len() >= 3);
+        assert_eq!(
+            outcome.selected_proposal_ids.len(),
+            outcome.selected_pids.len()
+        );
+        assert!(outcome.selected_pids.iter().all(|pid| *pid < 4));
+    }
+}

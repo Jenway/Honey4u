@@ -1,5 +1,4 @@
 use super::*;
-use crate::py_host::RustDrivenAcsHost;
 use std::collections::BTreeMap;
 
 type PendingDelivery = Vec<u8>;
@@ -13,7 +12,22 @@ fn encode_dumbo_proposal_ref(pid: usize) -> Vec<u8> {
     (pid as u64).to_be_bytes().to_vec()
 }
 
-fn new_driver_phase_stats<T: RustDrivenAcsHost>(hosts: &[T]) -> DriverPhaseStats {
+fn selected_pids_from_proposal_ids(
+    selected_proposal_ids: &[String],
+    proposal_store: &ProposalStore,
+) -> Result<Vec<usize>, String> {
+    selected_proposal_ids
+        .iter()
+        .map(|proposal_id| {
+            proposal_store
+                .get(proposal_id)
+                .map(|proposal| proposal.proposer)
+                .ok_or_else(|| format!("missing proposal artifact for selected id {proposal_id}"))
+        })
+        .collect()
+}
+
+fn new_driver_phase_stats<T: AcsHost>(hosts: &[T]) -> DriverPhaseStats {
     DriverPhaseStats {
         host_stats: hosts
             .iter()
@@ -98,12 +112,11 @@ pub(crate) fn driver_phase_stats_json(stats: &DriverPhaseStats) -> Value {
         "total_pull_seconds": stats.total_pull_seconds,
         "send_events": stats.send_events,
         "send_payload_bytes": stats.send_payload_bytes,
+        "proposal_ready_events": stats.proposal_ready_events,
+        "proposal_ready_payload_bytes": stats.proposal_ready_payload_bytes,
+        "proposal_ready_certificate_bytes": stats.proposal_ready_certificate_bytes,
         "decision_events": stats.decision_events,
         "failure_events": stats.failure_events,
-        "carryover_events": stats.carryover_events,
-        "broadcast_output_events": stats.broadcast_output_events,
-        "broadcast_output_payload_bytes": stats.broadcast_output_payload_bytes,
-        "broadcast_output_roothash_bytes": stats.broadcast_output_roothash_bytes,
         "host_stats": stats.host_stats.iter().map(|host| {
             json!({
                 "pid": host.pid,
@@ -126,13 +139,14 @@ fn collect_exchange_events(
     pid: usize,
     round_id: usize,
     host_count: usize,
-    events: Vec<PyAcsWireEvent>,
+    events: Vec<AcsWireEvent>,
     pending_deliveries: &mut PendingDeliveries,
-    decisions: &mut [Option<Vec<usize>>],
+    proposal_store: &mut ProposalStore,
+    decisions: &mut [Option<Vec<String>>],
 ) -> Result<(), String> {
     for event in events {
         match event {
-            PyAcsWireEvent::Send {
+            AcsWireEvent::Send {
                 round_id: event_round_id,
                 recipient,
                 payload,
@@ -152,7 +166,7 @@ fn collect_exchange_events(
                     .or_default()
                     .push(payload);
             }
-            PyAcsWireEvent::BroadcastSend {
+            AcsWireEvent::Broadcast {
                 round_id: event_round_id,
                 payload,
                 include_self,
@@ -172,10 +186,20 @@ fn collect_exchange_events(
                         .push(payload.clone());
                 }
             }
-            PyAcsWireEvent::Decision {
+            AcsWireEvent::ProposalReady {
                 round_id: event_round_id,
-                selected_pids,
-                selected_payloads: _,
+                proposal,
+            } => {
+                if event_round_id != round_id {
+                    return Err(format!(
+                        "bench-driver:acs round {round_id}: proposal_ready event carried mismatched round_id {event_round_id}"
+                    ));
+                }
+                proposal_store.insert(proposal.proposal_id.clone(), proposal);
+            }
+            AcsWireEvent::Decision {
+                round_id: event_round_id,
+                selected_proposal_ids,
             } => {
                 if event_round_id != round_id {
                     return Err(format!(
@@ -183,9 +207,9 @@ fn collect_exchange_events(
                     ));
                 }
                 debug_acs_driver(&format!("round:decision round={round_id} pid={pid}"));
-                decisions[pid] = Some(selected_pids);
+                decisions[pid] = Some(selected_proposal_ids);
             }
-            PyAcsWireEvent::Failure {
+            AcsWireEvent::Failure {
                 round_id: event_round_id,
                 error,
                 exception_type,
@@ -194,17 +218,12 @@ fn collect_exchange_events(
                     "bench-driver:acs round {round_id}: node {pid} failed in event round {event_round_id} with {exception_type}: {error}"
                 ));
             }
-            PyAcsWireEvent::Carryovers {
-                round_id: _,
-                items: _,
-            } => {}
-            PyAcsWireEvent::BroadcastOutput { .. } => {}
         }
     }
     Ok(())
 }
 
-pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
+pub(crate) fn run_acs_round<T: AcsHost>(
     hosts: &[T],
     round_id: usize,
     round_sid: &str,
@@ -247,7 +266,8 @@ pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
 
     let deadline = Instant::now() + Duration::from_secs_f64(global_timeout);
     let mut send_events = 0usize;
-    let mut decisions: Vec<Option<Vec<usize>>> = vec![None; hosts.len()];
+    let mut proposal_stores: Vec<ProposalStore> = vec![BTreeMap::new(); hosts.len()];
+    let mut decisions: Vec<Option<Vec<String>>> = vec![None; hosts.len()];
     let mut pending_deliveries: PendingDeliveries = BTreeMap::new();
     let mut drive_stats = new_driver_phase_stats(hosts);
 
@@ -295,6 +315,7 @@ pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
                 hosts.len(),
                 events,
                 &mut pending_deliveries,
+                &mut proposal_stores[pid],
                 &mut decisions,
             )?;
         }
@@ -328,12 +349,12 @@ pub(crate) fn run_acs_round<T: RustDrivenAcsHost>(
             ));
         }
     }
+    let selected_pids = selected_pids_from_proposal_ids(&canonical, &proposal_stores[0])?;
 
     let settle_stats = settle_acs_round(hosts, round_id, &mut send_events)?;
     Ok(AcsRoundOutcome {
-        selected_pids: canonical,
-        selected_payloads: Vec::new(),
-        carryovers: Vec::new(),
+        selected_proposal_ids: canonical,
+        selected_pids,
         send_events,
         drive_stats,
         settle_stats,
@@ -347,7 +368,7 @@ pub(crate) fn run_drive_acs(args: BenchAcsArgs) -> Result<(), String> {
     let mut hosts = Vec::with_capacity(crypto_payloads.len());
     for (pid, payload) in crypto_payloads.iter().enumerate() {
         debug_acs_driver(&format!("host:new:start pid={pid}"));
-        match PyAcsHost::new(
+        match build_acs_host(
             args.protocol,
             pid,
             args.nodes,
@@ -373,7 +394,7 @@ pub(crate) fn run_drive_acs(args: BenchAcsArgs) -> Result<(), String> {
     let mut shutdown_errors = Vec::new();
     for host in &hosts {
         if let Err(err) = host.shutdown() {
-            shutdown_errors.push(format!("pid={}: {err}", host.pid));
+            shutdown_errors.push(format!("pid={}: {err}", host.pid()));
         }
     }
 
@@ -388,7 +409,7 @@ pub(crate) fn run_drive_acs(args: BenchAcsArgs) -> Result<(), String> {
     write_output(args.result_path.as_deref(), &rendered)
 }
 
-fn drive_acs_rounds(hosts: &[PyAcsHost], args: &BenchAcsArgs) -> Result<String, String> {
+fn drive_acs_rounds(hosts: &[Box<dyn AcsHost>], args: &BenchAcsArgs) -> Result<String, String> {
     let mut rounds = Vec::with_capacity(args.rounds);
 
     for round_id in 0..args.rounds {
@@ -397,8 +418,8 @@ fn drive_acs_rounds(hosts: &[PyAcsHost], args: &BenchAcsArgs) -> Result<String, 
             .iter()
             .map(|host| {
                 Ok(match args.protocol {
-                    Protocol::HoneyBadger => encode_honeybadger_proposal_ref(host.pid),
-                    Protocol::Dumbo => encode_dumbo_proposal_ref(host.pid),
+                    Protocol::HoneyBadger => encode_honeybadger_proposal_ref(host.pid()),
+                    Protocol::Dumbo => encode_dumbo_proposal_ref(host.pid()),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -413,6 +434,7 @@ fn drive_acs_rounds(hosts: &[PyAcsHost], args: &BenchAcsArgs) -> Result<String, 
         rounds.push(json!({
             "round_id": round_id,
             "selected_count": outcome.selected_pids.len(),
+            "selected_proposal_ids": outcome.selected_proposal_ids,
             "selected_pids": outcome.selected_pids,
             "send_events": outcome.send_events,
             "drive_stats": driver_phase_stats_json(&outcome.drive_stats),
@@ -425,7 +447,7 @@ fn drive_acs_rounds(hosts: &[PyAcsHost], args: &BenchAcsArgs) -> Result<String, 
         .map(|host| {
             let stats = host.stats()?;
             Ok(json!({
-                "pid": host.pid,
+                "pid": host.pid(),
                 "worker_ident": stats.worker_ident,
                 "rounds_started": stats.rounds_started,
                 "rounds_finished": stats.rounds_finished,
@@ -452,7 +474,7 @@ fn drive_acs_rounds(hosts: &[PyAcsHost], args: &BenchAcsArgs) -> Result<String, 
     .map_err(|err| err.to_string())
 }
 
-fn settle_acs_round<T: RustDrivenAcsHost>(
+fn settle_acs_round<T: AcsHost>(
     hosts: &[T],
     round_id: usize,
     send_events: &mut usize,
@@ -500,7 +522,7 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
             );
             for event in events {
                 match event {
-                    PyAcsWireEvent::Send {
+                    AcsWireEvent::Send {
                         round_id: event_round_id,
                         recipient,
                         payload,
@@ -520,7 +542,7 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                             .or_default()
                             .push(payload);
                     }
-                    PyAcsWireEvent::BroadcastSend {
+                    AcsWireEvent::Broadcast {
                         round_id: event_round_id,
                         payload,
                         include_self,
@@ -540,7 +562,7 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                                 .push(payload.clone());
                         }
                     }
-                    PyAcsWireEvent::Failure {
+                    AcsWireEvent::Failure {
                         round_id: event_round_id,
                         error,
                         exception_type,
@@ -549,18 +571,8 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
                             "bench-driver:acs round {round_id}: node {pid} failed during settle in event round {event_round_id} with {exception_type}: {error}"
                         ));
                     }
-                    PyAcsWireEvent::Decision { .. } => {}
-                    PyAcsWireEvent::Carryovers {
-                        round_id: event_round_id,
-                        items: _,
-                    } => {
-                        if event_round_id != round_id {
-                            return Err(format!(
-                                "bench-driver:acs round {round_id}: carryovers event carried mismatched round_id {event_round_id} during settle"
-                            ));
-                        }
-                    }
-                    PyAcsWireEvent::BroadcastOutput { .. } => {}
+                    AcsWireEvent::ProposalReady { .. } => {}
+                    AcsWireEvent::Decision { .. } => {}
                 }
             }
         }
@@ -568,7 +580,7 @@ fn settle_acs_round<T: RustDrivenAcsHost>(
         if !progressed {
             let queues_empty = hosts
                 .iter()
-                .map(RustDrivenAcsHost::stats)
+                .map(AcsHost::stats)
                 .collect::<Result<Vec<_>, String>>()?
                 .into_iter()
                 .all(|stats| stats.bridge_queue_size == 0);

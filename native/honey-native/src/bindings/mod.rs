@@ -4,7 +4,6 @@ mod codec;
 mod ecdsa;
 mod host_crypto;
 mod merkle;
-mod threshold_pke;
 mod threshold_sig;
 mod tx_pool;
 
@@ -16,7 +15,6 @@ mod tx_pool;
 pub fn register_all(m: &Bound<'_, PyModule>) -> PyResult<()> {
     merkle::register(m)?;
     threshold_sig::register(m)?;
-    threshold_pke::register(m)?;
     ecdsa::register(m)?;
     codec::register(m)?;
     tx_pool::register(m)?;

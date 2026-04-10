@@ -1,8 +1,8 @@
-"""Tests for the Rust-native bench-driver Dumbo mode with Pool Reuse support.
+"""Tests for the Rust-native bench-driver Dumbo mode with pool reuse support.
 
 These tests exercise the `run_local_dumbo_new_driver` function which wraps the
-`bench-driver --mode dumbo` honey-node command path. The command manages
-BroadcastMempool, PoolReference building, and carryover processing entirely in Rust.
+`bench-driver --config <path.toml>` honey-node command path. The command manages
+BroadcastMempool, PoolReference building, and proposal reuse entirely in Rust.
 """
 
 from __future__ import annotations
@@ -111,9 +111,8 @@ def test_drive_dumbo_new_driver_chain_digest_evolves_across_rounds() -> None:
     assert result.chain_digest == result.rounds[-1].chain_digest
 
 
-def test_drive_dumbo_new_driver_with_pool_reuse_produces_carryovers() -> None:
-    """With pool reuse enabled, nodes should accumulate mempool entries after
-    carryovers are processed."""
+def test_drive_dumbo_new_driver_with_pool_reuse_accumulates_reusable_proposals() -> None:
+    """With pool reuse enabled, nodes should accumulate reusable proposals."""
     result = run_local_dumbo_new_driver(
         sid="test:bench-driver:dumbo:pool-reuse",
         num_nodes=4,

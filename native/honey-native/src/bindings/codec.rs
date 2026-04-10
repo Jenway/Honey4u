@@ -66,7 +66,6 @@ fn channel_from_str(value: &str) -> PyResult<ChannelWire> {
         "DUMBO_PROOF" => Ok(ChannelWire::DumboProof),
         "DUMBO_MVBA" => Ok(ChannelWire::DumboMvba),
         "DUMBO_POOL" => Ok(ChannelWire::DumboPool),
-        "TPKE" => Ok(ChannelWire::Tpke),
         _ => Err(PyValueError::new_err("invalid channel tag")),
     }
 }
@@ -80,7 +79,6 @@ fn channel_to_str(value: &ChannelWire) -> &'static str {
         ChannelWire::DumboProof => "DUMBO_PROOF",
         ChannelWire::DumboMvba => "DUMBO_MVBA",
         ChannelWire::DumboPool => "DUMBO_POOL",
-        ChannelWire::Tpke => "TPKE",
     }
 }
 
@@ -338,9 +336,6 @@ fn extract_message_wire(py: Python<'_>, message: &Bound<'_, PyAny>) -> PyResult<
         "PoolFetchResponse" => Ok(MessageWire::PoolFetchResponse {
             item_id: message.getattr("item_id")?.extract()?,
             payload: message.getattr("payload")?.extract()?,
-        }),
-        "TpkeShareBundle" => Ok(MessageWire::TpkeShareBundle {
-            shares: message.getattr("shares")?.extract()?,
         }),
         "RawPayload" => Ok(MessageWire::RawPayload {
             data: message.getattr("data")?.extract()?,
@@ -606,20 +601,6 @@ fn build_message_object(
             .getattr("PoolFetchResponse")?
             .call1((item_id, PyBytes::new(py, &payload)))?
             .unbind()),
-        MessageWire::TpkeShareBundle { shares } => {
-            let mut py_items = Vec::with_capacity(shares.len());
-            for share in shares {
-                match share {
-                    Some(bytes) => py_items.push(PyBytes::new(py, &bytes).into_any().unbind()),
-                    None => py_items.push(py.None()),
-                }
-            }
-            let shares_tuple = PyTuple::new(py, py_items)?;
-            Ok(messages_mod
-                .getattr("TpkeShareBundle")?
-                .call1((shares_tuple,))?
-                .unbind())
-        }
         MessageWire::RawPayload { data } => Ok(messages_mod
             .getattr("RawPayload")?
             .call1((PyBytes::new(py, &data),))?

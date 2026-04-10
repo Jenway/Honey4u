@@ -219,7 +219,7 @@ class AcsService:
         if self._track_internal_stats:
             kind = str(event.get("kind"))
             self._bump_counter(self._event_kind_counts, kind)
-            if kind in {"send", "broadcast_send"}:
+            if kind in {"send", "broadcast"}:
                 self._bump_counter(self._outbound_channel_counts, str(event.get("channel")))
         self._events.put(event)
         if self._event_notifier is not None:
@@ -314,3 +314,7 @@ class AcsService:
         if not self._track_internal_stats:
             return
         counter[key] = counter.get(key, 0) + amount
+
+
+def build_proposal_id(round_id: int, proposer: int, digest: bytes) -> str:
+    return f"{round_id}:{proposer}:{digest.hex()}"

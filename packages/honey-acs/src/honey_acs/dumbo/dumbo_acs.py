@@ -177,6 +177,7 @@ async def dumbo_acs(
     send: SendFn,
     broadcast: BroadcastFn | None = None,
     broadcast_others: BroadcastFn | None = None,
+    on_prbc_output: Callable[[PrbcOutcome], None] | None = None,
     carryover_queue: asyncio.Queue[tuple[PrbcOutcome, ...]] | None = None,
     output_mode: Literal["selected_pids", "payloads"] = "selected_pids",
 ) -> None:
@@ -223,21 +224,30 @@ async def dumbo_acs(
     dispatcher_task = asyncio.create_task(recv_dispatcher())
 
     prbc_tasks: list[asyncio.Task[PrbcOutcome]] = []
+
+    def publish_prbc_outcome(task: asyncio.Task[PrbcOutcome]) -> None:
+        if on_prbc_output is None or task.cancelled():
+            return
+        try:
+            on_prbc_output(task.result())
+        except Exception:
+            return
+
     for leader in range(params.N):
         leader_input: asyncio.Queue[bytes | str] = asyncio.Queue(1)
         if leader == params.pid:
             leader_input.put_nowait(local_input)
-        prbc_tasks.append(
-            asyncio.create_task(
-                provable_reliable_broadcast(
-                    _prbc_params(params, leader),
-                    leader_input,
-                    prbc_recvs[leader],
-                    send,
-                    broadcast_others=broadcast_others,
-                )
+        task = asyncio.create_task(
+            provable_reliable_broadcast(
+                _prbc_params(params, leader),
+                leader_input,
+                prbc_recvs[leader],
+                send,
+                broadcast_others=broadcast_others,
             )
         )
+        task.add_done_callback(publish_prbc_outcome)
+        prbc_tasks.append(task)
 
     def local_proof_if_available(leader: int, remote_proof: PrbcProof) -> PrbcProof | None:
         task = prbc_tasks[leader]

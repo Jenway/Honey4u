@@ -13,7 +13,6 @@ from honey_acs.messages import (
     ProtocolEnvelope,
     RawPayload,
     RbcVal,
-    TpkeShareBundle,
     decode_tx,
     decode_tx_batch,
     encode_tx,
@@ -57,9 +56,23 @@ def test_protocol_envelope_round_trip_rbc_payload() -> None:
     assert decoded == envelope
 
 
-def test_protocol_envelope_round_trip_dumbo_raw_payload() -> None:
+def test_protocol_envelope_round_trip_hb_prbc_payload() -> None:
     envelope = ProtocolEnvelope(
         round_id=5,
+        channel=Channel.ACS_RBC,
+        instance_id=2,
+        message=PrbcReady(leader=2, roothash=b"root", signature=b"sig"),
+    )
+
+    sender, decoded = ProtocolEnvelope.from_bytes(envelope.to_bytes(sender=2))
+
+    assert sender == 2
+    assert decoded == envelope
+
+
+def test_protocol_envelope_round_trip_dumbo_raw_payload() -> None:
+    envelope = ProtocolEnvelope(
+        round_id=6,
         channel=Channel.DUMBO_MVBA,
         instance_id=None,
         message=RawPayload(data=b"opaque-dumbo-payload"),
@@ -73,7 +86,7 @@ def test_protocol_envelope_round_trip_dumbo_raw_payload() -> None:
 
 def test_protocol_envelope_round_trip_dumbo_prbc_payload() -> None:
     envelope = ProtocolEnvelope(
-        round_id=6,
+        round_id=7,
         channel=Channel.DUMBO_PRBC,
         instance_id=2,
         message=PrbcReady(leader=2, roothash=b"root", signature=b"sig"),
@@ -88,7 +101,7 @@ def test_protocol_envelope_round_trip_dumbo_prbc_payload() -> None:
 def test_protocol_envelope_round_trip_dumbo_mvba_payload() -> None:
     proof = ThresholdShareProof(roothash=b"root", signature=b"combined-sig")
     envelope = ProtocolEnvelope(
-        round_id=8,
+        round_id=9,
         channel=Channel.DUMBO_MVBA,
         instance_id=None,
         message=MvbaRcPrepare(mvba_round=3, leader=1, proof=proof),
@@ -102,7 +115,7 @@ def test_protocol_envelope_round_trip_dumbo_mvba_payload() -> None:
 
 def test_protocol_envelope_round_trip_dumbo_aba_wrapped_payload() -> None:
     envelope = ProtocolEnvelope(
-        round_id=9,
+        round_id=10,
         channel=Channel.DUMBO_MVBA,
         instance_id=None,
         message=MvbaAbaMessage(mvba_round=5, payload=BaEst(epoch=2, value=1)),
@@ -117,7 +130,7 @@ def test_protocol_envelope_round_trip_dumbo_aba_wrapped_payload() -> None:
 def test_protocol_envelope_round_trip_dumbo_proof_payload() -> None:
     proof = PrbcProof(roothash=b"root", sigmas=((0, b"a"), (1, b"b"), (2, b"c")))
     envelope = ProtocolEnvelope(
-        round_id=10,
+        round_id=11,
         channel=Channel.DUMBO_PROOF,
         instance_id=None,
         message=DumboProofDiffuse(leader=1, proof=proof),
@@ -131,7 +144,7 @@ def test_protocol_envelope_round_trip_dumbo_proof_payload() -> None:
 
 def test_protocol_envelope_round_trip_dumbo_pool_payload() -> None:
     envelope = ProtocolEnvelope(
-        round_id=11,
+        round_id=12,
         channel=Channel.DUMBO_POOL,
         instance_id=None,
         message=PoolFetchRequest(item_id="item-1", origin_round=7, origin_sender=2, roothash=b"x"),
@@ -145,7 +158,7 @@ def test_protocol_envelope_round_trip_dumbo_pool_payload() -> None:
 
 def test_protocol_envelope_round_trip_dumbo_pool_response_payload() -> None:
     envelope = ProtocolEnvelope(
-        round_id=12,
+        round_id=13,
         channel=Channel.DUMBO_POOL,
         instance_id=None,
         message=PoolFetchResponse(item_id="item-2", payload=b"payload"),
@@ -180,20 +193,6 @@ def test_string_tx_dedup_key_uses_lightweight_tagged_key() -> None:
     assert tx_dedup_key("dummy-tx") == "s:dummy-tx"
 
 
-def test_tpke_share_bundle_round_trip() -> None:
-    envelope = ProtocolEnvelope(
-        round_id=1,
-        channel=Channel.TPKE,
-        instance_id=None,
-        message=TpkeShareBundle(shares=(b"a", None, b"c")),
-    )
-
-    sender, decoded = ProtocolEnvelope.from_bytes(envelope.to_bytes(sender=1))
-
-    assert sender == 1
-    assert decoded == envelope
-
-
 def test_protocol_envelope_rejects_invalid_payload() -> None:
     with pytest.raises(SerializationError):
         ProtocolEnvelope.from_bytes(os.urandom(32))
@@ -209,83 +208,6 @@ def test_tx_batch_rejects_invalid_payload() -> None:
         decode_tx_batch(os.urandom(24))
 
 
-def test_tpke_share_verification(encryption_keys) -> None:
-    pk, sks = encryption_keys
-    message = b"x" * 32
-    ciphertext = pk.encrypt(message)
-    share = sks[0].decrypt_share(ciphertext)
-
-    assert pk.verify_ciphertext(ciphertext) is True
-    assert pk.verify_share(0, ciphertext, share) is True
-    assert pk.verify_share(0, ciphertext, share[:-1] + bytes([share[-1] ^ 1])) is False
-
-
-def test_seal_encrypted_batch_round_trip(encryption_keys) -> None:
-    pk, sks = encryption_keys
-    payload = b"batch-payload"
-
-    encoded = honey_native.seal_encrypted_batch(pk, payload)
-    batch = EncryptedBatch.from_bytes(encoded)
-    shares = [sks[0].decrypt_share(batch.encrypted_key), sks[1].decrypt_share(batch.encrypted_key)]
-    opened_key = pk.combine_shares(batch.encrypted_key, shares)
-
-    # aes_decrypt is not exposed as a Python API; HB batch decryption is owned by
-    # BatchDecryptor in Rust. The test above verifies seal_encrypted_batch produces
-    # a valid ciphertext and that PKE share combination recovers a key without error.
-    assert opened_key  # key reconstruction succeeded
-
-
-def test_tpke_batch_decryptor_decrypts_multiple_batches(encryption_keys) -> None:
-    pk, sks = encryption_keys
-    payloads = [b"batch-one", b"batch-two"]
-    decryptor = honey_native.PkeBatchDecryptor(
-        pk,
-        [honey_native.seal_encrypted_batch(pk, payload) for payload in payloads],
-    )
-
-    shares0 = decryptor.local_shares(sks[0])
-    shares1 = decryptor.local_shares(sks[1])
-
-    assert decryptor.batch_count() == 2
-    assert decryptor.is_complete() is False
-    assert decryptor.ingest_bundle(0, [shares0[0], shares0[1]]) == []
-    assert decryptor.ingest_bundle(1, [shares1[0], shares1[1]]) == [0, 1]
-    assert decryptor.is_complete() is True
-    assert decryptor.plaintexts() == payloads
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BatchDecryptor.ingest_bundle raises ValueError on corrupted share bytes "
-        "instead of silently skipping them. Intended BFT behaviour is to skip. "
-        "Pre-existing issue in honey_native HEAD; not introduced by this branch."
-    ),
-)
-def test_tpke_batch_decryptor_rejects_bad_bundle_shape_and_skips_bad_shares(
-    encryption_keys,
-) -> None:
-    pk, sks = encryption_keys
-    decryptor = honey_native.PkeBatchDecryptor(
-        pk,
-        [
-            honey_native.seal_encrypted_batch(pk, b"batch-one"),
-            honey_native.seal_encrypted_batch(pk, b"batch-two"),
-        ],
-    )
-
-    shares0 = decryptor.local_shares(sks[0])
-    shares1 = decryptor.local_shares(sks[1])
-
-    with pytest.raises(ValueError, match="share bundle length"):
-        decryptor.ingest_bundle(0, [shares0[0]])
-
-    bad_share = shares1[0][:-1] + bytes([shares1[0][-1] ^ 0x01])
-    assert decryptor.ingest_bundle(0, [shares0[0], shares0[1]]) == []
-    assert decryptor.ingest_bundle(1, [bad_share, shares1[1]]) == [1]
-    assert decryptor.is_complete() is False
-
-
 def test_merkle_decode_from_dicts_matches_object_path() -> None:
     num_nodes = 10
     faulty = 3
@@ -299,19 +221,3 @@ def test_merkle_decode_from_dicts_matches_object_path() -> None:
 
     assert merkle.decode(available, root, k, num_nodes) == payload
     assert merkle.decode_from_dicts(stripe_map, proof_map, root, k, num_nodes) == payload
-
-
-def test_merkle_round_trip_preserves_encrypted_batch_when_len_divisible_by_k() -> None:
-    num_nodes = 10
-    faulty = 3
-    k = num_nodes - 2 * faulty
-    pk, _ = honey_native.pke_generate(num_nodes, faulty + 1)
-    payload = encode_tx_batch([encode_tx(f"tx-{i}") for i in range(4)])
-
-    for _ in range(50):
-        encrypted_batch = honey_native.seal_encrypted_batch(pk, payload)
-        assert len(encrypted_batch) % k == 0
-        root, shards, proofs = merkle.encode(encrypted_batch, k, num_nodes)
-        available = [honey_native.EncodedShard(i, shards[i], proofs[i]) for i in range(k)]
-
-        assert merkle.decode(available, root, k, num_nodes) == encrypted_batch

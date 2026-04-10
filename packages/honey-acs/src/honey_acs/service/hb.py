@@ -6,9 +6,16 @@ from typing import Any, cast
 
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.hb.bkr93 import CSParams, run_bkr93_acs_with_send
-from honey_acs.messages import Channel, ProtocolMessage
+from honey_acs.messages import Channel
 from honey_acs.params import CryptoParams, HBConfig
-from honey_acs.service.base import AcsOutputMode, AcsRoundContext, AcsService, ManagedRoundSession
+from honey_acs.service.base import (
+    AcsOutputMode,
+    AcsRoundContext,
+    AcsService,
+    ManagedRoundSession,
+    build_proposal_id,
+)
+from honey_acs.subprotocols.provable_reliable_broadcast import PrbcOutcome, serialize_prbc_proof
 from honey_acs.subprotocols.reliable_broadcast import RbcOutput
 
 
@@ -25,8 +32,9 @@ class HBRoundSession(ManagedRoundSession):
         self.coin_recvs = [asyncio.Queue() for _ in range(context.nodes)]
         self.aba_recvs = [asyncio.Queue() for _ in range(context.nodes)]
         self.rbc_recvs = [asyncio.Queue() for _ in range(context.nodes)]
-        self.my_rbc_input: asyncio.Queue[bytes] = asyncio.Queue(1)
+        self.my_rbc_input: asyncio.Queue[bytes | str] = asyncio.Queue(1)
         self.my_rbc_input.put_nowait(proposal_input)
+        self._proposal_ids: dict[int, str] = {}
 
     async def deliver_decoded(
         self,
@@ -68,7 +76,7 @@ class HBRoundSession(ManagedRoundSession):
             recipient: int,
             channel: Channel,
             instance_id: int | None,
-            message: ProtocolMessage,
+            message: object,
         ) -> None:
             self.context.emit_event(
                 {
@@ -84,11 +92,11 @@ class HBRoundSession(ManagedRoundSession):
         async def broadcast(
             channel: Channel,
             instance_id: int | None,
-            message: ProtocolMessage,
+            message: object,
         ) -> None:
             self.context.emit_event(
                 {
-                    "kind": "broadcast_send",
+                    "kind": "broadcast",
                     "round_id": self.round_id,
                     "channel": channel.value,
                     "instance_id": instance_id,
@@ -101,16 +109,29 @@ class HBRoundSession(ManagedRoundSession):
         if backend not in {"none", "rust"}:
             raise ProtocolInvariantError(f"unsupported broadcast mempool backend: {backend}")
 
-        def on_rbc_output(output: RbcOutput) -> None:
-            if backend != "rust":
-                return
+        def on_broadcast_output(output: RbcOutput | PrbcOutcome) -> None:
+            if isinstance(output, RbcOutput):
+                leader = output.leader
+                payload = output.payload
+                digest = output.roothash
+                certificate = output.roothash
+            else:
+                leader = output.leader
+                payload = output.value
+                digest = output.proof.roothash
+                certificate = serialize_prbc_proof(output.proof)
+
+            proposal_id = build_proposal_id(self.round_id, leader, digest)
+            self._proposal_ids[leader] = proposal_id
             self.context.emit_event(
                 {
-                    "kind": "broadcast_output",
+                    "kind": "proposal_ready",
                     "round_id": self.round_id,
-                    "sender": output.leader,
-                    "payload": output.payload,
-                    "roothash": output.roothash,
+                    "proposer": leader,
+                    "proposal_id": proposal_id,
+                    "payload": payload,
+                    "digest": digest,
+                    "certificate": certificate,
                 }
             )
 
@@ -142,18 +163,29 @@ class HBRoundSession(ManagedRoundSession):
                     logger=self.context.logger,
                     send=send,
                     broadcast=broadcast,
-                    on_rbc_output=on_rbc_output,
+                    broadcast_protocol=self.context.config.hb_broadcast_protocol,
+                    on_broadcast_output=on_broadcast_output,
                 )
                 for task in tasks:
                     if not task.done():
                         task.cancel()
 
             decision = await output_queue.get()
+            selected_proposal_ids = []
+            for pid in decision:
+                if pid is None:
+                    continue
+                proposal_id = self._proposal_ids.get(pid)
+                if proposal_id is None:
+                    raise ProtocolInvariantError(
+                        f"HB ACS decided proposer {pid} before proposal_ready was emitted"
+                    )
+                selected_proposal_ids.append(proposal_id)
             self.context.emit_event(
                 {
                     "kind": "decision",
                     "round_id": self.round_id,
-                    "selected_pids": [pid for pid in decision if pid is not None],
+                    "selected_proposal_ids": selected_proposal_ids,
                 }
             )
         except asyncio.CancelledError:

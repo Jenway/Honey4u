@@ -1,0 +1,13 @@
+# Local HoneyBadger benchmark with HoneyBadger ACS.
+mode = "benchmark"
+sid = "bench:local:hb"
+acs_protocol = "hb"
+nodes = 4
+faulty = 1
+rounds = 5
+batch_size = 256
+global_timeout = 120.0
+
+[config]
+broadcast_mempool_backend = "rust"
+pool_mempool_max = 1000

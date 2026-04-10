@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -107,12 +109,11 @@ class RustDrivenDriverPhaseStats:
     total_pull_seconds: float = 0.0
     send_events: int = 0
     send_payload_bytes: int = 0
+    proposal_ready_events: int = 0
+    proposal_ready_payload_bytes: int = 0
+    proposal_ready_certificate_bytes: int = 0
     decision_events: int = 0
     failure_events: int = 0
-    carryover_events: int = 0
-    broadcast_output_events: int = 0
-    broadcast_output_payload_bytes: int = 0
-    broadcast_output_roothash_bytes: int = 0
     host_stats: tuple[RustDrivenHostPhaseStats, ...] = ()
 
 
@@ -294,12 +295,11 @@ def _decode_rust_driven_driver_phase_stats(
         total_pull_seconds=float(value.get("total_pull_seconds", 0.0)),
         send_events=int(value.get("send_events", 0)),
         send_payload_bytes=int(value.get("send_payload_bytes", 0)),
+        proposal_ready_events=int(value.get("proposal_ready_events", 0)),
+        proposal_ready_payload_bytes=int(value.get("proposal_ready_payload_bytes", 0)),
+        proposal_ready_certificate_bytes=int(value.get("proposal_ready_certificate_bytes", 0)),
         decision_events=int(value.get("decision_events", 0)),
         failure_events=int(value.get("failure_events", 0)),
-        carryover_events=int(value.get("carryover_events", 0)),
-        broadcast_output_events=int(value.get("broadcast_output_events", 0)),
-        broadcast_output_payload_bytes=int(value.get("broadcast_output_payload_bytes", 0)),
-        broadcast_output_roothash_bytes=int(value.get("broadcast_output_roothash_bytes", 0)),
         host_stats=tuple(
             _decode_rust_driven_host_phase_stats(cast(dict[str, Any], host_stats))
             for host_stats in value.get("host_stats", ())
@@ -478,6 +478,93 @@ def _build_honey_node_binary() -> Path:
     return _HONEY_NODE_BINARY
 
 
+def _format_toml_key(key: str) -> str:
+    if key and all(char.isascii() and (char.isalnum() or char in ("_", "-")) for char in key):
+        return key
+    return json.dumps(key)
+
+
+def _format_toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"TOML does not support non-finite floats: {value!r}")
+        return repr(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, Path):
+        return json.dumps(str(value))
+    if isinstance(value, list | tuple):
+        return f"[{', '.join(_format_toml_value(item) for item in value)}]"
+    if isinstance(value, dict):
+        rendered_items = ", ".join(
+            f"{_format_toml_key(str(key))} = {_format_toml_value(item)}"
+            for key, item in value.items()
+        )
+        return f"{{ {rendered_items} }}"
+    raise TypeError(f"Unsupported TOML value type: {type(value).__name__}")
+
+
+def _render_bench_driver_config(
+    *,
+    mode: str,
+    sid: str,
+    num_nodes: int,
+    faulty: int,
+    max_rounds: int,
+    global_timeout: float,
+    batch_size: int | None = None,
+    protocol: str | None = None,
+    acs_protocol: str | None = None,
+    result_path: str | None = None,
+    ledger_dir: str | None = None,
+    tx_payload: list[list[str]] | None = None,
+    config_payload: dict[str, Any] | None = None,
+) -> str:
+    lines = [
+        f"mode = {json.dumps(mode)}",
+        f"sid = {json.dumps(sid)}",
+        f"nodes = {num_nodes}",
+        f"faulty = {faulty}",
+        f"rounds = {max_rounds}",
+        f"global_timeout = {_format_toml_value(global_timeout)}",
+    ]
+    if batch_size is not None:
+        lines.append(f"batch_size = {batch_size}")
+    if protocol is not None:
+        lines.append(f"protocol = {json.dumps(protocol)}")
+    if acs_protocol is not None:
+        lines.append(f"acs_protocol = {json.dumps(acs_protocol)}")
+    if result_path is not None:
+        lines.append(f"result_path = {json.dumps(result_path)}")
+    if ledger_dir is not None:
+        lines.append(f"ledger_dir = {json.dumps(ledger_dir)}")
+    if tx_payload is not None:
+        lines.append(f"tx_json = {_format_toml_value(tx_payload)}")
+    if config_payload:
+        lines.append("")
+        lines.append("[config]")
+        for key, value in config_payload.items():
+            lines.append(f"{_format_toml_key(str(key))} = {_format_toml_value(value)}")
+    return "\n".join(lines) + "\n"
+
+
+def _run_bench_driver(*, config_text: str) -> subprocess.CompletedProcess[str]:
+    binary = _build_honey_node_binary()
+    with tempfile.TemporaryDirectory(prefix="honey-bench-driver-") as temp_dir:
+        config_path = Path(temp_dir) / "bench-driver.toml"
+        config_path.write_text(config_text, encoding="utf-8")
+        return subprocess.run(
+            [str(binary), "bench-driver", "--config", str(config_path)],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+        )
+
+
 def _benchmark_rust_driver_nodes(
     *,
     sid: str,
@@ -489,31 +576,18 @@ def _benchmark_rust_driver_nodes(
     acs_protocol: AcsRuntimeProtocol,
     config_payload: dict[str, Any],
 ) -> list[MultiprocessNodeResult]:
-    binary = _build_honey_node_binary()
-    completed = subprocess.run(
-        [
-            str(binary),
-            "bench-driver",
-            "--sid",
-            sid,
-            "--acs-protocol",
-            acs_protocol,
-            "--nodes",
-            str(num_nodes),
-            "--faulty",
-            str(faulty),
-            "--rounds",
-            str(max_rounds),
-            "--batch-size",
-            str(batch_size),
-            "--global-timeout",
-            str(global_timeout),
-            "--config-json",
-            json.dumps(config_payload, separators=(",", ":")),
-        ],
-        cwd=Path.cwd(),
-        capture_output=True,
-        text=True,
+    completed = _run_bench_driver(
+        config_text=_render_bench_driver_config(
+            mode="benchmark",
+            sid=sid,
+            num_nodes=num_nodes,
+            faulty=faulty,
+            max_rounds=max_rounds,
+            batch_size=batch_size,
+            global_timeout=global_timeout,
+            acs_protocol=acs_protocol,
+            config_payload=config_payload,
+        )
     )
     if completed.returncode != 0:
         error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
@@ -536,31 +610,17 @@ def _run_rust_driven_acs(
     global_timeout: float,
     config_payload: dict[str, Any] | None = None,
 ) -> RustDrivenAcsRunResult:
-    binary = _build_honey_node_binary()
-    completed = subprocess.run(
-        [
-            str(binary),
-            "bench-driver",
-            "--mode",
-            "acs",
-            "--protocol",
-            protocol,
-            "--sid",
-            sid,
-            "--nodes",
-            str(num_nodes),
-            "--faulty",
-            str(faulty),
-            "--rounds",
-            str(max_rounds),
-            "--global-timeout",
-            str(global_timeout),
-            "--config-json",
-            json.dumps(config_payload or {}, separators=(",", ":")),
-        ],
-        cwd=Path.cwd(),
-        capture_output=True,
-        text=True,
+    completed = _run_bench_driver(
+        config_text=_render_bench_driver_config(
+            mode="acs",
+            sid=sid,
+            protocol=protocol,
+            num_nodes=num_nodes,
+            faulty=faulty,
+            max_rounds=max_rounds,
+            global_timeout=global_timeout,
+            config_payload=config_payload or {},
+        )
     )
     if completed.returncode != 0:
         error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
@@ -583,33 +643,18 @@ def _run_rust_driven_honeybadger(
     acs_protocol: AcsRuntimeProtocol = "hb",
     acs_config_payload: dict[str, Any] | None = None,
 ) -> RustDrivenHoneyBadgerRunResult:
-    binary = _build_honey_node_binary()
-    completed = subprocess.run(
-        [
-            str(binary),
-            "bench-driver",
-            "--mode",
-            "hb",
-            "--sid",
-            sid,
-            "--acs-protocol",
-            acs_protocol,
-            "--nodes",
-            str(num_nodes),
-            "--faulty",
-            str(faulty),
-            "--rounds",
-            str(max_rounds),
-            "--batch-size",
-            str(batch_size),
-            "--global-timeout",
-            str(global_timeout),
-            "--config-json",
-            json.dumps(acs_config_payload or {}, separators=(",", ":")),
-        ],
-        cwd=Path.cwd(),
-        capture_output=True,
-        text=True,
+    completed = _run_bench_driver(
+        config_text=_render_bench_driver_config(
+            mode="hb",
+            sid=sid,
+            num_nodes=num_nodes,
+            faulty=faulty,
+            max_rounds=max_rounds,
+            batch_size=batch_size,
+            global_timeout=global_timeout,
+            acs_protocol=acs_protocol,
+            config_payload=acs_config_payload or {},
+        )
     )
     if completed.returncode != 0:
         error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
@@ -712,36 +757,19 @@ def _run_rust_driven_dumbo(
     ledger_dir: str | None = None,
     tx_payload: list[list[str]] | None = None,
 ) -> RustDrivenDumboRunResult:
-    binary = _build_honey_node_binary()
-    cmd = [
-        str(binary),
-        "bench-driver",
-        "--mode",
-        "dumbo",
-        "--sid",
-        sid,
-        "--nodes",
-        str(num_nodes),
-        "--faulty",
-        str(faulty),
-        "--rounds",
-        str(max_rounds),
-        "--batch-size",
-        str(batch_size),
-        "--global-timeout",
-        str(global_timeout),
-        "--config-json",
-        json.dumps(config_payload or {}, separators=(",", ":")),
-    ]
-    if ledger_dir is not None:
-        cmd += ["--ledger-dir", ledger_dir]
-    if tx_payload is not None:
-        cmd += ["--tx-json", json.dumps(tx_payload, separators=(",", ":"))]
-    completed = subprocess.run(
-        cmd,
-        cwd=Path.cwd(),
-        capture_output=True,
-        text=True,
+    completed = _run_bench_driver(
+        config_text=_render_bench_driver_config(
+            mode="dumbo",
+            sid=sid,
+            num_nodes=num_nodes,
+            faulty=faulty,
+            max_rounds=max_rounds,
+            batch_size=batch_size,
+            global_timeout=global_timeout,
+            ledger_dir=ledger_dir,
+            tx_payload=tx_payload,
+            config_payload=config_payload or {},
+        )
     )
     if completed.returncode != 0:
         error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
@@ -854,6 +882,7 @@ def benchmark_local_honeybadger_nodes_rust_driven(
     rust_tx_pool_max_bytes: int = 0,
     ledger_dir: str | None = None,
     acs_protocol: AcsRuntimeProtocol = "hb",
+    hb_broadcast_protocol: str = "rbc",
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
     broadcast_mempool_backend: BroadcastPoolBackend = "rust",
@@ -879,6 +908,10 @@ def benchmark_local_honeybadger_nodes_rust_driven(
         acs_config_payload = {
             "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
             "pool_grace_ms": pool_grace_ms,
+        }
+    elif acs_protocol == "hb":
+        acs_config_payload = {
+            "hb_broadcast_protocol": hb_broadcast_protocol,
         }
     config_payload = dict(acs_config_payload or {})
     config_payload["broadcast_mempool_backend"] = broadcast_mempool_backend
@@ -951,6 +984,7 @@ def run_local_honeybadger_acs_rust_driven(
     faulty: int,
     max_rounds: int = 1,
     global_timeout: float = 30.0,
+    hb_broadcast_protocol: str = "rbc",
     broadcast_mempool_backend: BroadcastPoolBackend = "rust",
     pool_mempool_max: int = 1000,
 ) -> RustDrivenAcsRunResult:
@@ -962,6 +996,7 @@ def run_local_honeybadger_acs_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         config_payload={
+            "hb_broadcast_protocol": hb_broadcast_protocol,
             "broadcast_mempool_backend": broadcast_mempool_backend,
             "pool_mempool_max": pool_mempool_max,
         },
@@ -976,6 +1011,7 @@ def run_local_honeybadger_rust_driven(
     max_rounds: int = 1,
     global_timeout: float = 30.0,
     acs_protocol: AcsRuntimeProtocol = "hb",
+    hb_broadcast_protocol: str = "rbc",
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
     broadcast_mempool_backend: BroadcastPoolBackend = "rust",
@@ -986,6 +1022,10 @@ def run_local_honeybadger_rust_driven(
         acs_config_payload = {
             "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
             "pool_grace_ms": pool_grace_ms,
+        }
+    elif acs_protocol == "hb":
+        acs_config_payload = {
+            "hb_broadcast_protocol": hb_broadcast_protocol,
         }
     config_payload = dict(acs_config_payload or {})
     config_payload["broadcast_mempool_backend"] = broadcast_mempool_backend
@@ -1070,7 +1110,7 @@ def run_local_dumbo_new_driver(
     """Run the Dumbo BFT protocol using the unified Rust-native ``bench-driver`` entrypoint.
 
     Unlike ``benchmark_local_dumbo_nodes_rust_driven`` which consumes benchmark-style node output,
-    this function invokes ``bench-driver --mode dumbo`` to manage BroadcastMempool,
+    this function writes a temporary TOML config for ``bench-driver`` to manage BroadcastMempool,
     PoolReference building, and carryover processing fully in Rust.
 
     Args:

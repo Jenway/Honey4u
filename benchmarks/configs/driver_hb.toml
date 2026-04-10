@@ -1,0 +1,13 @@
+# Rust-owned HoneyBadger outer driver with per-round protocol output.
+mode = "hb"
+sid = "bench:driver:hb"
+acs_protocol = "hb"
+nodes = 4
+faulty = 1
+rounds = 3
+batch_size = 128
+global_timeout = 120.0
+
+[config]
+broadcast_mempool_backend = "rust"
+pool_mempool_max = 1000

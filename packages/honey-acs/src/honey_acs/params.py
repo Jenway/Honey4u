@@ -67,6 +67,7 @@ class HBConfig:
     round_timeout: float = 10.0
     enable_profiling: bool = False
     log_level: str = "INFO"
+    hb_broadcast_protocol: str = "rbc"
     enable_broadcast_pool_reuse: bool = False
     broadcast_mempool_backend: str = "rust"
     enable_pool_reference_proposals: bool = False
@@ -85,6 +86,8 @@ class HBConfig:
             raise ValueError(f"max_rounds={self.max_rounds} must be > 0")
         if self.round_timeout <= 0:
             raise ValueError(f"round_timeout={self.round_timeout} must be > 0")
+        if self.hb_broadcast_protocol not in {"rbc", "prbc"}:
+            raise ValueError("hb_broadcast_protocol must be one of: rbc, prbc")
         if self.broadcast_mempool_backend not in {"none", "rust"}:
             raise ValueError("broadcast_mempool_backend must be one of: none, rust")
         if self.pool_mempool_max < 0:

@@ -9,7 +9,7 @@ use super::*;
 fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String> {
     if args.tx_json.is_some() {
         return Err(String::from(
-            "bench-driver:dumbo does not support --tx-json; only deterministic per-node dummy transactions are supported",
+            "bench-driver:dumbo does not support tx_json; only deterministic per-node dummy transactions are supported",
         ));
     }
     let config: Value = serde_json::from_str(&args.config_json).map_err(|e| e.to_string())?;

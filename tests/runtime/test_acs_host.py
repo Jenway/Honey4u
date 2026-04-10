@@ -2,30 +2,26 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Literal, cast
+from typing import cast
 
 import honey_native
-import pytest
-from honey_acs.exceptions import ProtocolInvariantError
-from honey_acs.host_bridge import (
-    PersistentAcsHost,
-    build_persistent_acs_host_from_json,
-)
-from honey_acs.host_crypto import (
-    serialize_dumbo_crypto_payloads_json,
-    serialize_hb_crypto_payloads_json,
-)
+from honey_acs.host_bridge import PersistentAcsHost, build_persistent_acs_host
 from honey_acs.messages import ProtocolEnvelope
+from honey_acs.subprotocols.provable_reliable_broadcast import (
+    deserialize_prbc_proof,
+    validate_prbc_proof,
+)
 
 
-def _drain_until_decisions(
+def _drain_until_round_complete(
     hosts: list[PersistentAcsHost],
     *,
     round_id: int,
-    decision_key: Literal["selected_pids", "selected_payloads"] = "selected_pids",
+    expected_proposals_per_host: int | None = None,
     timeout: float = 20.0,
-) -> list[tuple[object, ...]]:
-    decisions: list[tuple[object, ...] | None] = [None] * len(hosts)
+) -> tuple[list[tuple[str, ...]], list[dict[str, dict[str, object]]]]:
+    decisions: list[tuple[str, ...] | None] = [None] * len(hosts)
+    proposals_by_host: list[dict[str, dict[str, object]]] = [{} for _ in hosts]
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:
@@ -35,7 +31,7 @@ def _drain_until_decisions(
             for event in host.finish_pull_outbound_wire_batch():
                 progressed = True
                 kind = str(event["kind"])
-                if kind in {"send", "broadcast_send"}:
+                if kind in {"send", "broadcast"}:
                     sender, envelope = cast(
                         tuple[int, ProtocolEnvelope],
                         honey_native.decode_protocol_envelope_py(cast(bytes, event["payload"])),
@@ -58,12 +54,12 @@ def _drain_until_decisions(
                         for recipient in recipients:
                             hosts[recipient].push_inbound_wire_batch([payload])
                     continue
+                if kind == "proposal_ready":
+                    proposal_id = cast(str, event["proposal_id"])
+                    proposals_by_host[pid][proposal_id] = event
+                    continue
                 if kind == "decision":
-                    decisions[pid] = tuple(cast(list[object], event[decision_key]))
-                    continue
-                if kind == "broadcast_output":
-                    continue
-                if kind == "carryovers":
+                    decisions[pid] = tuple(cast(list[str], event["selected_proposal_ids"]))
                     continue
                 if kind == "failure":
                     raise AssertionError(
@@ -72,107 +68,82 @@ def _drain_until_decisions(
                     )
                 raise AssertionError(f"unexpected ACS host event kind: {kind}")
 
-        if all(decision is not None for decision in decisions):
-            return cast(list[tuple[object, ...]], decisions)
+        enough_proposals = expected_proposals_per_host is None or all(
+            len(proposals) >= expected_proposals_per_host for proposals in proposals_by_host
+        )
+        if all(decision is not None for decision in decisions) and enough_proposals:
+            return cast(list[tuple[str, ...]], decisions), proposals_by_host
         if not progressed:
             time.sleep(0.001)
 
-    raise AssertionError(f"timed out waiting for ACS host decisions in round {round_id}")
+    raise AssertionError(f"timed out waiting for ACS host round {round_id} completion")
 
 
-def _drain_until_decisions_and_broadcast_outputs(
-    hosts: list[PersistentAcsHost],
-    *,
-    round_id: int,
-    expected_outputs_per_host: int,
-    timeout: float = 20.0,
-) -> tuple[list[tuple[int, ...]], list[list[dict[str, object]]]]:
-    decisions: list[tuple[int, ...] | None] = [None] * len(hosts)
-    broadcast_outputs: list[list[dict[str, object]]] = [[] for _ in hosts]
-    deadline = time.monotonic() + timeout
-
-    while time.monotonic() < deadline:
-        progressed = False
-        for pid, host in enumerate(hosts):
-            host.begin_pull_outbound_wire_batch(512)
-            for event in host.finish_pull_outbound_wire_batch():
-                progressed = True
-                kind = str(event["kind"])
-                if kind in {"send", "broadcast_send"}:
-                    sender, envelope = cast(
-                        tuple[int, ProtocolEnvelope],
-                        honey_native.decode_protocol_envelope_py(cast(bytes, event["payload"])),
-                    )
-                    assert sender == pid
-                    assert envelope.round_id == round_id
-                    payload = cast(bytes, event["payload"])
-                    if kind == "send":
-                        recipient = cast(int, event["recipient"])
-                        hosts[recipient].push_inbound_wire_batch([payload])
-                    else:
-                        include_self = bool(event.get("include_self", True))
-                        recipients = (
-                            range(len(hosts))
-                            if include_self
-                            else (
-                                recipient for recipient in range(len(hosts)) if recipient != sender
-                            )
-                        )
-                        for recipient in recipients:
-                            hosts[recipient].push_inbound_wire_batch([payload])
-                    continue
-                if kind == "decision":
-                    decisions[pid] = tuple(cast(list[int], event["selected_pids"]))
-                    continue
-                if kind == "broadcast_output":
-                    broadcast_outputs[pid].append(event)
-                    continue
-                if kind == "carryovers":
-                    continue
-                if kind == "failure":
-                    raise AssertionError(
-                        f"ACS host {pid} failed in round {round_id}: "
-                        f"{event['exception_type']}: {event['error']}"
-                    )
-                raise AssertionError(f"unexpected ACS host event kind: {kind}")
-
-        if all(decision is not None for decision in decisions) and all(
-            len(outputs) >= expected_outputs_per_host for outputs in broadcast_outputs
-        ):
-            return cast(list[tuple[int, ...]], decisions), broadcast_outputs
-        if not progressed:
-            time.sleep(0.001)
-
-    raise AssertionError(
-        f"timed out waiting for ACS host decisions and broadcast outputs in round {round_id}"
+def _selected_proposers(
+    selected_proposal_ids: tuple[str, ...],
+    proposals: dict[str, dict[str, object]],
+) -> tuple[int, ...]:
+    return tuple(
+        cast(int, proposals[proposal_id]["proposer"]) for proposal_id in selected_proposal_ids
     )
 
 
 def _build_hosts(
-    protocol: Literal["hb", "dumbo"],
+    protocol: str,
     num_nodes: int,
     faulty: int,
     *,
-    output_mode: Literal["selected_pids", "payloads"] = "selected_pids",
     config: dict[str, object] | None = None,
 ) -> list[PersistentAcsHost]:
     payloads = (
-        serialize_dumbo_crypto_payloads_json(num_nodes, faulty)
+        honey_native.generate_dumbo_crypto_payloads_json(num_nodes, faulty)
         if protocol == "dumbo"
-        else serialize_hb_crypto_payloads_json(num_nodes, faulty)
+        else honey_native.generate_hb_crypto_payloads_json(num_nodes, faulty)
     )
-    return [
-        build_persistent_acs_host_from_json(
-            protocol=protocol,
-            pid=pid,
-            nodes=num_nodes,
-            faulty=faulty,
-            crypto_json=payload,
-            config_json=json.dumps(config) if config is not None else None,
-            output_mode=output_mode,
+    return _build_hosts_from_payloads(
+        protocol,
+        payloads,
+        num_nodes=num_nodes,
+        faulty=faulty,
+        config=config,
+    )
+
+
+def _build_hosts_from_payloads(
+    protocol: str,
+    payloads: list[str],
+    *,
+    num_nodes: int,
+    faulty: int,
+    config: dict[str, object] | None = None,
+) -> list[PersistentAcsHost]:
+    hosts: list[PersistentAcsHost] = []
+    for pid, payload in enumerate(payloads):
+        decoded = cast(dict[str, object], json.loads(payload))
+        hosts.append(
+            build_persistent_acs_host(
+                protocol=cast(str, protocol),
+                pid=pid,
+                nodes=num_nodes,
+                faulty=faulty,
+                sig_pk=bytes.fromhex(cast(str, decoded["sig_pk"])),
+                sig_sk=bytes.fromhex(cast(str, decoded["sig_sk"])),
+                ecdsa_pks=[bytes.fromhex(value) for value in cast(list[str], decoded["ecdsa_pks"])],
+                ecdsa_sk=bytes.fromhex(cast(str, decoded["ecdsa_sk"])),
+                proof_sig_pk=(
+                    bytes.fromhex(cast(str, decoded["proof_sig_pk"]))
+                    if protocol == "dumbo"
+                    else None
+                ),
+                proof_sig_sk=(
+                    bytes.fromhex(cast(str, decoded["proof_sig_sk"]))
+                    if protocol == "dumbo"
+                    else None
+                ),
+                config_json=json.dumps(config) if config is not None else None,
+            )
         )
-        for pid, payload in enumerate(payloads)
-    ]
+    return hosts
 
 
 def test_persistent_hb_acs_host_reuses_worker_threads_across_rounds() -> None:
@@ -192,11 +163,11 @@ def test_persistent_hb_acs_host_reuses_worker_threads_across_rounds() -> None:
                     proposal_input=f"hb-round-{round_id}-node-{pid}".encode(),
                 )
 
-            decisions = cast(
-                list[tuple[int, ...]], _drain_until_decisions(hosts, round_id=round_id)
-            )
+            decisions, proposals_by_host = _drain_until_round_complete(hosts, round_id=round_id)
             assert len(set(decisions)) == 1
-            assert decisions[0] == tuple(range(num_nodes))
+            assert _selected_proposers(decisions[0], proposals_by_host[0]) == tuple(
+                range(num_nodes)
+            )
             assert [cast(int, host.stats()["worker_ident"]) for host in hosts] == worker_idents
     finally:
         for host in hosts:
@@ -216,37 +187,39 @@ def test_persistent_dumbo_acs_host_reaches_consistent_decision() -> None:
                 proposal_input=f"dumbo-node-{pid}".encode(),
             )
 
-        decisions = cast(list[tuple[int, ...]], _drain_until_decisions(hosts, round_id=0))
+        decisions, proposals_by_host = _drain_until_round_complete(hosts, round_id=0)
         assert len(set(decisions)) == 1
         decided = decisions[0]
-        assert len(decided) >= num_nodes - faulty
-        assert all(0 <= pid < num_nodes for pid in decided)
+        selected_proposers = _selected_proposers(decided, proposals_by_host[0])
+        assert len(selected_proposers) >= num_nodes - faulty
+        assert all(0 <= pid < num_nodes for pid in selected_proposers)
     finally:
         for host in hosts:
             host.shutdown()
 
 
-def test_persistent_hb_acs_host_rejects_payload_decisions() -> None:
+def test_persistent_hb_acs_host_ignores_legacy_output_mode_in_config_json() -> None:
     num_nodes = 4
     faulty = 1
-    hosts = _build_hosts("hb", num_nodes, faulty, output_mode="payloads")
+    hosts = _build_hosts("hb", num_nodes, faulty, config={"output_mode": "payloads"})
 
     try:
         for pid, host in enumerate(hosts):
-            with pytest.raises(
-                ProtocolInvariantError, match="payload output mode has been removed"
-            ):
-                host.start_round(
-                    round_id=0,
-                    sid="test:acs-host:hb:payloads:",
-                    proposal_input=f"hb-payload-node-{pid}".encode(),
-                )
+            host.start_round(
+                round_id=0,
+                sid="test:acs-host:hb:legacy-output-mode:",
+                proposal_input=f"hb-round-0-node-{pid}".encode(),
+            )
+
+        decisions, proposals_by_host = _drain_until_round_complete(hosts, round_id=0)
+        assert len(set(decisions)) == 1
+        assert _selected_proposers(decisions[0], proposals_by_host[0]) == tuple(range(num_nodes))
     finally:
         for host in hosts:
             host.shutdown()
 
 
-def test_persistent_hb_acs_host_emits_rust_broadcast_outputs_on_main_event_stream() -> None:
+def test_persistent_hb_acs_host_emits_proposal_ready_events_on_main_event_stream() -> None:
     num_nodes = 4
     faulty = 1
     hosts = _build_hosts(
@@ -260,49 +233,109 @@ def test_persistent_hb_acs_host_emits_rust_broadcast_outputs_on_main_event_strea
         for pid, host in enumerate(hosts):
             host.start_round(
                 round_id=0,
-                sid="test:acs-host:hb:rust-broadcast-main-event-stream:",
+                sid="test:acs-host:hb:proposal-ready-main-event-stream:",
                 proposal_input=f"hb-round-0-node-{pid}".encode(),
             )
 
-        decisions, outputs_by_host = _drain_until_decisions_and_broadcast_outputs(
+        decisions, proposals_by_host = _drain_until_round_complete(
             hosts,
             round_id=0,
-            expected_outputs_per_host=num_nodes,
+            expected_proposals_per_host=num_nodes,
         )
         assert len(set(decisions)) == 1
-        assert decisions[0] == tuple(range(num_nodes))
+        assert _selected_proposers(decisions[0], proposals_by_host[0]) == tuple(range(num_nodes))
 
-        for outputs in outputs_by_host:
-            assert len(outputs) == num_nodes
-            assert {cast(int, output["sender"]) for output in outputs} == set(range(num_nodes))
-            assert all(cast(bytes, output["payload"]) for output in outputs)
-            assert all(len(cast(bytes, output["roothash"])) == 32 for output in outputs)
+        for proposals in proposals_by_host:
+            assert len(proposals) == num_nodes
+            assert {cast(int, event["proposer"]) for event in proposals.values()} == set(
+                range(num_nodes)
+            )
+            assert all(cast(bytes, event["payload"]) for event in proposals.values())
+            assert all(len(cast(bytes, event["digest"])) == 32 for event in proposals.values())
+            assert all(len(cast(bytes, event["certificate"])) == 32 for event in proposals.values())
     finally:
         for host in hosts:
             host.shutdown()
 
 
-def test_persistent_dumbo_acs_host_can_emit_payload_decisions() -> None:
+def test_persistent_hb_acs_host_supports_prbc_broadcast_mode() -> None:
     num_nodes = 4
     faulty = 1
-    proposals = [f"dumbo-payload-node-{pid}".encode() for pid in range(num_nodes)]
-    hosts = _build_hosts("dumbo", num_nodes, faulty, output_mode="payloads")
+    round_sid = "test:acs-host:hb:prbc:"
+    payloads = honey_native.generate_hb_crypto_payloads_json(num_nodes, faulty)
+    decoded_payloads = [cast(dict[str, object], json.loads(payload)) for payload in payloads]
+    ecdsa_pks = [
+        bytes.fromhex(value) for value in cast(list[str], decoded_payloads[0]["ecdsa_pks"])
+    ]
+    hosts = _build_hosts_from_payloads(
+        "hb",
+        payloads,
+        num_nodes=num_nodes,
+        faulty=faulty,
+        config={"hb_broadcast_protocol": "prbc"},
+    )
 
     try:
         for pid, host in enumerate(hosts):
             host.start_round(
                 round_id=0,
-                sid="test:acs-host:dumbo:payloads:",
+                sid=round_sid,
+                proposal_input=f"hb-prbc-round-0-node-{pid}".encode(),
+            )
+
+        decisions, proposals_by_host = _drain_until_round_complete(
+            hosts,
+            round_id=0,
+            expected_proposals_per_host=num_nodes,
+        )
+        assert len(set(decisions)) == 1
+        assert _selected_proposers(decisions[0], proposals_by_host[0]) == tuple(range(num_nodes))
+
+        for proposals in proposals_by_host:
+            assert len(proposals) == num_nodes
+            for event in proposals.values():
+                proposer = cast(int, event["proposer"])
+                digest = cast(bytes, event["digest"])
+                certificate = cast(bytes, event["certificate"])
+                assert len(certificate) > len(digest)
+                proof = deserialize_prbc_proof(certificate)
+                assert proof.roothash == digest
+                assert validate_prbc_proof(
+                    f"{round_sid}CSRBC{proposer}",
+                    num_nodes,
+                    faulty,
+                    ecdsa_pks,
+                    proof,
+                )
+    finally:
+        for host in hosts:
+            host.shutdown()
+
+
+def test_persistent_dumbo_acs_host_exposes_selected_proposals_via_proposal_ready_events() -> None:
+    num_nodes = 4
+    faulty = 1
+    proposals = [f"dumbo-payload-node-{pid}".encode() for pid in range(num_nodes)]
+    hosts = _build_hosts("dumbo", num_nodes, faulty)
+
+    try:
+        for pid, host in enumerate(hosts):
+            host.start_round(
+                round_id=0,
+                sid="test:acs-host:dumbo:proposal-ready:",
                 proposal_input=proposals[pid],
             )
 
-        decisions = cast(
-            list[tuple[bytes | None, ...]],
-            _drain_until_decisions(hosts, round_id=0, decision_key="selected_payloads"),
-        )
+        decisions, proposals_by_host = _drain_until_round_complete(hosts, round_id=0)
         assert len(set(decisions)) == 1
         decided = decisions[0]
-        selected = [(pid, payload) for pid, payload in enumerate(decided) if payload is not None]
+        selected = [
+            (
+                cast(int, proposals_by_host[0][proposal_id]["proposer"]),
+                cast(bytes, proposals_by_host[0][proposal_id]["payload"]),
+            )
+            for proposal_id in decided
+        ]
         assert len(selected) >= num_nodes - faulty
         assert all(payload == proposals[pid] for pid, payload in selected)
     finally:
