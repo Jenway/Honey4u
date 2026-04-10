@@ -17,3 +17,11 @@ bench*.json
 
 .tmp*
 benchmarks/results
+Dory-BFT-Consensus
+Dumbo_NG
+jumbo
+third_party
+honeyBFT
+.codex
+.serena
+.spec-workflow
