@@ -8,8 +8,10 @@ import pytest
 from benchmarks.cli import tps as benchmark_module
 from benchmarks.cli.tps import (
     BenchmarkSummary,
+    CommunicationStats,
     LatencyStats,
     PeakStats,
+    ReuseStats,
     TimingStats,
     _build_benchmark_kwargs,
     _build_consistency_summary,
@@ -72,6 +74,32 @@ def _summary(batch_size: int, measured_tps: float, measured_ratio: float) -> Ben
         measured_round_latency=_latency_stats(sample_count=30, coverage=1.0, p95_ms=30.0),
         measured_protocol_round_latency=_latency_stats(sample_count=30, coverage=1.0, p95_ms=30.0),
         measured_wall_round_latency=_latency_stats(sample_count=30, coverage=1.0, p95_ms=36.0),
+        communication=CommunicationStats(
+            send_events=120,
+            send_payload_bytes=2400,
+            proposal_ready_events=30,
+            proposal_ready_payload_bytes=1800,
+            proposal_ready_certificate_bytes=900,
+            total_tracked_bytes=5100,
+            bytes_per_delivered_transaction=4.25,
+        ),
+        measured_communication=CommunicationStats(
+            send_events=90,
+            send_payload_bytes=1800,
+            proposal_ready_events=24,
+            proposal_ready_payload_bytes=1440,
+            proposal_ready_certificate_bytes=720,
+            total_tracked_bytes=3960,
+            bytes_per_delivered_transaction=3.30,
+        ),
+        reuse=ReuseStats(
+            reused_reference_count=12,
+            references_per_delivered_transaction=0.01,
+        ),
+        measured_reuse=ReuseStats(
+            reused_reference_count=9,
+            references_per_delivered_transaction=0.01,
+        ),
         subprotocol_timings={
             "hb_round": TimingStats(sample_count=30, mean_ms=12.0, max_ms=18.0),
         },
@@ -113,6 +141,7 @@ def test_sweep_payload_includes_benchmark_points() -> None:
     assert payload["points"][0]["tx_input"] == "json_str"
     assert payload["points"][0]["transport_backend"] == "tcp"
     assert payload["points"][0]["node_runtime"] == "rust-driver"
+    assert payload["points"][0]["measured_fetch"]["fetch_requests_sent"] == 0
     assert payload["points"][1]["measured_tps"] == 1800.0
     assert payload["points"][1]["measured_protocol_tps"] == 1800.0
     assert payload["points"][1]["measured_delivery_ratio"] == 0.8
@@ -186,6 +215,11 @@ def _args(*, protocol: str, node_runtime: str) -> argparse.Namespace:
         enable_pool_fetch=True,
         pool_grace_ms=250,
         rust_tx_pool_max_bytes=4096,
+        network_fixed_delay_ms=0,
+        network_jitter_ms=0,
+        network_seed=0,
+        slow_honest_pids=None,
+        slow_honest_extra_delay_ms=0,
         output_json=None,
         ledger_dir="/tmp/ledger",
         fail_on_divergence=False,
@@ -216,6 +250,45 @@ def test_build_benchmark_kwargs_for_rust_driver_runtime_omits_node_runtime() -> 
     assert "node_runtime" not in kwargs
     assert kwargs["rust_tx_pool_max_bytes"] == 4096
     assert kwargs["acs_protocol"] == "hb"
+
+
+def test_build_benchmark_kwargs_includes_network_faults_when_configured() -> None:
+    args = _args(protocol="dumbo", node_runtime="rust-driver")
+    args.network_fixed_delay_ms = 5
+    args.network_jitter_ms = 7
+    args.network_seed = 42
+    args.slow_honest_pids = "1,3"
+    args.slow_honest_extra_delay_ms = 20
+
+    kwargs = _build_benchmark_kwargs(
+        args,
+        sid="bench:test:dumbo:network-faults",
+        faulty=1,
+        batch_size=8,
+        transactions_per_node=24,
+    )
+
+    assert kwargs["network_faults"] == {
+        "enabled": True,
+        "seed": 42,
+        "fixed_delay_ms": 5,
+        "jitter_ms": 7,
+        "slow_honest": {"pids": [1, 3], "extra_delay_ms": 20},
+    }
+
+
+def test_build_benchmark_kwargs_rejects_slow_honest_delay_without_pids() -> None:
+    args = _args(protocol="dumbo", node_runtime="rust-driver")
+    args.slow_honest_extra_delay_ms = 20
+
+    with pytest.raises(ValueError, match="--slow-honest-pids"):
+        _build_benchmark_kwargs(
+            args,
+            sid="bench:test:dumbo:invalid-network-faults",
+            faulty=1,
+            batch_size=8,
+            transactions_per_node=24,
+        )
 
 
 def test_build_benchmark_kwargs_for_rust_driver_with_dumbo_acs_includes_provider_config() -> None:

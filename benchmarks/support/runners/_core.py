@@ -39,6 +39,53 @@ class TransportStats:
     recv_frames: int = 0
     connect_retries: int = 0
     send_retries: int = 0
+    delayed_frames: int = 0
+    total_injected_delay_ms: int = 0
+    network_fault_seed: int = 0
+    configured_fixed_delay_ms: int = 0
+    configured_jitter_ms: int = 0
+    configured_slow_honest_extra_delay_ms: int = 0
+
+
+@dataclass(frozen=True)
+class MultiprocessDriverStats:
+    acs_pull_calls: int = 0
+    acs_empty_pull_calls: int = 0
+    acs_inbound_wire_batches: int = 0
+    acs_inbound_wire_items: int = 0
+    acs_outbound_events: int = 0
+    tpke_combine_calls: int = 0
+    stale_acs_frames_dropped: int = 0
+    fetch_requests_sent: int = 0
+    fetch_responses_served: int = 0
+    fetch_responses_received: int = 0
+    fetched_reference_count: int = 0
+
+
+@dataclass(frozen=True)
+class MultiprocessRoundDetail:
+    round_id: int
+    selected_proposal_ids: tuple[str, ...] = ()
+    selected_pids: tuple[int, ...] = ()
+    block_digest: str | None = None
+    block_size: int = 0
+    chain_digest: str | None = None
+    build_seconds: float = 0.0
+    acs_seconds: float = 0.0
+    tpke_seconds: float = 0.0
+    protocol_seconds: float = 0.0
+    wall_seconds: float = 0.0
+    delivered_count: int = 0
+    reused_reference_count: int = 0
+    tpke_partial_open_seconds: float = 0.0
+    tpke_combine_seconds: float = 0.0
+    acs_outbound_events: int = 0
+    tpke_combine_calls: int = 0
+    fetch_requests_sent: int = 0
+    fetch_responses_served: int = 0
+    fetch_responses_received: int = 0
+    fetched_reference_count: int = 0
+    driver_phase_stats: RustDrivenDriverPhaseStats | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +105,8 @@ class MultiprocessNodeResult:
     subprotocol_timings: dict[str, MetricTimingSummary] = field(default_factory=dict)
     queue_peaks: NodeQueuePeaks = field(default_factory=NodeQueuePeaks)
     transport_stats: TransportStats = field(default_factory=TransportStats)
+    driver_stats: MultiprocessDriverStats = field(default_factory=MultiprocessDriverStats)
+    round_details: tuple[MultiprocessRoundDetail, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -185,6 +234,10 @@ class RustDrivenDumboRoundResult:
     tpke_seconds: float = 0.0
     tpke_bundle_events: int = 0
     build_seconds: float = 0.0
+    fetch_requests_sent: int = 0
+    fetch_responses_served: int = 0
+    fetch_responses_received: int = 0
+    fetched_reference_count: int = 0
     acs_drive_stats: RustDrivenDriverPhaseStats = field(default_factory=RustDrivenDriverPhaseStats)
     acs_settle_stats: RustDrivenDriverPhaseStats = field(default_factory=RustDrivenDriverPhaseStats)
 
@@ -257,6 +310,30 @@ def _decode_result_payload(pid: int, value: dict[str, Any]) -> MultiprocessNodeR
             recv_frames=int(value.get("transport_stats", {}).get("recv_frames", 0)),
             connect_retries=int(value.get("transport_stats", {}).get("connect_retries", 0)),
             send_retries=int(value.get("transport_stats", {}).get("send_retries", 0)),
+            delayed_frames=int(value.get("transport_stats", {}).get("delayed_frames", 0)),
+            total_injected_delay_ms=int(
+                value.get("transport_stats", {}).get("total_injected_delay_ms", 0)
+            ),
+            network_fault_seed=int(value.get("transport_stats", {}).get("network_fault_seed", 0)),
+            configured_fixed_delay_ms=int(
+                value.get("transport_stats", {}).get("configured_fixed_delay_ms", 0)
+            ),
+            configured_jitter_ms=int(
+                value.get("transport_stats", {}).get("configured_jitter_ms", 0)
+            ),
+            configured_slow_honest_extra_delay_ms=int(
+                value.get("transport_stats", {}).get(
+                    "configured_slow_honest_extra_delay_ms",
+                    0,
+                )
+            ),
+        ),
+        driver_stats=_decode_multiprocess_driver_stats(
+            cast(dict[str, Any], value.get("driver_stats", {}))
+        ),
+        round_details=tuple(
+            _decode_multiprocess_round_detail(cast(dict[str, Any], round_detail))
+            for round_detail in value.get("round_details", ())
         ),
     )
 
@@ -303,6 +380,61 @@ def _decode_rust_driven_driver_phase_stats(
         host_stats=tuple(
             _decode_rust_driven_host_phase_stats(cast(dict[str, Any], host_stats))
             for host_stats in value.get("host_stats", ())
+        ),
+    )
+
+
+def _decode_multiprocess_driver_stats(value: dict[str, Any]) -> MultiprocessDriverStats:
+    return MultiprocessDriverStats(
+        acs_pull_calls=int(value.get("acs_pull_calls", 0)),
+        acs_empty_pull_calls=int(value.get("acs_empty_pull_calls", 0)),
+        acs_inbound_wire_batches=int(value.get("acs_inbound_wire_batches", 0)),
+        acs_inbound_wire_items=int(value.get("acs_inbound_wire_items", 0)),
+        acs_outbound_events=int(value.get("acs_outbound_events", 0)),
+        tpke_combine_calls=int(value.get("tpke_combine_calls", 0)),
+        stale_acs_frames_dropped=int(value.get("stale_acs_frames_dropped", 0)),
+        fetch_requests_sent=int(value.get("fetch_requests_sent", 0)),
+        fetch_responses_served=int(value.get("fetch_responses_served", 0)),
+        fetch_responses_received=int(value.get("fetch_responses_received", 0)),
+        fetched_reference_count=int(value.get("fetched_reference_count", 0)),
+    )
+
+
+def _decode_multiprocess_round_detail(value: dict[str, Any]) -> MultiprocessRoundDetail:
+    return MultiprocessRoundDetail(
+        round_id=int(value.get("round_id", 0)),
+        selected_proposal_ids=tuple(
+            str(proposal_id) for proposal_id in value.get("selected_proposal_ids", ())
+        ),
+        selected_pids=tuple(int(pid) for pid in value.get("selected_pids", ())),
+        block_digest=(
+            str(value["block_digest"]) if value.get("block_digest") is not None else None
+        ),
+        block_size=int(value.get("block_size", 0)),
+        chain_digest=(
+            str(value["chain_digest"]) if value.get("chain_digest") is not None else None
+        ),
+        build_seconds=float(value.get("build_seconds", 0.0)),
+        acs_seconds=float(value.get("acs_seconds", 0.0)),
+        tpke_seconds=float(value.get("tpke_seconds", 0.0)),
+        protocol_seconds=float(value.get("protocol_seconds", 0.0)),
+        wall_seconds=float(value.get("wall_seconds", 0.0)),
+        delivered_count=int(value.get("delivered_count", 0)),
+        reused_reference_count=int(value.get("reused_reference_count", 0)),
+        tpke_partial_open_seconds=float(value.get("tpke_partial_open_seconds", 0.0)),
+        tpke_combine_seconds=float(value.get("tpke_combine_seconds", 0.0)),
+        acs_outbound_events=int(value.get("acs_outbound_events", 0)),
+        tpke_combine_calls=int(value.get("tpke_combine_calls", 0)),
+        fetch_requests_sent=int(value.get("fetch_requests_sent", 0)),
+        fetch_responses_served=int(value.get("fetch_responses_served", 0)),
+        fetch_responses_received=int(value.get("fetch_responses_received", 0)),
+        fetched_reference_count=int(value.get("fetched_reference_count", 0)),
+        driver_phase_stats=(
+            _decode_rust_driven_driver_phase_stats(
+                cast(dict[str, Any], value.get("driver_phase_stats", {}))
+            )
+            if value.get("driver_phase_stats") is not None
+            else None
         ),
     )
 
@@ -733,6 +865,10 @@ def _decode_rust_driven_dumbo_payload(value: dict[str, Any]) -> RustDrivenDumboR
                 tpke_seconds=float(round_data.get("tpke_seconds", 0.0)),
                 tpke_bundle_events=int(round_data.get("tpke_bundle_events", 0)),
                 build_seconds=float(round_data.get("build_seconds", 0.0)),
+                fetch_requests_sent=int(round_data.get("fetch_requests_sent", 0)),
+                fetch_responses_served=int(round_data.get("fetch_responses_served", 0)),
+                fetch_responses_received=int(round_data.get("fetch_responses_received", 0)),
+                fetched_reference_count=int(round_data.get("fetched_reference_count", 0)),
                 acs_drive_stats=_decode_rust_driven_driver_phase_stats(
                     cast(dict[str, Any], round_data.get("acs_drive_stats", {}))
                 ),
@@ -779,6 +915,16 @@ def _run_rust_driven_dumbo(
     if not payload:
         raise RuntimeError("Rust-driven Dumbo (new driver) run produced no output")
     return _decode_rust_driven_dumbo_payload(cast(dict[str, Any], json.loads(payload)))
+
+
+def _inject_network_faults(
+    config_payload: dict[str, Any],
+    network_faults: dict[str, Any] | None,
+) -> dict[str, Any]:
+    merged = dict(config_payload)
+    if network_faults:
+        merged["network_faults"] = network_faults
+    return merged
 
 
 def _timing_summary(
@@ -887,6 +1033,7 @@ def benchmark_local_honeybadger_nodes_rust_driven(
     pool_grace_ms: int = 200,
     broadcast_mempool_backend: BroadcastPoolBackend = "rust",
     pool_mempool_max: int = 1000,
+    network_faults: dict[str, Any] | None = None,
 ) -> list[MultiprocessNodeResult]:
     del round_timeout, log_level, rust_tx_pool_max_bytes
     if tx_input != "json_str":
@@ -924,7 +1071,7 @@ def benchmark_local_honeybadger_nodes_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         acs_protocol=acs_protocol,
-        config_payload=config_payload,
+        config_payload=_inject_network_faults(config_payload, network_faults),
     )
 
 
@@ -946,6 +1093,7 @@ def benchmark_local_dumbo_nodes_rust_driven(
     pool_grace_ms: int = 200,
     rust_tx_pool_max_bytes: int = 0,
     ledger_dir: str | None = None,
+    network_faults: dict[str, Any] | None = None,
 ) -> list[MultiprocessNodeResult]:
     del round_timeout
     del log_level
@@ -969,12 +1117,15 @@ def benchmark_local_dumbo_nodes_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         acs_protocol="dumbo",
-        config_payload={
-            "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
-            "enable_pool_reference_proposals": enable_pool_reference_proposals,
-            "enable_pool_fetch_fallback": enable_pool_fetch_fallback,
-            "pool_grace_ms": pool_grace_ms,
-        },
+        config_payload=_inject_network_faults(
+            {
+                "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
+                "enable_pool_reference_proposals": enable_pool_reference_proposals,
+                "enable_pool_fetch_fallback": enable_pool_fetch_fallback,
+                "pool_grace_ms": pool_grace_ms,
+            },
+            network_faults,
+        ),
     )
 
 
@@ -987,6 +1138,7 @@ def run_local_honeybadger_acs_rust_driven(
     hb_broadcast_protocol: str = "rbc",
     broadcast_mempool_backend: BroadcastPoolBackend = "rust",
     pool_mempool_max: int = 1000,
+    network_faults: dict[str, Any] | None = None,
 ) -> RustDrivenAcsRunResult:
     return _run_rust_driven_acs(
         protocol="hb",
@@ -995,11 +1147,14 @@ def run_local_honeybadger_acs_rust_driven(
         faulty=faulty,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        config_payload={
-            "hb_broadcast_protocol": hb_broadcast_protocol,
-            "broadcast_mempool_backend": broadcast_mempool_backend,
-            "pool_mempool_max": pool_mempool_max,
-        },
+        config_payload=_inject_network_faults(
+            {
+                "hb_broadcast_protocol": hb_broadcast_protocol,
+                "broadcast_mempool_backend": broadcast_mempool_backend,
+                "pool_mempool_max": pool_mempool_max,
+            },
+            network_faults,
+        ),
     )
 
 
@@ -1016,6 +1171,7 @@ def run_local_honeybadger_rust_driven(
     pool_grace_ms: int = 200,
     broadcast_mempool_backend: BroadcastPoolBackend = "rust",
     pool_mempool_max: int = 1000,
+    network_faults: dict[str, Any] | None = None,
 ) -> RustDrivenHoneyBadgerRunResult:
     acs_config_payload: dict[str, Any] | None = None
     if acs_protocol == "dumbo":
@@ -1038,7 +1194,7 @@ def run_local_honeybadger_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         acs_protocol=acs_protocol,
-        acs_config_payload=config_payload,
+        acs_config_payload=_inject_network_faults(config_payload, network_faults),
     )
 
 
@@ -1051,6 +1207,7 @@ def run_local_dumbo_rust_driven(
     global_timeout: float = 30.0,
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
+    network_faults: dict[str, Any] | None = None,
 ) -> RustDrivenDumboRunResult:
     return _run_rust_driven_dumbo(
         sid=sid,
@@ -1059,10 +1216,13 @@ def run_local_dumbo_rust_driven(
         batch_size=batch_size,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        config_payload={
-            "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
-            "pool_grace_ms": pool_grace_ms,
-        },
+        config_payload=_inject_network_faults(
+            {
+                "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
+                "pool_grace_ms": pool_grace_ms,
+            },
+            network_faults,
+        ),
     )
 
 
@@ -1074,6 +1234,7 @@ def run_local_dumbo_acs_rust_driven(
     global_timeout: float = 30.0,
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
+    network_faults: dict[str, Any] | None = None,
 ) -> RustDrivenAcsRunResult:
     config_payload: dict[str, Any] = {
         "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
@@ -1086,7 +1247,7 @@ def run_local_dumbo_acs_rust_driven(
         faulty=faulty,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        config_payload=config_payload,
+        config_payload=_inject_network_faults(config_payload, network_faults),
     )
 
 
@@ -1106,6 +1267,7 @@ def run_local_dumbo_new_driver(
     pool_mempool_max: int = 1024,
     ledger_dir: str | None = None,
     tx_payload: list[list[str]] | None = None,
+    network_faults: dict[str, Any] | None = None,
 ) -> RustDrivenDumboRunResult:
     """Run the Dumbo BFT protocol using the unified Rust-native ``bench-driver`` entrypoint.
 
@@ -1135,7 +1297,7 @@ def run_local_dumbo_new_driver(
         batch_size=batch_size,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        config_payload=config_payload,
+        config_payload=_inject_network_faults(config_payload, network_faults),
         ledger_dir=ledger_dir,
         tx_payload=tx_payload,
     )

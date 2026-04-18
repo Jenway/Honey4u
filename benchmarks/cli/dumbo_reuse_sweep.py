@@ -104,6 +104,16 @@ def _run_one_case(
         round_data.block_resolve_seconds for round_data in result.rounds
     )
     reused_reference_total = sum(round_data.reused_reference_count for round_data in result.rounds)
+    fetch_requests_sent_total = sum(round_data.fetch_requests_sent for round_data in result.rounds)
+    fetch_responses_served_total = sum(
+        round_data.fetch_responses_served for round_data in result.rounds
+    )
+    fetch_responses_received_total = sum(
+        round_data.fetch_responses_received for round_data in result.rounds
+    )
+    fetched_reference_total = sum(
+        round_data.fetched_reference_count for round_data in result.rounds
+    )
 
     return {
         "status": "ok",
@@ -131,6 +141,10 @@ def _run_one_case(
             else 0.0
         ),
         "reused_reference_total": reused_reference_total,
+        "fetch_requests_sent_total": fetch_requests_sent_total,
+        "fetch_responses_served_total": fetch_responses_served_total,
+        "fetch_responses_received_total": fetch_responses_received_total,
+        "fetched_reference_total": fetched_reference_total,
         "node_mempool_sizes": [node.mempool_size for node in result.nodes],
         "result": asdict(result),
     }
@@ -171,6 +185,18 @@ def _aggregate_runs(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     run["mean_round_block_resolve_seconds"] for run in runs
                 ),
                 "reused_reference_total_mean": fmean(run["reused_reference_total"] for run in runs),
+                "fetch_requests_sent_total_mean": fmean(
+                    run["fetch_requests_sent_total"] for run in runs
+                ),
+                "fetch_responses_served_total_mean": fmean(
+                    run["fetch_responses_served_total"] for run in runs
+                ),
+                "fetch_responses_received_total_mean": fmean(
+                    run["fetch_responses_received_total"] for run in runs
+                ),
+                "fetched_reference_total_mean": fmean(
+                    run["fetched_reference_total"] for run in runs
+                ),
                 "node_mempool_size_mean": fmean(
                     size for run in runs for size in run["node_mempool_sizes"]
                 ),
@@ -222,6 +248,12 @@ def _build_deltas(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     float(on["delivered_total_mean"]), float(off["delivered_total_mean"])
                 ),
                 "reused_reference_total_mean": float(on["reused_reference_total_mean"]),
+                "fetch_requests_sent_total_mean": float(on["fetch_requests_sent_total_mean"]),
+                "fetch_responses_served_total_mean": float(on["fetch_responses_served_total_mean"]),
+                "fetch_responses_received_total_mean": float(
+                    on["fetch_responses_received_total_mean"]
+                ),
+                "fetched_reference_total_mean": float(on["fetched_reference_total_mean"]),
             }
         )
     return deltas

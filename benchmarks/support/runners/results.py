@@ -1,6 +1,8 @@
 from benchmarks.support.runners._core import (
     MetricTimingSummary,
+    MultiprocessDriverStats,
     MultiprocessNodeResult,
+    MultiprocessRoundDetail,
     NodeQueuePeaks,
     RustDrivenAcsNodeResult,
     RustDrivenAcsRoundResult,
@@ -17,7 +19,9 @@ from benchmarks.support.runners._core import (
 
 __all__ = [
     "MetricTimingSummary",
+    "MultiprocessDriverStats",
     "MultiprocessNodeResult",
+    "MultiprocessRoundDetail",
     "NodeQueuePeaks",
     "RustDrivenAcsNodeResult",
     "RustDrivenAcsRoundResult",

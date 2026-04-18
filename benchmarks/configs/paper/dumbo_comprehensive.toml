@@ -1,0 +1,119 @@
+[suite]
+name = "dumbo_paper_suite"
+
+[defaults]
+rounds = 6
+repeats = 5
+global_timeout = 180.0
+pool_grace_ms = 100
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 1024
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "reuse_scale"
+description = "Main reuse on/off sweep across node counts and batch sizes."
+backend = ["python", "rust_fin"]
+reuse_enabled = [false, true]
+nodes = [4, 8, 12, 16]
+batch_size = [1, 2, 4, 8, 16, 32]
+
+[[experiments]]
+name = "highload_n12"
+description = "Dense N=12 high-load sweep around the expected throughput knee."
+backend = ["python", "rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [8, 12, 16, 24, 32, 48, 64]
+rounds = 8
+
+[[experiments]]
+name = "backend_compare"
+description = "Compare Python, Rust FIN-style, and Rust Dumbo ACS hosts."
+backend = ["python", "rust_fin", "rust_dumbo"]
+reuse_enabled = [false, true]
+nodes = [4, 8, 12]
+batch_size = [16, 32]
+
+[[experiments]]
+name = "sensitivity_grace_n12"
+description = "Sensitivity of reuse to the late-output grace window."
+backend = ["rust_fin"]
+reuse_enabled = [true]
+nodes = [12]
+batch_size = [32]
+pool_grace_ms = [50, 100, 200, 400]
+
+[[experiments]]
+name = "sensitivity_reuse_limit_n12"
+description = "Sensitivity of reuse to the per-round reference cap."
+backend = ["rust_fin"]
+reuse_enabled = [true]
+nodes = [12]
+batch_size = [32]
+pool_reuse_limit_per_round = [0, 1, 2, 4, 8]
+
+[[experiments]]
+name = "sensitivity_expire_n12"
+description = "Sensitivity of reuse to cache expiration horizon."
+backend = ["rust_fin"]
+reuse_enabled = [true]
+nodes = [12]
+batch_size = [32]
+pool_expire_rounds = [1, 3, 5, 10]
+
+[[experiments]]
+name = "sensitivity_mempool_n12"
+description = "Sensitivity of reuse to broadcast pool capacity."
+backend = ["rust_fin"]
+reuse_enabled = [true]
+nodes = [12]
+batch_size = [32]
+pool_mempool_max = [128, 256, 512, 1024]
+
+[[experiments]]
+name = "network_fixed_delay_n12"
+description = "Reuse under uniform fixed transport delay on the local TCP driver."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [32]
+rounds = 8
+global_timeout = 240.0
+network_faults = [
+  { label = "none", enabled = false },
+  { label = "fixed10", enabled = true, seed = 20260416, fixed_delay_ms = 10 },
+  { label = "fixed25", enabled = true, seed = 20260416, fixed_delay_ms = 25 },
+]
+
+[[experiments]]
+name = "network_jitter_n12"
+description = "Reuse under bounded per-frame jitter on the local TCP driver."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [32]
+rounds = 8
+global_timeout = 240.0
+network_faults = [
+  { label = "none", enabled = false },
+  { label = "jitter10", enabled = true, seed = 20260416, jitter_ms = 10 },
+  { label = "jitter25", enabled = true, seed = 20260416, jitter_ms = 25 },
+]
+
+[[experiments]]
+name = "slow_honest_n12"
+description = "Reuse when one honest node is delayed relative to the rest."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [32]
+rounds = 8
+global_timeout = 240.0
+network_faults = [
+  { label = "none", enabled = false },
+  { label = "slow80p11", enabled = true, seed = 20260416, slow_honest = { pids = [11], extra_delay_ms = 80 } },
+  { label = "slow150p11", enabled = true, seed = 20260416, slow_honest = { pids = [11], extra_delay_ms = 150 } },
+]

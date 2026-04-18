@@ -4,7 +4,7 @@ import argparse
 import json
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from statistics import fmean
 from typing import Any
@@ -38,6 +38,46 @@ class PeakStats:
     mean: float
     p95: float
     max: int
+
+
+@dataclass(frozen=True)
+class CommunicationStats:
+    send_events: int
+    send_payload_bytes: int
+    proposal_ready_events: int
+    proposal_ready_payload_bytes: int
+    proposal_ready_certificate_bytes: int
+    total_tracked_bytes: int
+    bytes_per_delivered_transaction: float
+
+
+@dataclass(frozen=True)
+class ReuseStats:
+    reused_reference_count: int
+    references_per_delivered_transaction: float
+
+
+@dataclass(frozen=True)
+class FetchStats:
+    fetch_requests_sent: int = 0
+    fetch_responses_served: int = 0
+    fetch_responses_received: int = 0
+    fetched_reference_count: int = 0
+    fetch_requests_per_delivered_transaction: float = 0.0
+    fetched_references_per_delivered_transaction: float = 0.0
+    fetch_success_ratio: float = 0.0
+
+
+@dataclass(frozen=True)
+class TransportSummary:
+    sent_frames_total: int = 0
+    recv_frames_total: int = 0
+    connect_retries_total: int = 0
+    send_retries_total: int = 0
+    delayed_frames_total: int = 0
+    total_injected_delay_ms_total: int = 0
+    max_delayed_frames_per_node: int = 0
+    max_injected_delay_ms_per_node: int = 0
 
 
 @dataclass(frozen=True)
@@ -77,8 +117,16 @@ class BenchmarkSummary:
     measured_round_latency: LatencyStats
     measured_protocol_round_latency: LatencyStats
     measured_wall_round_latency: LatencyStats
+    communication: CommunicationStats
+    measured_communication: CommunicationStats
+    reuse: ReuseStats
+    measured_reuse: ReuseStats
     subprotocol_timings: dict[str, TimingStats]
     queue_backlog: dict[str, PeakStats]
+    network_faults: dict[str, Any] | None = None
+    transport: TransportSummary = field(default_factory=TransportSummary)
+    fetch: FetchStats = field(default_factory=FetchStats)
+    measured_fetch: FetchStats = field(default_factory=FetchStats)
     node_runtime: str = "rust-driver"
     acs_protocol: str = "hb"
     all_nodes_agree: bool = True
@@ -203,6 +251,36 @@ def _parse_args() -> argparse.Namespace:
         help="optional byte cap for each Rust tx pool batch; 0 means unlimited",
     )
     parser.add_argument(
+        "--network-fixed-delay-ms",
+        type=int,
+        default=0,
+        help="inject a fixed send delay on every local transport frame",
+    )
+    parser.add_argument(
+        "--network-jitter-ms",
+        type=int,
+        default=0,
+        help="inject uniform random jitter up to this many milliseconds per frame",
+    )
+    parser.add_argument(
+        "--network-seed",
+        type=int,
+        default=0,
+        help="deterministic seed for transport delay/jitter injection",
+    )
+    parser.add_argument(
+        "--slow-honest-pids",
+        type=str,
+        default=None,
+        help="comma-separated honest node ids that should receive extra transport delay",
+    )
+    parser.add_argument(
+        "--slow-honest-extra-delay-ms",
+        type=int,
+        default=0,
+        help="extra delay injected only for the node ids listed in --slow-honest-pids",
+    )
+    parser.add_argument(
         "--output-json", type=str, default=None, help="write JSON output to this path"
     )
     parser.add_argument(
@@ -231,6 +309,15 @@ def _parse_batch_values(raw: str | None, fallback: int) -> list[int]:
         raise ValueError("--sweep-batches must contain at least one positive integer")
     if any(value <= 0 for value in values):
         raise ValueError("--sweep-batches only accepts positive integers")
+    return values
+
+
+def _parse_pid_values(raw: str | None) -> tuple[int, ...]:
+    if raw is None or not raw.strip():
+        return ()
+    values = tuple(int(part.strip()) for part in raw.split(",") if part.strip())
+    if any(value < 0 for value in values):
+        raise ValueError("--slow-honest-pids only accepts non-negative integers")
     return values
 
 
@@ -312,6 +399,106 @@ def _build_queue_backlog_stats(results: list[Any]) -> dict[str, PeakStats]:
     }
 
 
+def _build_communication_stats(
+    rounds: list[Any], delivered_transactions: int
+) -> CommunicationStats:
+    send_events = 0
+    send_payload_bytes = 0
+    proposal_ready_events = 0
+    proposal_ready_payload_bytes = 0
+    proposal_ready_certificate_bytes = 0
+
+    for round_detail in rounds:
+        stats = getattr(round_detail, "driver_phase_stats", None)
+        if stats is None:
+            continue
+        send_events += stats.send_events
+        send_payload_bytes += stats.send_payload_bytes
+        proposal_ready_events += stats.proposal_ready_events
+        proposal_ready_payload_bytes += stats.proposal_ready_payload_bytes
+        proposal_ready_certificate_bytes += stats.proposal_ready_certificate_bytes
+
+    total_tracked_bytes = (
+        send_payload_bytes + proposal_ready_payload_bytes + proposal_ready_certificate_bytes
+    )
+    return CommunicationStats(
+        send_events=send_events,
+        send_payload_bytes=send_payload_bytes,
+        proposal_ready_events=proposal_ready_events,
+        proposal_ready_payload_bytes=proposal_ready_payload_bytes,
+        proposal_ready_certificate_bytes=proposal_ready_certificate_bytes,
+        total_tracked_bytes=total_tracked_bytes,
+        bytes_per_delivered_transaction=(
+            total_tracked_bytes / delivered_transactions if delivered_transactions else 0.0
+        ),
+    )
+
+
+def _build_reuse_stats(rounds: list[Any], delivered_transactions: int) -> ReuseStats:
+    reused_reference_count = sum(
+        int(getattr(round_detail, "reused_reference_count", 0)) for round_detail in rounds
+    )
+    return ReuseStats(
+        reused_reference_count=reused_reference_count,
+        references_per_delivered_transaction=(
+            reused_reference_count / delivered_transactions if delivered_transactions else 0.0
+        ),
+    )
+
+
+def _build_fetch_stats(rounds: list[Any], delivered_transactions: int) -> FetchStats:
+    fetch_requests_sent = sum(
+        int(getattr(round_detail, "fetch_requests_sent", 0)) for round_detail in rounds
+    )
+    fetch_responses_served = sum(
+        int(getattr(round_detail, "fetch_responses_served", 0)) for round_detail in rounds
+    )
+    fetch_responses_received = sum(
+        int(getattr(round_detail, "fetch_responses_received", 0)) for round_detail in rounds
+    )
+    fetched_reference_count = sum(
+        int(getattr(round_detail, "fetched_reference_count", 0)) for round_detail in rounds
+    )
+    return FetchStats(
+        fetch_requests_sent=fetch_requests_sent,
+        fetch_responses_served=fetch_responses_served,
+        fetch_responses_received=fetch_responses_received,
+        fetched_reference_count=fetched_reference_count,
+        fetch_requests_per_delivered_transaction=(
+            fetch_requests_sent / delivered_transactions if delivered_transactions else 0.0
+        ),
+        fetched_references_per_delivered_transaction=(
+            fetched_reference_count / delivered_transactions if delivered_transactions else 0.0
+        ),
+        fetch_success_ratio=(
+            fetched_reference_count / fetch_requests_sent if fetch_requests_sent else 0.0
+        ),
+    )
+
+
+def _build_transport_summary(results: list[Any]) -> TransportSummary:
+    delayed_frames_total = sum(result.transport_stats.delayed_frames for result in results)
+    total_injected_delay_ms_total = sum(
+        result.transport_stats.total_injected_delay_ms for result in results
+    )
+    return TransportSummary(
+        sent_frames_total=sum(result.transport_stats.sent_frames for result in results),
+        recv_frames_total=sum(result.transport_stats.recv_frames for result in results),
+        connect_retries_total=sum(result.transport_stats.connect_retries for result in results),
+        send_retries_total=sum(result.transport_stats.send_retries for result in results),
+        delayed_frames_total=delayed_frames_total,
+        total_injected_delay_ms_total=total_injected_delay_ms_total,
+        max_delayed_frames_per_node=max(
+            (result.transport_stats.delayed_frames for result in results),
+            default=0,
+        ),
+        max_injected_delay_ms_per_node=max(
+            (result.transport_stats.total_injected_delay_ms for result in results),
+            default=0,
+        ),
+    )
+
+
 def _build_consistency_summary(results: list[Any]) -> tuple[bool, str | None, tuple[int, ...]]:
     if not results:
         return True, None, ()
@@ -328,6 +515,47 @@ def _build_consistency_summary(results: list[Any]) -> tuple[bool, str | None, tu
         sorted(pid for digest, pids in groups.items() if digest != reference_digest for pid in pids)
     )
     return False, None, diverged_pids
+
+
+def _build_network_faults_config(args: argparse.Namespace) -> dict[str, Any] | None:
+    fixed_delay_ms = getattr(args, "network_fixed_delay_ms", 0)
+    jitter_ms = getattr(args, "network_jitter_ms", 0)
+    seed = getattr(args, "network_seed", 0)
+    slow_honest_pids = _parse_pid_values(getattr(args, "slow_honest_pids", None))
+    slow_honest_extra_delay_ms = getattr(args, "slow_honest_extra_delay_ms", 0)
+
+    if fixed_delay_ms < 0:
+        raise ValueError("--network-fixed-delay-ms must be >= 0")
+    if jitter_ms < 0:
+        raise ValueError("--network-jitter-ms must be >= 0")
+    if seed < 0:
+        raise ValueError("--network-seed must be >= 0")
+    if slow_honest_extra_delay_ms < 0:
+        raise ValueError("--slow-honest-extra-delay-ms must be >= 0")
+    if slow_honest_pids and slow_honest_extra_delay_ms == 0:
+        raise ValueError(
+            "--slow-honest-extra-delay-ms must be > 0 when --slow-honest-pids is provided"
+        )
+    if slow_honest_extra_delay_ms > 0 and not slow_honest_pids:
+        raise ValueError(
+            "--slow-honest-pids must be provided when --slow-honest-extra-delay-ms is > 0"
+        )
+    if fixed_delay_ms == 0 and jitter_ms == 0 and slow_honest_extra_delay_ms == 0:
+        return None
+
+    config: dict[str, Any] = {"enabled": True}
+    if seed:
+        config["seed"] = seed
+    if fixed_delay_ms:
+        config["fixed_delay_ms"] = fixed_delay_ms
+    if jitter_ms:
+        config["jitter_ms"] = jitter_ms
+    if slow_honest_pids:
+        config["slow_honest"] = {
+            "pids": list(slow_honest_pids),
+            "extra_delay_ms": slow_honest_extra_delay_ms,
+        }
+    return config
 
 
 def _select_benchmark_runner(protocol: str, node_runtime: str) -> BenchmarkFn:
@@ -361,6 +589,9 @@ def _build_benchmark_kwargs(
         "log_level": args.log_level,
         "ledger_dir": getattr(args, "ledger_dir", None),
     }
+    network_faults = _build_network_faults_config(args)
+    if network_faults is not None:
+        kwargs["network_faults"] = network_faults
     if args.protocol == "dumbo":
         kwargs.update(
             enable_broadcast_pool_reuse=args.enable_pool_reuse,
@@ -384,6 +615,7 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
     )
     sid = f"{args.sid}:{args.nodes}:{batch_size}:{args.rounds}:{int(time.time())}"
     warmup_rounds = max(0, min(args.warmup_rounds, args.rounds))
+    network_faults = _build_network_faults_config(args)
 
     benchmark_fn = _select_benchmark_runner(args.protocol, args.node_runtime)
 
@@ -447,6 +679,22 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
         latency for result in results for latency in result.round_wall_latencies[warmup_rounds:]
     ]
     measured_round_latency_samples = measured_protocol_round_latency_samples
+    all_round_details = [
+        round_detail for result in results for round_detail in result.round_details
+    ]
+    measured_round_details = [
+        round_detail for result in results for round_detail in result.round_details[warmup_rounds:]
+    ]
+    communication = _build_communication_stats(all_round_details, delivered_transactions)
+    measured_communication = _build_communication_stats(
+        measured_round_details,
+        measured_delivered_transactions,
+    )
+    reuse = _build_reuse_stats(all_round_details, delivered_transactions)
+    measured_reuse = _build_reuse_stats(measured_round_details, measured_delivered_transactions)
+    fetch = _build_fetch_stats(all_round_details, delivered_transactions)
+    measured_fetch = _build_fetch_stats(measured_round_details, measured_delivered_transactions)
+    transport = _build_transport_summary(results)
 
     return BenchmarkSummary(
         sid=sid,
@@ -523,8 +771,16 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
             measured_wall_round_latency_samples,
             args.nodes * measured_rounds,
         ),
+        communication=communication,
+        measured_communication=measured_communication,
+        reuse=reuse,
+        measured_reuse=measured_reuse,
         subprotocol_timings=_build_timing_stats(results),
         queue_backlog=_build_queue_backlog_stats(results),
+        network_faults=network_faults,
+        transport=transport,
+        fetch=fetch,
+        measured_fetch=measured_fetch,
         all_nodes_agree=all_nodes_agree,
         consensus_chain_digest=consensus_chain_digest,
         diverged_pids=diverged_pids,
@@ -660,6 +916,7 @@ def _build_sweep_payload(
             "transport_backend": args.transport_backend,
             "node_runtime": args.node_runtime,
             "acs_protocol": getattr(args, "acs_protocol", "hb"),
+            "network_faults": _build_network_faults_config(args),
             "x_axis": "batch_size",
         },
         "points": [asdict(summary) for summary in summaries],
@@ -709,6 +966,27 @@ def _run_single_mode(args: argparse.Namespace) -> dict[str, Any]:
         f"wall_tps={summary.measured_wall_tps:.2f}"
     )
     print(
+        "Measured communication: "
+        f"tracked_bytes={summary.measured_communication.total_tracked_bytes} "
+        f"bytes_per_tx={summary.measured_communication.bytes_per_delivered_transaction:.2f} "
+        f"reused_refs={summary.measured_reuse.reused_reference_count}"
+    )
+    print(
+        "Measured fetch: "
+        f"requests={summary.measured_fetch.fetch_requests_sent} "
+        f"served={summary.measured_fetch.fetch_responses_served} "
+        f"received={summary.measured_fetch.fetch_responses_received} "
+        f"inserted={summary.measured_fetch.fetched_reference_count} "
+        f"success_ratio={summary.measured_fetch.fetch_success_ratio:.3f}"
+    )
+    if summary.network_faults is not None:
+        print(
+            "Observed transport faults: "
+            f"delayed_frames={summary.transport.delayed_frames_total} "
+            f"injected_delay_ms={summary.transport.total_injected_delay_ms_total} "
+            f"max_delay_ms_per_node={summary.transport.max_injected_delay_ms_per_node}"
+        )
+    print(
         "Consistency: "
         f"agree={'yes' if summary.all_nodes_agree else 'no'} "
         f"chain_digest={summary.consensus_chain_digest or 'n/a'}"
@@ -737,6 +1015,9 @@ def _run_sweep_mode(args: argparse.Namespace) -> dict[str, Any]:
                 f"wall_tps={summary.measured_wall_tps:.2f} "
                 f"measured_ratio={summary.measured_delivery_ratio:.3f} "
                 f"p95_tx_latency={summary.measured_tx_latency.p95_ms:.2f}ms "
+                f"bytes_per_tx={summary.measured_communication.bytes_per_delivered_transaction:.2f} "
+                f"reused_refs={summary.measured_reuse.reused_reference_count} "
+                f"fetch_inserted={summary.measured_fetch.fetched_reference_count} "
                 f"raw_inbound_peak={summary.queue_backlog['raw_inbound_messages'].max}"
             )
 

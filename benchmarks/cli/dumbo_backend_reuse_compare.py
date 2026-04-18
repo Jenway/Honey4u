@@ -43,6 +43,13 @@ def _default_output_dir() -> Path:
     return REPO_ROOT / "benchmarks" / "results" / f"dumbo-backend-reuse-{stamp}"
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path.resolve())
+
+
 def _format_toml_key(key: str) -> str:
     if key.isidentifier():
         return key
@@ -129,6 +136,18 @@ def _build_run_record(
     reused_reference_total = sum(
         int(round_data.get("reused_reference_count", 0)) for round_data in rounds_data
     )
+    fetch_requests_sent_total = sum(
+        int(round_data.get("fetch_requests_sent", 0)) for round_data in rounds_data
+    )
+    fetch_responses_served_total = sum(
+        int(round_data.get("fetch_responses_served", 0)) for round_data in rounds_data
+    )
+    fetch_responses_received_total = sum(
+        int(round_data.get("fetch_responses_received", 0)) for round_data in rounds_data
+    )
+    fetched_reference_total = sum(
+        int(round_data.get("fetched_reference_count", 0)) for round_data in rounds_data
+    )
     return {
         "backend": backend,
         "reuse_mode": "reuse_on" if reuse_enabled else "reuse_off",
@@ -145,6 +164,10 @@ def _build_run_record(
         "tps_wall": (delivered_total / wall_total_seconds) if wall_total_seconds else 0.0,
         "tps_acs": (delivered_total / acs_total_seconds) if acs_total_seconds else 0.0,
         "reused_reference_total": reused_reference_total,
+        "fetch_requests_sent_total": fetch_requests_sent_total,
+        "fetch_responses_served_total": fetch_responses_served_total,
+        "fetch_responses_received_total": fetch_responses_received_total,
+        "fetched_reference_total": fetched_reference_total,
         "chain_digest": result.get("chain_digest"),
         "result": result,
     }
@@ -180,6 +203,18 @@ def _aggregate_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "tps_acs_mean": fmean(float(run["tps_acs"]) for run in runs),
                 "reused_reference_total_mean": fmean(
                     float(run["reused_reference_total"]) for run in runs
+                ),
+                "fetch_requests_sent_total_mean": fmean(
+                    float(run["fetch_requests_sent_total"]) for run in runs
+                ),
+                "fetch_responses_served_total_mean": fmean(
+                    float(run["fetch_responses_served_total"]) for run in runs
+                ),
+                "fetch_responses_received_total_mean": fmean(
+                    float(run["fetch_responses_received_total"]) for run in runs
+                ),
+                "fetched_reference_total_mean": fmean(
+                    float(run["fetched_reference_total"]) for run in runs
                 ),
             }
         )
@@ -233,6 +268,12 @@ def _build_reuse_deltas(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]
                     float(on["delivered_total_mean"]), float(off["delivered_total_mean"])
                 ),
                 "reused_reference_total_mean": float(on["reused_reference_total_mean"]),
+                "fetch_requests_sent_total_mean": float(on["fetch_requests_sent_total_mean"]),
+                "fetch_responses_served_total_mean": float(on["fetch_responses_served_total_mean"]),
+                "fetch_responses_received_total_mean": float(
+                    on["fetch_responses_received_total_mean"]
+                ),
+                "fetched_reference_total_mean": float(on["fetched_reference_total_mean"]),
             }
         )
     return deltas
@@ -286,6 +327,18 @@ def _build_backend_deltas(summaries: list[dict[str, Any]]) -> list[dict[str, Any
                 "rust_fin_vs_python_acs_total_delta_pct": pct_change(
                     float(rust_fin_item["acs_total_seconds_mean"]),
                     float(python_item["acs_total_seconds_mean"]),
+                ),
+                "python_fetch_requests_sent_total_mean": float(
+                    python_item.get("fetch_requests_sent_total_mean", 0.0)
+                ),
+                "rust_fin_fetch_requests_sent_total_mean": float(
+                    rust_fin_item.get("fetch_requests_sent_total_mean", 0.0)
+                ),
+                "python_fetched_reference_total_mean": float(
+                    python_item.get("fetched_reference_total_mean", 0.0)
+                ),
+                "rust_fin_fetched_reference_total_mean": float(
+                    rust_fin_item.get("fetched_reference_total_mean", 0.0)
                 ),
             }
         )
@@ -419,6 +472,7 @@ def main() -> int:
                         f"delivered={record['delivered_total']}",
                         f"tps_wall={record['tps_wall']:.3f}",
                         f"reused={record['reused_reference_total']}",
+                        f"fetched={record['fetched_reference_total']}",
                         flush=True,
                     )
 
@@ -457,12 +511,12 @@ def main() -> int:
             "pool_mempool_max": args.pool_mempool_max,
         },
         "git": _git_metadata(),
-        "json": str(payload_path.relative_to(REPO_ROOT)),
+        "json": _display_path(payload_path),
     }
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"[done] output_dir={output_dir.relative_to(REPO_ROOT)}")
+    print(f"[done] output_dir={_display_path(output_dir)}")
     return 0
 
 
