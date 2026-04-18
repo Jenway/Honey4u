@@ -253,6 +253,10 @@ fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String>
                 .map(|value| value as usize)
                 .unwrap_or(0);
             let mut acs_send_events = 0usize;
+            let mut fetch_requests_sent = 0usize;
+            let mut fetch_responses_served = 0usize;
+            let mut fetch_responses_received = 0usize;
+            let mut fetched_reference_count = 0usize;
             for node_json in &node_jsons {
                 let node_round = node_json
                     .get("round_details")
@@ -261,6 +265,26 @@ fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String>
                 if let Some(node_round) = node_round {
                     acs_send_events += node_round
                         .get("acs_outbound_events")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize)
+                        .unwrap_or(0);
+                    fetch_requests_sent += node_round
+                        .get("fetch_requests_sent")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize)
+                        .unwrap_or(0);
+                    fetch_responses_served += node_round
+                        .get("fetch_responses_served")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize)
+                        .unwrap_or(0);
+                    fetch_responses_received += node_round
+                        .get("fetch_responses_received")
+                        .and_then(Value::as_u64)
+                        .map(|value| value as usize)
+                        .unwrap_or(0);
+                    fetched_reference_count += node_round
+                        .get("fetched_reference_count")
                         .and_then(Value::as_u64)
                         .map(|value| value as usize)
                         .unwrap_or(0);
@@ -296,6 +320,10 @@ fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String>
                 "acs_seconds": acs_seconds,
                 "tpke_seconds": tpke_seconds,
                 "reused_reference_count": reused_reference_count,
+                "fetch_requests_sent": fetch_requests_sent,
+                "fetch_responses_served": fetch_responses_served,
+                "fetch_responses_received": fetch_responses_received,
+                "fetched_reference_count": fetched_reference_count,
                 "block_resolve_seconds": 0.0,
                 "wall_seconds": wall_seconds,
                 "acs_drive_stats": canonical_round
@@ -332,6 +360,13 @@ fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String>
                 "transport_sent_frames": transport_stats["sent_frames"].as_u64().unwrap_or(0),
                 "transport_recv_frames": transport_stats["recv_frames"].as_u64().unwrap_or(0),
                 "transport_connect_retries": transport_stats["connect_retries"].as_u64().unwrap_or(0),
+                "transport_send_retries": transport_stats["send_retries"].as_u64().unwrap_or(0),
+                "transport_delayed_frames": transport_stats["delayed_frames"].as_u64().unwrap_or(0),
+                "transport_total_injected_delay_ms": transport_stats["total_injected_delay_ms"].as_u64().unwrap_or(0),
+                "transport_network_fault_seed": transport_stats["network_fault_seed"].as_u64().unwrap_or(0),
+                "transport_configured_fixed_delay_ms": transport_stats["configured_fixed_delay_ms"].as_u64().unwrap_or(0),
+                "transport_configured_jitter_ms": transport_stats["configured_jitter_ms"].as_u64().unwrap_or(0),
+                "transport_configured_slow_honest_extra_delay_ms": transport_stats["configured_slow_honest_extra_delay_ms"].as_u64().unwrap_or(0),
             })
         })
         .collect();

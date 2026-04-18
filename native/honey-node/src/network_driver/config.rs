@@ -1,3 +1,4 @@
+use honey_node::transport::NetworkFaultConfig;
 use serde_json::Value;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -80,4 +81,106 @@ pub(super) fn parse_broadcast_pool_config(
         enable_fetch_fallback,
         reuse_limit_per_round,
     })
+}
+
+pub(super) fn parse_network_fault_config(
+    config_json: &str,
+    pid: usize,
+) -> Result<NetworkFaultConfig, String> {
+    let value: Value = serde_json::from_str(config_json).map_err(|err| err.to_string())?;
+    let Some(network_value) = value.get("network_faults") else {
+        return Ok(NetworkFaultConfig::default());
+    };
+    let network = network_value
+        .as_object()
+        .ok_or_else(|| String::from("network_faults must be a JSON object"))?;
+
+    let enabled = network
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return Ok(NetworkFaultConfig::default());
+    }
+
+    let seed = network.get("seed").and_then(Value::as_u64).unwrap_or(0);
+    let fixed_delay_ms = network
+        .get("fixed_delay_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let jitter_ms = network
+        .get("jitter_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let slow_honest_extra_delay_ms = parse_slow_honest_extra_delay_ms(network_value, pid)?;
+
+    Ok(NetworkFaultConfig {
+        enabled,
+        seed,
+        fixed_delay_ms,
+        jitter_ms,
+        slow_honest_extra_delay_ms,
+    })
+}
+
+fn parse_slow_honest_extra_delay_ms(network_faults: &Value, pid: usize) -> Result<u64, String> {
+    let Some(slow_honest_value) = network_faults.get("slow_honest") else {
+        return Ok(0);
+    };
+    let slow_honest = slow_honest_value
+        .as_object()
+        .ok_or_else(|| String::from("network_faults.slow_honest must be a JSON object"))?;
+    let extra_delay_ms = slow_honest
+        .get("extra_delay_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let Some(pids_value) = slow_honest.get("pids") else {
+        return Ok(0);
+    };
+    let pids = pids_value
+        .as_array()
+        .ok_or_else(|| String::from("network_faults.slow_honest.pids must be an array"))?;
+    let pid_matches = pids.iter().any(|value| value.as_u64() == Some(pid as u64));
+    Ok(if pid_matches { extra_delay_ms } else { 0 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_network_fault_config;
+
+    #[test]
+    fn parse_network_fault_config_defaults_to_disabled() {
+        let config = parse_network_fault_config("{}", 0).expect("config should parse");
+
+        assert!(!config.enabled);
+        assert_eq!(config.fixed_delay_ms, 0);
+        assert_eq!(config.jitter_ms, 0);
+        assert_eq!(config.slow_honest_extra_delay_ms, 0);
+    }
+
+    #[test]
+    fn parse_network_fault_config_applies_slow_honest_only_to_selected_pid() {
+        let config = parse_network_fault_config(
+            r#"{
+                "network_faults": {
+                    "enabled": true,
+                    "seed": 42,
+                    "fixed_delay_ms": 10,
+                    "jitter_ms": 15,
+                    "slow_honest": {
+                        "pids": [1, 3],
+                        "extra_delay_ms": 70
+                    }
+                }
+            }"#,
+            3,
+        )
+        .expect("config should parse");
+
+        assert!(config.enabled);
+        assert_eq!(config.seed, 42);
+        assert_eq!(config.fixed_delay_ms, 10);
+        assert_eq!(config.jitter_ms, 15);
+        assert_eq!(config.slow_honest_extra_delay_ms, 70);
+    }
 }

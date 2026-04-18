@@ -47,6 +47,10 @@ pub(super) fn build_node_result_json(
     let acs_outbound_events = run_result.acs_outbound_events;
     let tpke_combine_calls = run_result.tpke_combine_calls;
     let stale_acs_frames_dropped = run_result.stale_acs_frames_dropped;
+    let fetch_requests_sent = run_result.fetch_requests_sent;
+    let fetch_responses_served = run_result.fetch_responses_served;
+    let fetch_responses_received = run_result.fetch_responses_received;
+    let fetched_reference_count = run_result.fetched_reference_count;
     let rust_broadcast_mempool_size = run_result.rust_broadcast_mempool_size;
     let broadcast_pool_backend = run_result.broadcast_pool_backend.as_str();
     let origin_tx_latencies = origin_tx_latencies_by_round
@@ -77,6 +81,10 @@ pub(super) fn build_node_result_json(
                 "tpke_combine_seconds": round.tpke_combine_seconds,
                 "acs_outbound_events": round.acs_outbound_events,
                 "tpke_combine_calls": round.tpke_combine_calls,
+                "fetch_requests_sent": round.fetch_requests_sent,
+                "fetch_responses_served": round.fetch_responses_served,
+                "fetch_responses_received": round.fetch_responses_received,
+                "fetched_reference_count": round.fetched_reference_count,
                 "driver_phase_stats": driver_phase_stats_json(&round.driver_phase_stats),
             })
         })
@@ -123,6 +131,12 @@ pub(super) fn build_node_result_json(
             "recv_frames": transport_stats.recv_frames,
             "connect_retries": transport_stats.connect_retries,
             "send_retries": transport_stats.send_retries,
+            "delayed_frames": transport_stats.delayed_frames,
+            "total_injected_delay_ms": transport_stats.total_injected_delay_ms,
+            "network_fault_seed": transport_stats.network_fault_seed,
+            "configured_fixed_delay_ms": transport_stats.configured_fixed_delay_ms,
+            "configured_jitter_ms": transport_stats.configured_jitter_ms,
+            "configured_slow_honest_extra_delay_ms": transport_stats.configured_slow_honest_extra_delay_ms,
         },
         "driver_stats": {
             "acs_pull_calls": acs_pull_calls.iter().sum::<usize>(),
@@ -132,6 +146,10 @@ pub(super) fn build_node_result_json(
             "acs_outbound_events": acs_outbound_events.iter().sum::<usize>(),
             "tpke_combine_calls": tpke_combine_calls.iter().sum::<usize>(),
             "stale_acs_frames_dropped": stale_acs_frames_dropped.iter().sum::<usize>(),
+            "fetch_requests_sent": fetch_requests_sent.iter().sum::<usize>(),
+            "fetch_responses_served": fetch_responses_served.iter().sum::<usize>(),
+            "fetch_responses_received": fetch_responses_received.iter().sum::<usize>(),
+            "fetched_reference_count": fetched_reference_count.iter().sum::<usize>(),
         },
         "host_stats": {
             "worker_ident": host_stats.worker_ident,

@@ -2,7 +2,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, unboun
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -10,6 +10,52 @@ use std::time::Duration;
 use crate::transport::handle::{TransportHandle, WakeupCounter};
 
 type ConnectionMap = Arc<Mutex<HashMap<usize, TcpStream>>>;
+
+const RNG_MIX_CONST: u64 = 0x9E37_79B9_7F4A_7C15;
+const RNG_FALLBACK_SEED: u64 = 0xA076_1D64_78BD_642F;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NetworkFaultConfig {
+    pub enabled: bool,
+    pub seed: u64,
+    pub fixed_delay_ms: u64,
+    pub jitter_ms: u64,
+    pub slow_honest_extra_delay_ms: u64,
+}
+
+impl NetworkFaultConfig {
+    fn is_active(self) -> bool {
+        self.enabled
+            && (self.fixed_delay_ms > 0
+                || self.jitter_ms > 0
+                || self.slow_honest_extra_delay_ms > 0)
+    }
+
+    fn mixed_seed(self, pid: usize) -> u64 {
+        let mixed = self.seed ^ ((pid as u64).wrapping_add(1).wrapping_mul(RNG_MIX_CONST));
+        if mixed == 0 { RNG_FALLBACK_SEED } else { mixed }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DelayRng {
+    state: u64,
+}
+
+impl DelayRng {
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.state;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.state = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+}
 
 struct SenderLoopCtx {
     stop: Arc<AtomicBool>,
@@ -20,6 +66,10 @@ struct SenderLoopCtx {
     sent_frames: Arc<AtomicUsize>,
     connect_retries: Arc<AtomicUsize>,
     send_retries: Arc<AtomicUsize>,
+    delayed_frames: Arc<AtomicUsize>,
+    injected_delay_ms_total: Arc<AtomicU64>,
+    network_faults: NetworkFaultConfig,
+    rng_seed: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -28,6 +78,12 @@ pub struct TransportStats {
     pub recv_frames: usize,
     pub connect_retries: usize,
     pub send_retries: usize,
+    pub delayed_frames: usize,
+    pub total_injected_delay_ms: u64,
+    pub network_fault_seed: u64,
+    pub configured_fixed_delay_ms: u64,
+    pub configured_jitter_ms: u64,
+    pub configured_slow_honest_extra_delay_ms: u64,
 }
 
 fn send_frame(stream: &mut TcpStream, payload: &[u8]) -> io::Result<()> {
@@ -98,6 +154,7 @@ fn close_connections(connections: &ConnectionMap) {
 }
 
 fn sender_loop(ctx: SenderLoopCtx) {
+    let mut rng = DelayRng::new(ctx.rng_seed);
     while !ctx.stop.load(Ordering::Relaxed) {
         let (recipient, payload) = match ctx.outbound_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(item) => item,
@@ -105,6 +162,14 @@ fn sender_loop(ctx: SenderLoopCtx) {
             Err(RecvTimeoutError::Disconnected) => break,
         };
         ctx.outbound_len.fetch_sub(1, Ordering::Relaxed);
+
+        let injected_delay_ms = compute_injected_delay_ms(ctx.network_faults, &mut rng);
+        if injected_delay_ms > 0 {
+            ctx.delayed_frames.fetch_add(1, Ordering::Relaxed);
+            ctx.injected_delay_ms_total
+                .fetch_add(injected_delay_ms, Ordering::Relaxed);
+            thread::sleep(Duration::from_millis(injected_delay_ms));
+        }
 
         let mut failures = 0usize;
         while !ctx.stop.load(Ordering::Relaxed) {
@@ -140,6 +205,21 @@ fn sender_loop(ctx: SenderLoopCtx) {
     }
 }
 
+fn compute_injected_delay_ms(config: NetworkFaultConfig, rng: &mut DelayRng) -> u64 {
+    if !config.is_active() {
+        return 0;
+    }
+    let jitter = if config.jitter_ms == 0 {
+        0
+    } else {
+        rng.next_u64() % (config.jitter_ms + 1)
+    };
+    config
+        .fixed_delay_ms
+        .saturating_add(config.slow_honest_extra_delay_ms)
+        .saturating_add(jitter)
+}
+
 pub struct LocalTcpTransport {
     stop: Arc<AtomicBool>,
     inbound_rx: Receiver<Vec<u8>>,
@@ -150,15 +230,23 @@ pub struct LocalTcpTransport {
     recv_frames: Arc<AtomicUsize>,
     connect_retries: Arc<AtomicUsize>,
     send_retries: Arc<AtomicUsize>,
+    delayed_frames: Arc<AtomicUsize>,
+    injected_delay_ms_total: Arc<AtomicU64>,
     wakeup_counter: Arc<WakeupCounter>,
     connections: ConnectionMap,
     accept_handle: Option<JoinHandle<()>>,
     sender_handle: Option<JoinHandle<()>>,
     worker_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    network_faults: NetworkFaultConfig,
+    rng_seed: u64,
 }
 
 impl LocalTcpTransport {
-    pub fn new(pid: usize, addresses: Vec<(String, u16)>) -> io::Result<Self> {
+    pub fn new(
+        pid: usize,
+        addresses: Vec<(String, u16)>,
+        network_faults: NetworkFaultConfig,
+    ) -> io::Result<Self> {
         if pid >= addresses.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -180,8 +268,11 @@ impl LocalTcpTransport {
         let recv_frames = Arc::new(AtomicUsize::new(0));
         let connect_retries = Arc::new(AtomicUsize::new(0));
         let send_retries = Arc::new(AtomicUsize::new(0));
+        let delayed_frames = Arc::new(AtomicUsize::new(0));
+        let injected_delay_ms_total = Arc::new(AtomicU64::new(0));
         let wakeup_counter = Arc::new(WakeupCounter::new());
         let worker_handles = Arc::new(Mutex::new(Vec::new()));
+        let rng_seed = network_faults.mixed_seed(pid);
 
         let accept_stop = Arc::clone(&stop);
         let accept_worker_handles = Arc::clone(&worker_handles);
@@ -247,6 +338,8 @@ impl LocalTcpTransport {
             let sender_sent_frames = Arc::clone(&sent_frames);
             let sender_connect_retries = Arc::clone(&connect_retries);
             let sender_send_retries = Arc::clone(&send_retries);
+            let sender_delayed_frames = Arc::clone(&delayed_frames);
+            let sender_injected_delay_ms_total = Arc::clone(&injected_delay_ms_total);
             move || {
                 sender_loop(SenderLoopCtx {
                     stop: sender_stop,
@@ -257,6 +350,10 @@ impl LocalTcpTransport {
                     sent_frames: sender_sent_frames,
                     connect_retries: sender_connect_retries,
                     send_retries: sender_send_retries,
+                    delayed_frames: sender_delayed_frames,
+                    injected_delay_ms_total: sender_injected_delay_ms_total,
+                    network_faults,
+                    rng_seed,
                 })
             }
         });
@@ -271,11 +368,15 @@ impl LocalTcpTransport {
             recv_frames,
             connect_retries,
             send_retries,
+            delayed_frames,
+            injected_delay_ms_total,
             wakeup_counter,
             connections,
             accept_handle: Some(accept_handle),
             sender_handle: Some(sender_handle),
             worker_handles,
+            network_faults,
+            rng_seed,
         })
     }
 
@@ -324,6 +425,12 @@ impl LocalTcpTransport {
             recv_frames: self.recv_frames.load(Ordering::Relaxed),
             connect_retries: self.connect_retries.load(Ordering::Relaxed),
             send_retries: self.send_retries.load(Ordering::Relaxed),
+            delayed_frames: self.delayed_frames.load(Ordering::Relaxed),
+            total_injected_delay_ms: self.injected_delay_ms_total.load(Ordering::Relaxed),
+            network_fault_seed: self.rng_seed,
+            configured_fixed_delay_ms: self.network_faults.fixed_delay_ms,
+            configured_jitter_ms: self.network_faults.jitter_ms,
+            configured_slow_honest_extra_delay_ms: self.network_faults.slow_honest_extra_delay_ms,
         }
     }
 
@@ -377,5 +484,42 @@ impl TransportHandle for LocalTcpTransport {
 
     fn wakeup_seq(&self) -> u64 {
         self.wakeup_counter.snapshot()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DelayRng, NetworkFaultConfig, compute_injected_delay_ms};
+
+    #[test]
+    fn network_fault_delay_combines_fixed_slow_and_jitter() {
+        let config = NetworkFaultConfig {
+            enabled: true,
+            seed: 7,
+            fixed_delay_ms: 10,
+            jitter_ms: 5,
+            slow_honest_extra_delay_ms: 20,
+        };
+        let mut rng = DelayRng::new(config.mixed_seed(3));
+
+        let delay = compute_injected_delay_ms(config, &mut rng);
+
+        assert!((30..=35).contains(&delay));
+    }
+
+    #[test]
+    fn network_fault_delay_is_zero_when_disabled() {
+        let config = NetworkFaultConfig {
+            enabled: false,
+            seed: 7,
+            fixed_delay_ms: 10,
+            jitter_ms: 5,
+            slow_honest_extra_delay_ms: 20,
+        };
+        let mut rng = DelayRng::new(config.mixed_seed(1));
+
+        let delay = compute_injected_delay_ms(config, &mut rng);
+
+        assert_eq!(delay, 0);
     }
 }

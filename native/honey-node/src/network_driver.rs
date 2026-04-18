@@ -8,7 +8,7 @@ mod round;
 mod types;
 mod wire;
 
-use config::parse_broadcast_pool_config;
+use config::{parse_broadcast_pool_config, parse_network_fault_config};
 use result::build_node_result_json;
 use round::{run_driver_rounds, wait_until_start};
 use wire::parse_addresses_json;
@@ -19,9 +19,10 @@ pub(super) const BATCH_REF_TAG: u8 = 1;
 
 pub(crate) fn run_rust_driver_node(args: RunDriverNodeArgs) -> Result<(), String> {
     let broadcast_pool_config = parse_broadcast_pool_config(&args.config_json)?;
+    let network_fault_config = parse_network_fault_config(&args.config_json, args.pid)?;
     let addresses = parse_addresses_json(&args.addresses_json)?;
-    let mut transport =
-        LocalTcpTransport::new(args.pid, addresses).map_err(|err| err.to_string())?;
+    let mut transport = LocalTcpTransport::new(args.pid, addresses, network_fault_config)
+        .map_err(|err| err.to_string())?;
     let host = build_acs_host(
         args.acs_protocol,
         args.pid,

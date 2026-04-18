@@ -240,3 +240,67 @@ def test_local_dumbo_acs_can_be_rust_driven_with_persistent_python_hosts() -> No
     assert all(node.bridge_queue_size == 0 for node in result.nodes)
     assert result.rounds[0].selected_count >= 3
     assert result.rounds[0].send_events > 0
+
+
+def test_local_dumbo_benchmark_reports_fixed_network_delay_stats() -> None:
+    results = benchmark_local_dumbo_nodes_rust_driven(
+        sid="test:bench-driver:dumbo:network-delay",
+        num_nodes=4,
+        faulty=1,
+        batch_size=1,
+        max_rounds=1,
+        global_timeout=10.0,
+        transactions_per_node=1,
+        log_level="ERROR",
+        network_faults={
+            "enabled": True,
+            "seed": 20260416,
+            "fixed_delay_ms": 5,
+            "jitter_ms": 0,
+        },
+    )
+
+    assert len(results) == 4
+    assert all(result.transport_stats.configured_fixed_delay_ms == 5 for result in results)
+    assert all(result.transport_stats.configured_jitter_ms == 0 for result in results)
+    assert all(result.transport_stats.network_fault_seed != 0 for result in results)
+    assert all(result.transport_stats.delayed_frames > 0 for result in results)
+    assert all(result.transport_stats.total_injected_delay_ms >= 5 for result in results)
+
+
+def test_local_dumbo_benchmark_applies_slow_honest_delay_to_selected_pid_only() -> None:
+    results = benchmark_local_dumbo_nodes_rust_driven(
+        sid="test:bench-driver:dumbo:slow-honest",
+        num_nodes=4,
+        faulty=1,
+        batch_size=1,
+        max_rounds=1,
+        global_timeout=10.0,
+        transactions_per_node=1,
+        log_level="ERROR",
+        network_faults={
+            "enabled": True,
+            "seed": 20260416,
+            "fixed_delay_ms": 0,
+            "jitter_ms": 0,
+            "slow_honest": {
+                "pids": [3],
+                "extra_delay_ms": 25,
+            },
+        },
+    )
+
+    delayed_pids = {
+        result.pid
+        for result in results
+        if result.transport_stats.configured_slow_honest_extra_delay_ms > 0
+    }
+
+    assert delayed_pids == {3}
+    slow_result = next(result for result in results if result.pid == 3)
+    fast_results = [result for result in results if result.pid != 3]
+    assert slow_result.transport_stats.delayed_frames > 0
+    assert slow_result.transport_stats.total_injected_delay_ms >= 25
+    assert all(
+        result.transport_stats.configured_slow_honest_extra_delay_ms == 0 for result in fast_results
+    )

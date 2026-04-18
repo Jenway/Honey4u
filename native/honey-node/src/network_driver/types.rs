@@ -2,6 +2,7 @@ use super::config::{BroadcastPoolBackend, BroadcastPoolConfig};
 use crate::{
     AcsHost, DriverPhaseStats, HbPkePrivateKeyShare, HbPkePublicParams, RunDriverNodeArgs,
 };
+use honey_node::pool_wire::PoolFetchWire;
 use honey_node::transport::LocalTcpTransport;
 use std::collections::BTreeMap;
 
@@ -18,6 +19,7 @@ pub(super) struct DriverCarryovers {
     pub(super) acs_wire_payloads: BTreeMap<usize, Vec<Vec<u8>>>,
     pub(super) sealed_batches: BTreeMap<usize, BTreeMap<usize, Vec<u8>>>,
     pub(super) share_bundles: BTreeMap<usize, Vec<InboundShareBundle>>,
+    pub(super) pool_fetch_responses: BTreeMap<usize, Vec<PoolFetchWire>>,
 }
 
 #[derive(Default)]
@@ -44,6 +46,10 @@ pub(super) struct DriverRoundOutcome {
     pub(super) acs_outbound_events: usize,
     pub(super) tpke_combine_calls: usize,
     pub(super) stale_acs_frames_dropped: usize,
+    pub(super) fetch_requests_sent: usize,
+    pub(super) fetch_responses_served: usize,
+    pub(super) fetch_responses_received: usize,
+    pub(super) fetched_reference_count: usize,
     pub(super) selected_proposal_ids: Vec<String>,
     pub(super) selected_pids: Vec<usize>,
     pub(super) reused_reference_count: usize,
@@ -69,6 +75,10 @@ pub(super) struct DriverNodeRoundTelemetry {
     pub(super) tpke_combine_seconds: f64,
     pub(super) acs_outbound_events: usize,
     pub(super) tpke_combine_calls: usize,
+    pub(super) fetch_requests_sent: usize,
+    pub(super) fetch_responses_served: usize,
+    pub(super) fetch_responses_received: usize,
+    pub(super) fetched_reference_count: usize,
     pub(super) driver_phase_stats: DriverPhaseStats,
 }
 
@@ -100,6 +110,10 @@ pub(super) struct DriverNodeResult {
     pub(super) acs_outbound_events: Vec<usize>,
     pub(super) tpke_combine_calls: Vec<usize>,
     pub(super) stale_acs_frames_dropped: Vec<usize>,
+    pub(super) fetch_requests_sent: Vec<usize>,
+    pub(super) fetch_responses_served: Vec<usize>,
+    pub(super) fetch_responses_received: Vec<usize>,
+    pub(super) fetched_reference_count: Vec<usize>,
     pub(super) chain_digest: String,
     pub(super) per_round_selected_pids: Vec<Vec<usize>>,
     pub(super) per_round_block_digests: Vec<String>,

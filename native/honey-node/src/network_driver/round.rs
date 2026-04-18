@@ -18,6 +18,11 @@ use crate::{
     Protocol, RunDriverNodeArgs, decode_hb_tx_batch, encode_hb_json_string, encode_hb_tx_batch,
     merge_hb_tx_batches_bytes, seal_hb_encrypted_batch,
 };
+use honey_crypto::merkle;
+use honey_node::pool_wire::{
+    PoolFetchWire, decode_pool_fetch_from_wire, encode_pool_fetch_request_wire,
+    encode_pool_fetch_response_wire,
+};
 use honey_node::transport::LocalTcpTransport;
 use std::collections::{BTreeMap, BTreeSet};
 use std::thread;
@@ -155,11 +160,186 @@ struct ResolvedSelectedProposals {
     consumed_reference_ids: Vec<String>,
 }
 
+struct PendingPoolFetchRequest {
+    round_id: usize,
+    message: PoolFetchWire,
+}
+
+enum ProposalResolutionError {
+    Invalid(String),
+    MissingReusableEntry(PoolReference),
+}
+
+#[derive(Default)]
+struct PoolFetchTracker {
+    pending_references: BTreeMap<String, PoolReference>,
+}
+
+impl PoolFetchTracker {
+    fn request_reference(
+        &mut self,
+        transport: &LocalTcpTransport,
+        round_id: usize,
+        pid: usize,
+        nodes: usize,
+        reference: &PoolReference,
+    ) -> Result<bool, String> {
+        match self.pending_references.get(&reference.item_id) {
+            Some(existing) if !references_match(existing, reference) => {
+                return Err(format!(
+                    "conflicting pending pool fetch metadata for {}",
+                    reference.item_id
+                ));
+            }
+            Some(_) => return Ok(false),
+            None => {
+                self.pending_references
+                    .insert(reference.item_id.clone(), reference.clone());
+            }
+        }
+
+        let payload = encode_pool_fetch_request_wire(
+            pid as u32,
+            round_id as u32,
+            &reference.item_id,
+            reference.origin_round,
+            reference.origin_sender,
+            &reference.roothash,
+        )?;
+        let frame_payload =
+            encode_driver_frame(&DriverWireFrame::AcsEnvelope { round_id, payload })?;
+        let sent = fanout_encoded_payload(transport, nodes, &frame_payload, Some(pid))?;
+        Ok(sent > 0)
+    }
+
+    fn handle_request(
+        &self,
+        transport: &LocalTcpTransport,
+        pid: usize,
+        pool: &BroadcastMempool,
+        request_round_id: usize,
+        message: PoolFetchWire,
+    ) -> Result<bool, String> {
+        let PoolFetchWire::Request {
+            sender,
+            item_id,
+            origin_round,
+            origin_sender,
+            roothash,
+        } = message
+        else {
+            return Ok(false);
+        };
+        let sender = sender as usize;
+        if sender == pid {
+            return Ok(false);
+        }
+        let Some(entry) = pool.get_reusable(&item_id) else {
+            return Ok(false);
+        };
+        if entry.round_no != origin_round
+            || entry.sender_id != origin_sender
+            || entry.roothash != roothash
+        {
+            return Ok(false);
+        }
+        let payload = encode_pool_fetch_response_wire(
+            pid as u32,
+            request_round_id as u32,
+            &item_id,
+            &entry.payload,
+        )?;
+        send_frame(
+            transport,
+            sender,
+            &DriverWireFrame::AcsEnvelope {
+                round_id: request_round_id,
+                payload,
+            },
+        )?;
+        Ok(true)
+    }
+
+    fn handle_response(
+        &mut self,
+        pool: &mut BroadcastMempool,
+        nodes: usize,
+        faulty: usize,
+        message: PoolFetchWire,
+    ) -> Result<bool, String> {
+        let PoolFetchWire::Response {
+            sender: _sender,
+            item_id,
+            payload,
+        } = message
+        else {
+            return Ok(false);
+        };
+        if pool.get_reusable(&item_id).is_some() {
+            self.pending_references.remove(&item_id);
+            return Ok(false);
+        }
+        let Some(reference) = self.pending_references.get(&item_id).cloned() else {
+            return Ok(false);
+        };
+        if !validate_fetched_reusable_payload(&payload, &reference, nodes, faulty) {
+            return Ok(false);
+        }
+        pool.add_reusable(
+            payload,
+            reference.roothash.clone(),
+            reference.proof_payload.clone(),
+            reference.origin_round,
+            reference.origin_sender,
+        );
+        if pool.get_reusable(&item_id).is_none() {
+            return Err(format!(
+                "failed to insert fetched reusable entry {} into Rust mempool",
+                item_id
+            ));
+        }
+        self.pending_references.remove(&item_id);
+        Ok(true)
+    }
+}
+
+fn references_match(left: &PoolReference, right: &PoolReference) -> bool {
+    left.item_id == right.item_id
+        && left.origin_round == right.origin_round
+        && left.origin_sender == right.origin_sender
+        && left.roothash == right.roothash
+        && left.proof_payload == right.proof_payload
+}
+
+fn validate_fetched_reusable_payload(
+    payload: &[u8],
+    reference: &PoolReference,
+    nodes: usize,
+    faulty: usize,
+) -> bool {
+    if BroadcastMempool::compute_item_id(
+        reference.origin_round,
+        reference.origin_sender,
+        &reference.roothash,
+    ) != reference.item_id
+    {
+        return false;
+    }
+    let data_threshold = nodes.saturating_sub(2 * faulty);
+    if data_threshold == 0 {
+        return false;
+    }
+    let Ok(encoded) = merkle::encode(payload, data_threshold, nodes) else {
+        return false;
+    };
+    encoded.root.as_slice() == reference.roothash.as_slice()
+}
+
 fn resolve_selected_proposals(
     selected_proposals: &[&ProposalArtifact],
     pool: &mut BroadcastMempool,
     allow_fetch_fallback: bool,
-) -> Result<ResolvedSelectedProposals, String> {
+) -> Result<ResolvedSelectedProposals, ProposalResolutionError> {
     let mut batch_refs = Vec::new();
     let mut seen_batch_refs = BTreeSet::new();
     let mut consumed_reference_ids = Vec::new();
@@ -189,10 +369,10 @@ fn resolve_payload_bytes(
     seen_batch_refs: &mut BTreeSet<(u32, u32)>,
     consumed_reference_ids: &mut Vec<String>,
     visited_reference_ids: &mut BTreeSet<String>,
-) -> Result<(), String> {
-    match decode_acs_payload(payload)? {
+) -> Result<(), ProposalResolutionError> {
+    match decode_acs_payload(payload).map_err(ProposalResolutionError::Invalid)? {
         AcsPayload::Inline(data) => {
-            let batch_ref = decode_batch_ref(&data)?;
+            let batch_ref = decode_batch_ref(&data).map_err(ProposalResolutionError::Invalid)?;
             if seen_batch_refs.insert(batch_ref) {
                 batch_refs.push(batch_ref);
             }
@@ -203,7 +383,8 @@ fn resolve_payload_bytes(
             references,
         } => {
             if !inline_payload.is_empty() {
-                let batch_ref = decode_batch_ref(&inline_payload)?;
+                let batch_ref =
+                    decode_batch_ref(&inline_payload).map_err(ProposalResolutionError::Invalid)?;
                 if seen_batch_refs.insert(batch_ref) {
                     batch_refs.push(batch_ref);
                 }
@@ -217,22 +398,19 @@ fn resolve_payload_bytes(
                         || entry.sender_id != reference.origin_sender
                         || entry.roothash != reference.roothash
                     {
-                        return Err(format!(
+                        return Err(ProposalResolutionError::Invalid(format!(
                             "reusable entry {} metadata mismatch during payload resolution",
                             reference.item_id
-                        ));
+                        )));
                     }
                     entry.payload.clone()
                 } else if allow_fetch_fallback {
-                    return Err(format!(
-                        "missing reusable entry {} and pool fetch fallback is not implemented",
-                        reference.item_id
-                    ));
+                    return Err(ProposalResolutionError::MissingReusableEntry(reference));
                 } else {
-                    return Err(format!(
+                    return Err(ProposalResolutionError::Invalid(format!(
                         "missing reusable entry {} during payload resolution",
                         reference.item_id
-                    ));
+                    )));
                 };
                 consumed_reference_ids.push(reference.item_id.clone());
                 resolve_payload_bytes(
@@ -259,14 +437,20 @@ fn update_queue_peaks(transport: &LocalTcpTransport, peaks: &mut QueuePeaksSnaps
     peaks.transport_outbound = peaks.transport_outbound.max(pending_outbound);
 }
 
+struct RoundTransportInbox<'a> {
+    inbound_acs_wire: &'a mut Vec<Vec<u8>>,
+    pending_pool_fetch_requests: &'a mut Vec<PendingPoolFetchRequest>,
+    pending_pool_fetch_responses: &'a mut Vec<PoolFetchWire>,
+    received_batches: &'a mut BTreeMap<usize, Vec<u8>>,
+    pending_share_bundles: &'a mut Vec<super::types::InboundShareBundle>,
+}
+
 fn drain_transport_into_round(
     transport: &LocalTcpTransport,
     round_id: usize,
     carryovers: &mut DriverCarryovers,
     batch_archive: &mut BatchArchive,
-    inbound_acs_wire: &mut Vec<Vec<u8>>,
-    received_batches: &mut BTreeMap<usize, Vec<u8>>,
-    pending_share_bundles: &mut Vec<super::types::InboundShareBundle>,
+    inbox: &mut RoundTransportInbox<'_>,
 ) -> Result<usize, String> {
     let mut frame_count = 0usize;
     for payload in transport
@@ -279,8 +463,30 @@ fn drain_transport_into_round(
                 round_id: frame_round_id,
                 payload,
             } => {
-                if frame_round_id == round_id {
-                    inbound_acs_wire.push(payload);
+                if let Some(pool_message) = decode_pool_fetch_from_wire(&payload)? {
+                    match pool_message {
+                        request @ PoolFetchWire::Request { .. } => {
+                            inbox
+                                .pending_pool_fetch_requests
+                                .push(PendingPoolFetchRequest {
+                                    round_id: frame_round_id,
+                                    message: request,
+                                });
+                        }
+                        response @ PoolFetchWire::Response { .. } => {
+                            if frame_round_id == round_id {
+                                inbox.pending_pool_fetch_responses.push(response);
+                            } else if frame_round_id > round_id {
+                                carryovers
+                                    .pool_fetch_responses
+                                    .entry(frame_round_id)
+                                    .or_default()
+                                    .push(response);
+                            }
+                        }
+                    }
+                } else if frame_round_id == round_id {
+                    inbox.inbound_acs_wire.push(payload);
                 } else if frame_round_id > round_id {
                     carryovers
                         .acs_wire_payloads
@@ -296,7 +502,7 @@ fn drain_transport_into_round(
             } => {
                 remember_archived_batch(batch_archive, frame_round_id, sender, &sealed_batch);
                 if frame_round_id == round_id {
-                    received_batches.entry(sender).or_insert(sealed_batch);
+                    inbox.received_batches.entry(sender).or_insert(sealed_batch);
                 } else if frame_round_id > round_id {
                     carryovers
                         .sealed_batches
@@ -318,7 +524,7 @@ fn drain_transport_into_round(
                     shares,
                 };
                 if frame_round_id == round_id {
-                    pending_share_bundles.push(bundle);
+                    inbox.pending_share_bundles.push(bundle);
                 } else if frame_round_id > round_id {
                     carryovers
                         .share_bundles
@@ -397,10 +603,16 @@ fn run_driver_round(
         .remove(&round_id)
         .unwrap_or_default();
     received_batches.entry(ctx.args.pid).or_insert(sealed_batch);
+    let mut pending_pool_fetch_requests = Vec::new();
+    let mut pending_pool_fetch_responses = carryovers
+        .pool_fetch_responses
+        .remove(&round_id)
+        .unwrap_or_default();
     let mut pending_share_bundles = carryovers
         .share_bundles
         .remove(&round_id)
         .unwrap_or_default();
+    let mut pool_fetch_tracker = PoolFetchTracker::default();
     let mut seen_share_senders: BTreeSet<usize> = BTreeSet::new();
     let mut local_share_broadcasted = false;
     let mut acs_decision_at: Option<Instant> = None;
@@ -414,6 +626,10 @@ fn run_driver_round(
     let mut acs_outbound_events = 0usize;
     let mut tpke_combine_calls = 0usize;
     let mut stale_acs_frames_dropped = 0usize;
+    let mut fetch_requests_sent = 0usize;
+    let mut fetch_responses_served = 0usize;
+    let mut fetch_responses_received = 0usize;
+    let mut fetched_reference_count = 0usize;
     let mut reused_reference_count = 0usize;
     let mut driver_stats = DriverPhaseStats {
         host_stats: (0..ctx.args.nodes)
@@ -433,19 +649,57 @@ fn run_driver_round(
         driver_stats.max_pending_deliveries =
             driver_stats.max_pending_deliveries.max(pending_deliveries);
         let mut progressed = false;
-        let frame_count = drain_transport_into_round(
-            ctx.transport,
-            round_id,
-            carryovers,
-            batch_archive,
-            &mut inbound_acs_wire,
-            &mut received_batches,
-            &mut pending_share_bundles,
-        )?;
+        let frame_count = {
+            let mut inbox = RoundTransportInbox {
+                inbound_acs_wire: &mut inbound_acs_wire,
+                pending_pool_fetch_requests: &mut pending_pool_fetch_requests,
+                pending_pool_fetch_responses: &mut pending_pool_fetch_responses,
+                received_batches: &mut received_batches,
+                pending_share_bundles: &mut pending_share_bundles,
+            };
+            drain_transport_into_round(
+                ctx.transport,
+                round_id,
+                carryovers,
+                batch_archive,
+                &mut inbox,
+            )?
+        };
         if frame_count > 0 {
             progressed = true;
         }
         update_queue_peaks(ctx.transport, queue_peaks);
+
+        if !pending_pool_fetch_requests.is_empty() || !pending_pool_fetch_responses.is_empty() {
+            if let Some(pool) = rust_broadcast_mempool.as_mut() {
+                for request in pending_pool_fetch_requests.drain(..) {
+                    let responded = pool_fetch_tracker.handle_request(
+                        ctx.transport,
+                        ctx.args.pid,
+                        pool,
+                        request.round_id,
+                        request.message,
+                    )?;
+                    fetch_responses_served += usize::from(responded);
+                    progressed |= responded;
+                }
+                for response in pending_pool_fetch_responses.drain(..) {
+                    fetch_responses_received += 1;
+                    let inserted = pool_fetch_tracker.handle_response(
+                        pool,
+                        ctx.args.nodes,
+                        ctx.args.faulty,
+                        response,
+                    )?;
+                    fetched_reference_count += usize::from(inserted);
+                    progressed |= inserted;
+                }
+            } else {
+                pending_pool_fetch_requests.clear();
+                pending_pool_fetch_responses.clear();
+            }
+            update_queue_peaks(ctx.transport, queue_peaks);
+        }
 
         let mut pushed_inbound = false;
         if selected_proposal_ids.is_none() && !inbound_acs_wire.is_empty() {
@@ -599,22 +853,57 @@ fn run_driver_round(
             };
             let selected_pids = selected_pids_from_proposals(&selected_proposals);
 
+            let mut waiting_for_fetch = false;
             if selected_batch_refs.is_none() {
-                selected_batch_refs = Some(if reuse_enabled {
+                if reuse_enabled {
                     let pool = rust_broadcast_mempool.as_mut().ok_or_else(|| {
                         String::from("missing Rust mempool for proposal resolution")
                     })?;
-                    let resolved = resolve_selected_proposals(
+                    match resolve_selected_proposals(
                         &selected_proposals,
                         pool,
                         ctx.broadcast_pool_config.enable_fetch_fallback,
-                    )?;
-                    reused_reference_count = resolved.consumed_reference_ids.len();
-                    consumed_reference_ids = resolved.consumed_reference_ids;
-                    resolved.batch_refs
+                    ) {
+                        Ok(resolved) => {
+                            reused_reference_count = resolved.consumed_reference_ids.len();
+                            consumed_reference_ids = resolved.consumed_reference_ids;
+                            selected_batch_refs = Some(resolved.batch_refs);
+                        }
+                        Err(ProposalResolutionError::MissingReusableEntry(reference)) => {
+                            if !ctx.broadcast_pool_config.enable_fetch_fallback {
+                                return Err(format!(
+                                    "missing reusable entry {} during payload resolution",
+                                    reference.item_id
+                                ));
+                            }
+                            let requested = pool_fetch_tracker.request_reference(
+                                ctx.transport,
+                                round_id,
+                                ctx.args.pid,
+                                ctx.args.nodes,
+                                &reference,
+                            )?;
+                            fetch_requests_sent += usize::from(requested);
+                            progressed |= requested;
+                            waiting_for_fetch = true;
+                        }
+                        Err(ProposalResolutionError::Invalid(err)) => return Err(err),
+                    }
                 } else {
-                    batch_refs_from_selected_proposals(&selected_proposals)?
-                });
+                    selected_batch_refs =
+                        Some(batch_refs_from_selected_proposals(&selected_proposals)?);
+                }
+            }
+
+            if waiting_for_fetch {
+                if !progressed {
+                    driver_stats.idle_sweeps += 1;
+                    driver_stats.idle_backoff_count += 1;
+                    thread::sleep(DRIVER_IDLE_BACKOFF);
+                } else {
+                    driver_stats.active_sweeps += 1;
+                }
+                continue;
             }
 
             let round_batch_refs = selected_batch_refs
@@ -743,6 +1032,10 @@ fn run_driver_round(
                         acs_outbound_events,
                         tpke_combine_calls,
                         stale_acs_frames_dropped,
+                        fetch_requests_sent,
+                        fetch_responses_served,
+                        fetch_responses_received,
+                        fetched_reference_count,
                         selected_proposal_ids: selected_proposal_ids.clone(),
                         selected_pids: selected_pids.clone(),
                         reused_reference_count,
@@ -798,6 +1091,10 @@ pub(super) fn run_driver_rounds(
     let mut acs_outbound_events = Vec::with_capacity(args.rounds);
     let mut tpke_combine_calls = Vec::with_capacity(args.rounds);
     let mut stale_acs_frames_dropped = Vec::with_capacity(args.rounds);
+    let mut fetch_requests_sent = Vec::with_capacity(args.rounds);
+    let mut fetch_responses_served = Vec::with_capacity(args.rounds);
+    let mut fetch_responses_received = Vec::with_capacity(args.rounds);
+    let mut fetched_reference_count = Vec::with_capacity(args.rounds);
     let mut chain_digest = GENESIS_CHAIN_DIGEST;
     let mut per_round_selected_pids = Vec::with_capacity(args.rounds);
     let mut per_round_block_digests = Vec::with_capacity(args.rounds);
@@ -846,6 +1143,10 @@ pub(super) fn run_driver_rounds(
         acs_outbound_events.push(round_outcome.acs_outbound_events);
         tpke_combine_calls.push(round_outcome.tpke_combine_calls);
         stale_acs_frames_dropped.push(round_outcome.stale_acs_frames_dropped);
+        fetch_requests_sent.push(round_outcome.fetch_requests_sent);
+        fetch_responses_served.push(round_outcome.fetch_responses_served);
+        fetch_responses_received.push(round_outcome.fetch_responses_received);
+        fetched_reference_count.push(round_outcome.fetched_reference_count);
         per_round_selected_pids.push(round_outcome.selected_pids.clone());
         let block_digest = crate::sha256_hex(&round_outcome.block_payload);
         let block_size = round_outcome.block_payload.len();
@@ -877,6 +1178,10 @@ pub(super) fn run_driver_rounds(
             tpke_combine_seconds: round_outcome.tpke_combine_seconds,
             acs_outbound_events: round_outcome.acs_outbound_events,
             tpke_combine_calls: round_outcome.tpke_combine_calls,
+            fetch_requests_sent: round_outcome.fetch_requests_sent,
+            fetch_responses_served: round_outcome.fetch_responses_served,
+            fetch_responses_received: round_outcome.fetch_responses_received,
+            fetched_reference_count: round_outcome.fetched_reference_count,
             driver_phase_stats: round_outcome.driver_stats,
         });
         if let Some(pool) = rust_broadcast_mempool.as_mut() {
@@ -906,6 +1211,10 @@ pub(super) fn run_driver_rounds(
             acs_outbound_events,
             tpke_combine_calls,
             stale_acs_frames_dropped,
+            fetch_requests_sent,
+            fetch_responses_served,
+            fetch_responses_received,
+            fetched_reference_count,
             chain_digest: crate::hex_encode(&chain_digest),
             per_round_selected_pids,
             per_round_block_digests,
@@ -920,4 +1229,193 @@ pub(super) fn run_driver_rounds(
         },
         queue_peaks,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn test_resolve_selected_proposals_reports_missing_reference() {
+        let reference = PoolReference {
+            item_id: String::from("deadbeef01234567"),
+            origin_round: 1,
+            origin_sender: 2,
+            roothash: vec![7; 32],
+            proof_payload: vec![9; 8],
+        };
+        let proposal = ProposalArtifact {
+            proposal_id: String::from("1:2:deadbeef"),
+            proposer: 2,
+            payload: encode_bundle_acs_payload(b"", std::slice::from_ref(&reference)),
+            digest: reference.roothash.clone(),
+            certificate: reference.proof_payload.clone(),
+        };
+        let mut pool = BroadcastMempool::new(8, 4);
+
+        match resolve_selected_proposals(&[&proposal], &mut pool, true) {
+            Err(ProposalResolutionError::MissingReusableEntry(missing)) => {
+                assert_eq!(missing.item_id, reference.item_id);
+                assert_eq!(missing.origin_round, reference.origin_round);
+                assert_eq!(missing.origin_sender, reference.origin_sender);
+            }
+            other => panic!(
+                "unexpected resolution result: {:?}",
+                other_result_tag(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn test_pool_fetch_tracker_accepts_valid_response() {
+        let payload = encode_bundle_acs_payload(&encode_batch_ref(3, 1), &[]);
+        let encoded = merkle::encode(&payload, 2, 4).expect("payload should encode");
+        let reference = PoolReference {
+            item_id: BroadcastMempool::compute_item_id(2, 1, &encoded.root),
+            origin_round: 2,
+            origin_sender: 1,
+            roothash: encoded.root.to_vec(),
+            proof_payload: vec![5; 8],
+        };
+        let mut tracker = PoolFetchTracker::default();
+        tracker
+            .pending_references
+            .insert(reference.item_id.clone(), reference.clone());
+        let mut pool = BroadcastMempool::new(8, 4);
+
+        let accepted = tracker
+            .handle_response(
+                &mut pool,
+                4,
+                1,
+                PoolFetchWire::Response {
+                    sender: 0,
+                    item_id: reference.item_id.clone(),
+                    payload: payload.clone(),
+                },
+            )
+            .expect("response handling should succeed");
+
+        assert!(accepted);
+        let stored = pool
+            .get_reusable(&reference.item_id)
+            .expect("fetched entry should be inserted");
+        assert_eq!(stored.payload, payload);
+        assert_eq!(stored.roothash, reference.roothash);
+        assert!(!tracker.pending_references.contains_key(&reference.item_id));
+    }
+
+    #[test]
+    fn test_pool_fetch_tracker_round_trip_over_local_transport() {
+        let reserved = (0..2)
+            .map(|_| TcpListener::bind("127.0.0.1:0").expect("should reserve loopback port"))
+            .collect::<Vec<_>>();
+        let addresses = reserved
+            .iter()
+            .map(|listener| {
+                let addr = listener
+                    .local_addr()
+                    .expect("listener should expose local addr");
+                (String::from("127.0.0.1"), addr.port())
+            })
+            .collect::<Vec<_>>();
+        drop(reserved);
+
+        let mut responder_transport =
+            LocalTcpTransport::new(0, addresses.clone(), Default::default())
+                .expect("transport 0 should bind");
+        let mut requester_transport = LocalTcpTransport::new(1, addresses, Default::default())
+            .expect("transport 1 should bind");
+
+        let payload = encode_bundle_acs_payload(&encode_batch_ref(3, 1), &[]);
+        let encoded = merkle::encode(&payload, 2, 4).expect("payload should encode");
+        let reference = PoolReference {
+            item_id: BroadcastMempool::compute_item_id(2, 0, &encoded.root),
+            origin_round: 2,
+            origin_sender: 0,
+            roothash: encoded.root.to_vec(),
+            proof_payload: vec![7; 8],
+        };
+
+        let mut responder_pool = BroadcastMempool::new(8, 4);
+        responder_pool.add_reusable(
+            payload.clone(),
+            reference.roothash.clone(),
+            reference.proof_payload.clone(),
+            reference.origin_round,
+            reference.origin_sender,
+        );
+
+        let mut requester_tracker = PoolFetchTracker::default();
+        let requested = requester_tracker
+            .request_reference(&requester_transport, 5, 1, 2, &reference)
+            .expect("request should encode and send");
+        assert!(requested);
+
+        let request = recv_single_fetch_wire(&responder_transport, Duration::from_secs(2));
+        let responded = PoolFetchTracker::default()
+            .handle_request(&responder_transport, 0, &responder_pool, 5, request)
+            .expect("request handling should succeed");
+        assert!(responded);
+
+        let response = recv_single_fetch_wire(&requester_transport, Duration::from_secs(2));
+        let mut requester_pool = BroadcastMempool::new(8, 4);
+        let inserted = requester_tracker
+            .handle_response(&mut requester_pool, 4, 1, response)
+            .expect("response handling should succeed");
+        assert!(inserted);
+        let stored = requester_pool
+            .get_reusable(&reference.item_id)
+            .expect("fetched entry should be inserted into requester pool");
+        assert_eq!(stored.payload, payload);
+        assert_eq!(stored.roothash, reference.roothash);
+        assert!(
+            !requester_tracker
+                .pending_references
+                .contains_key(&reference.item_id)
+        );
+
+        responder_transport
+            .close()
+            .expect("responder transport should close");
+        requester_transport
+            .close()
+            .expect("requester transport should close");
+    }
+
+    fn other_result_tag(
+        result: &Result<ResolvedSelectedProposals, ProposalResolutionError>,
+    ) -> &'static str {
+        match result {
+            Ok(_) => "ok",
+            Err(ProposalResolutionError::Invalid(_)) => "invalid",
+            Err(ProposalResolutionError::MissingReusableEntry(_)) => "missing",
+        }
+    }
+
+    fn recv_single_fetch_wire(transport: &LocalTcpTransport, timeout: Duration) -> PoolFetchWire {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let batch = transport.recv_batch(16).expect("recv_batch should succeed");
+            for payload in batch {
+                let frame = decode_driver_frame(&payload).expect("driver frame should decode");
+                let DriverWireFrame::AcsEnvelope {
+                    round_id: _round_id,
+                    payload,
+                } = frame
+                else {
+                    continue;
+                };
+                if let Some(message) =
+                    decode_pool_fetch_from_wire(&payload).expect("fetch wire should decode")
+                {
+                    return message;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for pool fetch wire message");
+    }
 }
