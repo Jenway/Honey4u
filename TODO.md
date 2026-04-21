@@ -11,18 +11,37 @@
 
 ## 当前现状
 
+- 对照任务书的当前判断：
+  - 复用机制实现：已完成
+  - 安全性/活性工程验证：已完成当前范围内验证，但仍需在冻结版本上补正式留档
+  - 高负载吞吐提升 10% 以上：已完成
+  - 稳定系统、完整文档与论文：代码和实验链路基本就绪，正式冻结结果与论文定稿未完成
 - 已完成的实验主线：
   - reuse on/off sweep
   - Python vs Rust FIN-style backend compare
   - N=12 高负载主结果
   - Python Grace 参数敏感性
+- 已完成的实验能力：
+  - 受控网络扰动注入
+  - `slow_honest` 场景 quick result
+  - 初步拜占庭节点模拟：`silent`、`invalid_fetch_response`
 - 已接入但尚未形成正式主结果的内容：
   - fetch request/response 统计
   - `rust_dumbo` backend compare 入口
+  - 网络扰动正式冻结结果
+  - 拜占庭节点正式 benchmark 结果
 - 尚未完成的内容：
-  - 受控网络扰动
-  - 慢诚实节点场景
-  - 系统级拜占庭节点注入
+  - 干净工作树上的正式重跑与结果冻结
+  - `paper-final-network-*` 与 `paper-final-byzantine-*` 目录
+  - 论文终稿收口与图表回填
+
+## 任务书收尾重点
+
+当前最关键的缺口已经不是协议核心功能，而是把现有实现收敛成一套能交付、能复查、能写进论文终稿的冻结材料。具体优先级如下。
+
+1. 在干净工作树上重跑高负载主结果、Grace 微实验和慢诚实节点实验。
+2. 跑出第一组正式的 `paper-final-byzantine-*` 结果，至少覆盖 `silent` 和 `invalid_fetch_response`。
+3. 用冻结结果回填论文表格、图注和实验威胁分析。
 
 ## 设计原则
 
@@ -102,12 +121,15 @@ pid = 10
 behavior = "invalid_fetch_response"
 ```
 
-第一阶段只要求支持以下 3 种行为：
+当前已实现的第一阶段行为：
 
 - `silent`
   - 节点保持进程存活，但不发送 ACS 外发流量或不提交有效提案
 - `invalid_fetch_response`
   - 收到 fetch request 时返回格式正确但验证失败的响应
+
+暂缓但可选扩展：
+
 - `invalid_reference_proposal`
   - 节点主动发出带伪造引用或不可验证引用的提案
 
@@ -251,7 +273,7 @@ behavior = "invalid_fetch_response"
 - 同一个 seed 的重复运行结果趋势一致
 - 输出 JSON 中能看到注入统计
 
-### Phase 2: 网络扰动实验接入论文 suite
+### Phase 2: 网络扰动实验接入论文 suite（能力已完成，正式结果待冻结）
 
 目标：
 
@@ -291,17 +313,17 @@ behavior = "invalid_fetch_response"
 - 能形成一套 `paper-final-network-*` 目录
 - 能回答“复杂网络下复用是否仍有效”
 
-### Phase 3: 最小拜占庭节点注入能力
+### Phase 3: 最小拜占庭节点注入能力（第一阶段已完成）
 
 目标：
 
-- 做出 3 类与当前系统最相关的恶意行为
+- 做出与当前复用机制最相关的最小节点级恶意行为
 
 任务：
 
 - `silent`
 - `invalid_fetch_response`
-- `invalid_reference_proposal`
+- `invalid_reference_proposal`（后续可选扩展，不阻塞论文主线）
 
 实现建议：
 
@@ -322,6 +344,23 @@ behavior = "invalid_fetch_response"
 
 - 在 `f` 范围内，诚实节点仍能完成轮次并保持 chain digest 一致
 - 统计结果能区分“协议失败”和“恶意输入被成功过滤”
+
+当前进展：
+
+- `silent` 已实现：
+  - 节点提交空提案
+  - 抑制外层 `HbBatch` 广播
+  - 抑制 `HbShareBundle` 广播
+  - 忽略 fetch 服务
+- `invalid_fetch_response` 已实现：
+  - 节点在 fetch 响应路径返回可解码但校验失败的损坏 payload
+- `invalid_reference_proposal` 尚未实现：
+  - 该行为更容易侵入提案构造与引用验证边界，当前不作为任务书收尾的必需项
+
+当前判断：
+
+- 第一阶段最小拜占庭节点注入能力已达成
+- 下一步应转入 Phase 4，补正式 benchmark 结果，而不是继续扩张恶意行为种类
 
 ### Phase 4: 拜占庭实验接入论文 suite
 
@@ -473,12 +512,15 @@ behavior = "invalid_fetch_response"
 5. Phase 4
 6. Phase 5
 
-## 本轮之后的直接实施起点
+## 当前直接实施起点
 
-第一批建议立刻开始的具体任务：
+按目前完成度，最应该立刻做的具体任务是：
 
-- 在 `native/honey-node/src/network_driver/config.rs` 定义网络扰动与拜占庭配置结构
-- 在 `native/honey-node/src/transport/local_tcp.rs` 加入固定延迟和抖动注入
-- 在 `benchmarks/support/runners/_core.py` 补充对应 telemetry 字段
-- 做一个 `N=4, f=1` 的 slow-honest smoke test
-- 再实现 `silent` 恶意节点行为
+1. 在干净工作树上重跑：
+   - `highload_n12`
+   - `grace_python_n12_micro`
+   - `slow_honest_n12`
+2. 运行第一组正式的拜占庭实验：
+   - `byzantine_silent_n12`
+   - `byzantine_invalid_fetch_response_n12`
+3. 把冻结结果写回 `paper/main-codex-refer.typ` 和实验清单，收紧最终论文口径

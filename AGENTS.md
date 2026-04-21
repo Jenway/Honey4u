@@ -11,8 +11,9 @@
 - ACS execution under `rust-driver` is no longer Python-only. The driver can run the Python ACS host through PyO3 or one of the Rust-native ACS hosts selected by `config_json`.
 - `benchmarks/cli/tps.py` accepts `--node-runtime rust-driver` only; other runtime labels have been removed from the CLI.
 - `honey-node bench-driver` now takes benchmark configuration from a TOML file via `--config <path>`. Benchmark helper scripts generate or point to TOML configs instead of assembling long CLI flag lists.
-- Current benchmark work is centered on three entrypoints: `benchmarks/cli/tps.py` for general TPS/latency runs, `benchmarks/cli/dumbo_reuse_sweep.py` for reuse on/off sweeps, and `benchmarks/cli/dumbo_backend_reuse_compare.py` for Python-vs-Rust backend comparisons.
+- Current benchmark work is centered on four entrypoints: `benchmarks/cli/tps.py` for general TPS/latency runs, `benchmarks/cli/dumbo_reuse_sweep.py` for reuse on/off sweeps, `benchmarks/cli/dumbo_backend_reuse_compare.py` for Python-vs-Rust backend comparisons, and `benchmarks/cli/dumbo_paper_suite.py` for thesis-oriented experiment batches.
 - Checked-in benchmark evidence currently covers large Dumbo reuse sweeps and a backend comparison between `python` and `rust_fin`; there is not yet a checked-in result set for `rust_dumbo`, network-perturbation experiments, or Byzantine-node injection experiments.
+- The current worktree also includes controlled runtime fault injection at the `rust-driver` boundary: network faults (`fixed_delay_ms`, `jitter_ms`, `slow_honest`) and initial Byzantine node behaviors (`silent`, `invalid_fetch_response`). Treat those capabilities as implemented tooling until formal clean-tree result sets are archived.
 - A top-level Rust workspace exists at `native/Cargo.toml` with three members: `honey-crypto`, `honey-native`, and `honey-node`.
 - `native/honey-native/src/bindings/ledger.rs` and the Python bridge add optional SQLite-backed block persistence and chain-digest tracking.
 - The project scope is intentionally limited to ACS-based asynchronous BFT in the HoneyBadger/Dumbo family; do not preserve extensibility for DAG-style, dispersed-ledger, or unrelated consensus families unless the task explicitly requires it.
@@ -40,23 +41,26 @@
 - `native/honey-node/src/rust_hb_acs.rs` is the Rust-native HoneyBadger ACS host root; protocol logic is split across `native/honey-node/src/rust_hb_acs/`.
 - Python tests live under `tests/` and use `pytest` plus `pytest-asyncio`. Sub-directories: `tests/acs/`, `tests/subprotocols/`, `tests/runtime/`, `tests/native/`, `tests/benchmarks/`, `tests/data/`.
 - Benchmark CLIs live under `benchmarks/cli/`; reusable runner helpers live under `benchmarks/support/runners/`.
-- Benchmark comparison helpers currently include `benchmarks/cli/dumbo_reuse_sweep.py` and `benchmarks/cli/dumbo_backend_reuse_compare.py`.
+- Benchmark comparison helpers currently include `benchmarks/cli/dumbo_reuse_sweep.py`, `benchmarks/cli/dumbo_backend_reuse_compare.py`, and `benchmarks/cli/dumbo_paper_suite.py`.
 - Benchmark output snapshots and ad hoc reports may be written under `benchmarks/results/`.
 - Thesis sources live under `paper/`. `paper/main-codex-refer.typ` is the active thesis draft, `paper/main.typ` is a template/example document, `paper/sdu-thesis.typ` is the local SDU Typst template, `paper/refer.bib` is the bibliography database, and `paper/reference/` stores local PDF references.
 - The root project uses `uv` workspaces; both `packages/honey-acs` and `native/honey-native` are workspace members (see `pyproject.toml`).
 
 ## Benchmark Status
 - The general benchmark entrypoint is `benchmarks/cli/tps.py`. It reports throughput, multiple elapsed-time views, transaction and round latency, subprotocol timing summaries, queue backlog, and chain-digest agreement/divergence.
+- When runtime faults are configured, `benchmarks/cli/tps.py` also records transport perturbation counters and node-level byzantine action counters.
 - `benchmarks/cli/dumbo_reuse_sweep.py` has already been used to produce checked-in results under `benchmarks/results/dumbo_reuse_sweep_20260408_large/` and `benchmarks/results/dumbo_reuse_sweep_20260408_n12_knee_full/`.
 - The checked-in reuse sweep evidence shows a stable positive reuse effect at larger scales. The large sweep covers `n=4,8,12,16`; the separate `n=12` sweep is the main mid-stage data point used in the thesis draft.
 - `benchmarks/cli/dumbo_backend_reuse_compare.py` supports `python`, `rust_fin`, and `rust_dumbo`, but the checked-in result set under `benchmarks/results/dumbo-backend-reuse-20260410T093234Z/` currently includes only `python` and `rust_fin`.
 - Existing backend-comparison evidence indicates that the Rust FIN-style ACS backend is materially faster than the Python Dumbo host on the tested local setup. Use the checked-in JSON for exact numbers rather than restating them from memory.
-- Do not claim that the benchmark suite already covers realistic WAN jitter, packet perturbation, or Byzantine behavior injection. Those were discussed as future work but are not yet represented by checked-in benchmark runs.
+- `benchmarks/cli/dumbo_paper_suite.py` and `benchmarks/configs/paper/` now cover thesis-oriented experiment groups for high-load baselines, grace sensitivity, network perturbation, and initial byzantine-node scenarios.
+- Do not claim that the repository already has frozen formal evidence for realistic WAN jitter or Byzantine robustness. Network perturbation currently has preliminary quick results, while byzantine-node injection currently has smoke coverage plus suite configs but no archived `paper-final-byzantine-*` result set.
 - Treat `benchmarks/results/` as experiment artifacts. Keep them out of commits unless the task explicitly asks to check in new reports or reference outputs.
 
 ## Thesis And Graduation Context
 - The formal task description is in `TARGET.md`. The thesis topic is narrowly defined: mitigate bandwidth waste in ACS-based asynchronous BFT caused by honest-but-delayed broadcast outputs being discarded by the current round.
 - The task book sets four concrete success conditions: implement the cross-round reuse module, preserve safety/liveness, obtain a throughput improvement of at least 10% in high-load settings, and provide a stable, well-documented system plus a complete thesis.
+- As of 2026-04-21, the implementation and performance sides of the task book are effectively satisfied: the reuse module is implemented, current local-TCP evidence exceeds the 10% throughput target, and the supported scenarios show no observed safety/liveness regression in the existing runtime and benchmark checks. The remaining delivery risk is frozen clean-tree reruns plus final thesis completion, not missing protocol-core functionality.
 - The mid-term report is in `mid-term.md`. It records the already-established narrative that the project targets ACS-style HoneyBadger/Dumbo protocols rather than DAG-style protocols, and it reports preliminary local-TCP results around `N=12, f=3`.
 - The current thesis draft is `paper/main-codex-refer.typ`. It is already aligned with the narrowed repository direction and should be treated as the main writing target; `paper/main.typ` is only a template/demo file and should not be mistaken for the actual thesis content.
 - The thesis must stay academically conservative. Do not write that the reuse mechanism applies to arbitrary ACS black boxes. The current argument is strongest when the reused object already carries a strong availability guarantee such as PRBC-style output/proof material.
@@ -118,6 +122,7 @@
 - Local benchmark/profiling runs may leave artifacts under `benchmarks/results/` and `.codex`; do not include them in a source commit unless the user explicitly wants report outputs checked in.
 - When running formal benchmarks for the thesis, prefer preserving the generated TOML configs, raw JSON outputs, run date, and commit hash together so the experiment remains reproducible on another machine.
 - The current checked-in benchmark story is strong enough for reuse-vs-baseline and Python-vs-Rust-FIN comparisons, but not yet for network-disturbance or Byzantine-behavior sections. Do not imply that those experiments already exist.
+- `benchmarks/configs/paper/dumbo_smoke.toml` and `benchmarks/configs/paper/dumbo_comprehensive.toml` now include network-fault experiments plus initial `byzantine_silent_*` / `byzantine_invalid_fetch_response_*` entries. Use them for reruns instead of inventing ad hoc configs.
 - The benchmark runtime metric shape expected by `benchmarks/support/runners/_core.py` is `{sample_count, total_seconds, max_seconds}` under `METRICS.snapshot()["timings"]`; keep Rust-side metric output aligned with this shape.
 
 ## Python Style

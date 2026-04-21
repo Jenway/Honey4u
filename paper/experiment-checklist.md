@@ -4,6 +4,17 @@
 
 这份清单用于把 Honey4u 当前已经具备的 benchmark 工具链，整理成一套适合毕业论文正文引用的正式实验流程。目标不是继续探索新协议，而是冻结一版可复现、可追溯、可直接对应论文表格和结论的结果集。
 
+## 任务书完成度判断
+
+| 条件 | 当前判断 | 说明 |
+| --- | --- | --- |
+| 跨轮次复用模块实现 | 已完成 | Python/Rust 双侧的提案编码、复用池、引用与 fetch 边界都已落地 |
+| 安全性与活性不退化 | 当前范围内已验证 | 现有 runtime/integration/benchmark 检查未观察到已支持场景下的一致性或活性回归，但最终定稿仍应以冻结版本重跑留档 |
+| 高负载吞吐提升至少 10% | 已完成 | `paper-final-highload-20260415T182439Z` 中 Python 路径约 `+39%` 至 `+43%`，Rust FIN 风格路径约 `+20%` 至 `+22%` |
+| 稳定系统、完整文档与论文 | 部分完成 | 代码与实验链路基本齐备，剩余工作是冻结正式结果、补充论文终稿与图表回填 |
+
+按当前仓库状态看，任务书的核心代码目标已经基本完成。真正还没有封口的是“冻结版正式实验”和“最终论文成稿”，而不是协议核心缺功能。
+
 ## 当前可直接引用的已归档结果
 
 - 高负载主结果：
@@ -42,6 +53,23 @@
 3. 其中固定延迟更像压力测试，慢诚实节点才真正对应任务书中的“诚实但迟到”。
 
 因此，这些目录适合用于当前论文草稿的趋势核对与实验方向确认，不应直接作为终稿正式图表来源。
+
+## 当前新增但尚未冻结的拜占庭实验能力
+
+当前工作树已经具备两类最小节点级恶意行为注入能力：
+
+- `silent`
+- `invalid_fetch_response`
+
+对应的配置入口已经接入：
+
+- `benchmarks/configs/paper/dumbo_smoke.toml`
+  - `smoke_byzantine_silent`
+- `benchmarks/configs/paper/dumbo_comprehensive.toml`
+  - `byzantine_silent_n12`
+  - `byzantine_invalid_fetch_response_n12`
+
+这些能力目前的定位应当是“运行时边界验证与论文附加实验入口”，而不是已经冻结的正文主结果。原因很直接：当前还没有归档的 `paper-final-byzantine-*` 正式结果目录，因此论文正文里不应提前写成“已系统验证拜占庭鲁棒性”。
 
 ## 冻结规则
 
@@ -232,6 +260,31 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
   --output-dir benchmarks/results/paper-final-network-fixed-delay-${RUN_TAG}
 ```
 
+#### 7. 最小拜占庭节点实验
+
+用途：作为运行时边界与机制正确性补充验证，优先放在实验章节后半部分或附录，不取代高负载主结果。
+
+配置文件：
+`benchmarks/configs/paper/dumbo_comprehensive.toml`
+
+建议先合并执行两组最小场景：
+
+```bash
+RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
+uv run python benchmarks/cli/dumbo_paper_suite.py \
+  --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
+  --experiments byzantine_silent_n12,byzantine_invalid_fetch_response_n12 \
+  --binary native/target/release/honey-node \
+  --output-dir benchmarks/results/paper-final-byzantine-${RUN_TAG}
+```
+
+建议至少检查：
+
+- `manifest.json` 中 `executed_runs == planned_runs`
+- `summaries.csv` 中 `byzantine_label in {silent-p11, invalid_fetch_response-p11}`
+- `summaries.csv` / `dumbo_paper_suite.json` 中链摘要仍一致
+- 拜占庭动作计数非零，说明注入确实生效
+
 ### 阶段 C：统一综合套件
 
 这一阶段用于把前面分散的正式结果整合成一套统一归档。它适合作为最终封版动作，但不应先于阶段 A。
@@ -281,6 +334,8 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 | backend_compare | `dumbo_comprehensive.toml` 中 `backend_compare` 或专用 compare CLI | 后端比较结果 | 建议跑 |
 | network_jitter_n12 | `dumbo_comprehensive.toml` 中 `network_jitter_n12` | 网络扰动补充分析 | 建议跑 |
 | network_fixed_delay_n12 | `dumbo_comprehensive.toml` 中 `network_fixed_delay_n12` | 压力测试/附录 | 条件执行 |
+| byzantine_silent_n12 | `dumbo_comprehensive.toml` 中 `byzantine_silent_n12` | 运行时边界/鲁棒性补充 | 条件执行 |
+| byzantine_invalid_fetch_response_n12 | `dumbo_comprehensive.toml` 中 `byzantine_invalid_fetch_response_n12` | 运行时边界/鲁棒性补充 | 条件执行 |
 | Rust 参数敏感性 | `dumbo_comprehensive.toml` 中 `sensitivity_*` | 仅在 fetch 叙事稳定后考虑入正文 | 条件执行 |
 
 ## 本轮不要直接写进正文的内容
@@ -291,6 +346,7 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 2. `rust_dumbo` 尚未形成与 `python`、`rust_fin` 同等成熟的已归档正式结果。
 3. 当前 quick 网络结果来自未冻结工作树，不能直接写成正式图表。
 4. 固定延迟更适合作为压力测试，不应替代“诚实但迟到”主场景。
+5. 拜占庭节点注入当前仍处于最小能力阶段，在形成正式 `paper-final-byzantine-*` 结果前，不应写成“已全面验证拜占庭鲁棒性”。
 
 ## 每次正式运行后的验收清单
 

@@ -1,3 +1,5 @@
+> 说明：本文件是中期检查阶段材料，保留当时的阶段性结论与口径，不作为当前终稿状态的唯一依据。
+> 当前收尾状态、正式实验冻结计划与任务书完成度判断，请以 [TODO.md](TODO.md)、[AGENTS.md](AGENTS.md) 和 [paper/experiment-checklist.md](paper/experiment-checklist.md) 为准。
 
 ## 一、课题主要任务
 
