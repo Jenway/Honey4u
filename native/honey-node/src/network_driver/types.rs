@@ -1,4 +1,4 @@
-use super::config::{BroadcastPoolBackend, BroadcastPoolConfig};
+use super::config::{BroadcastPoolBackend, BroadcastPoolConfig, ByzantineNodeConfig};
 use crate::{
     AcsHost, DriverPhaseStats, HbPkePrivateKeyShare, HbPkePublicParams, RunDriverNodeArgs,
 };
@@ -50,6 +50,11 @@ pub(super) struct DriverRoundOutcome {
     pub(super) fetch_responses_served: usize,
     pub(super) fetch_responses_received: usize,
     pub(super) fetched_reference_count: usize,
+    pub(super) byzantine_invalid_fetch_responses_sent: usize,
+    pub(super) byzantine_fetch_requests_ignored: usize,
+    pub(super) byzantine_batch_broadcast_suppressed: usize,
+    pub(super) byzantine_share_broadcast_suppressed: usize,
+    pub(super) byzantine_empty_proposal_used: bool,
     pub(super) selected_proposal_ids: Vec<String>,
     pub(super) selected_pids: Vec<usize>,
     pub(super) reused_reference_count: usize,
@@ -79,6 +84,11 @@ pub(super) struct DriverNodeRoundTelemetry {
     pub(super) fetch_responses_served: usize,
     pub(super) fetch_responses_received: usize,
     pub(super) fetched_reference_count: usize,
+    pub(super) byzantine_invalid_fetch_responses_sent: usize,
+    pub(super) byzantine_fetch_requests_ignored: usize,
+    pub(super) byzantine_batch_broadcast_suppressed: usize,
+    pub(super) byzantine_share_broadcast_suppressed: usize,
+    pub(super) byzantine_empty_proposal_used: bool,
     pub(super) driver_phase_stats: DriverPhaseStats,
 }
 
@@ -89,6 +99,7 @@ pub(super) struct DriverRoundCtx<'a> {
     pub(super) private_share: &'a HbPkePrivateKeyShare,
     pub(super) args: &'a RunDriverNodeArgs,
     pub(super) broadcast_pool_config: &'a BroadcastPoolConfig,
+    pub(super) byzantine_node_config: ByzantineNodeConfig,
 }
 
 pub(super) struct DriverNodeResult {
@@ -114,6 +125,12 @@ pub(super) struct DriverNodeResult {
     pub(super) fetch_responses_served: Vec<usize>,
     pub(super) fetch_responses_received: Vec<usize>,
     pub(super) fetched_reference_count: Vec<usize>,
+    pub(super) byzantine_invalid_fetch_responses_sent: Vec<usize>,
+    pub(super) byzantine_fetch_requests_ignored: Vec<usize>,
+    pub(super) byzantine_batch_broadcast_suppressed: Vec<usize>,
+    pub(super) byzantine_share_broadcast_suppressed: Vec<usize>,
+    pub(super) byzantine_empty_proposal_used: Vec<bool>,
+    pub(super) byzantine_behavior: &'static str,
     pub(super) chain_digest: String,
     pub(super) per_round_selected_pids: Vec<Vec<usize>>,
     pub(super) per_round_block_digests: Vec<String>,

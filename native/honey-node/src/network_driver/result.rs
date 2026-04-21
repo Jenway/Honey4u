@@ -51,6 +51,11 @@ pub(super) fn build_node_result_json(
     let fetch_responses_served = run_result.fetch_responses_served;
     let fetch_responses_received = run_result.fetch_responses_received;
     let fetched_reference_count = run_result.fetched_reference_count;
+    let byzantine_invalid_fetch_responses_sent = run_result.byzantine_invalid_fetch_responses_sent;
+    let byzantine_fetch_requests_ignored = run_result.byzantine_fetch_requests_ignored;
+    let byzantine_batch_broadcast_suppressed = run_result.byzantine_batch_broadcast_suppressed;
+    let byzantine_share_broadcast_suppressed = run_result.byzantine_share_broadcast_suppressed;
+    let byzantine_empty_proposal_used = run_result.byzantine_empty_proposal_used;
     let rust_broadcast_mempool_size = run_result.rust_broadcast_mempool_size;
     let broadcast_pool_backend = run_result.broadcast_pool_backend.as_str();
     let origin_tx_latencies = origin_tx_latencies_by_round
@@ -85,6 +90,11 @@ pub(super) fn build_node_result_json(
                 "fetch_responses_served": round.fetch_responses_served,
                 "fetch_responses_received": round.fetch_responses_received,
                 "fetched_reference_count": round.fetched_reference_count,
+                "byzantine_invalid_fetch_responses_sent": round.byzantine_invalid_fetch_responses_sent,
+                "byzantine_fetch_requests_ignored": round.byzantine_fetch_requests_ignored,
+                "byzantine_batch_broadcast_suppressed": round.byzantine_batch_broadcast_suppressed,
+                "byzantine_share_broadcast_suppressed": round.byzantine_share_broadcast_suppressed,
+                "byzantine_empty_proposal_used": round.byzantine_empty_proposal_used,
                 "driver_phase_stats": driver_phase_stats_json(&round.driver_phase_stats),
             })
         })
@@ -150,6 +160,15 @@ pub(super) fn build_node_result_json(
             "fetch_responses_served": fetch_responses_served.iter().sum::<usize>(),
             "fetch_responses_received": fetch_responses_received.iter().sum::<usize>(),
             "fetched_reference_count": fetched_reference_count.iter().sum::<usize>(),
+            "byzantine_invalid_fetch_responses_sent": byzantine_invalid_fetch_responses_sent.iter().sum::<usize>(),
+            "byzantine_fetch_requests_ignored": byzantine_fetch_requests_ignored.iter().sum::<usize>(),
+            "byzantine_batch_broadcast_suppressed": byzantine_batch_broadcast_suppressed.iter().sum::<usize>(),
+            "byzantine_share_broadcast_suppressed": byzantine_share_broadcast_suppressed.iter().sum::<usize>(),
+            "byzantine_empty_proposal_rounds": byzantine_empty_proposal_used
+                .iter()
+                .copied()
+                .filter(|used| *used)
+                .count(),
         },
         "host_stats": {
             "worker_ident": host_stats.worker_ident,
@@ -166,12 +185,24 @@ pub(super) fn build_node_result_json(
             "pull_outbound_wire_batch_items": host_stats.pull_outbound_wire_batch_items,
             "stats_calls": host_stats.stats_calls,
         },
+        "byzantine_behavior": run_result.byzantine_behavior,
         "batch_size": batch_size,
         "per_round_selected_pids": run_result.per_round_selected_pids,
         "per_round_block_digests": run_result.per_round_block_digests,
         "per_round_block_sizes": run_result.per_round_block_sizes,
         "per_round_chain_digests": run_result.per_round_chain_digests,
         "round_details": round_details_json,
+        "byzantine_stats": {
+            "invalid_fetch_responses_sent": byzantine_invalid_fetch_responses_sent.iter().sum::<usize>(),
+            "fetch_requests_ignored": byzantine_fetch_requests_ignored.iter().sum::<usize>(),
+            "batch_broadcast_suppressed": byzantine_batch_broadcast_suppressed.iter().sum::<usize>(),
+            "share_broadcast_suppressed": byzantine_share_broadcast_suppressed.iter().sum::<usize>(),
+            "empty_proposal_rounds": byzantine_empty_proposal_used
+                .iter()
+                .copied()
+                .filter(|used| *used)
+                .count(),
+        },
     }))
     .map_err(|err| err.to_string())
 }

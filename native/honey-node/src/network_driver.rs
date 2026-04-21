@@ -8,7 +8,9 @@ mod round;
 mod types;
 mod wire;
 
-use config::{parse_broadcast_pool_config, parse_network_fault_config};
+use config::{
+    parse_broadcast_pool_config, parse_byzantine_node_config, parse_network_fault_config,
+};
 use result::build_node_result_json;
 use round::{run_driver_rounds, wait_until_start};
 use wire::parse_addresses_json;
@@ -20,6 +22,7 @@ pub(super) const BATCH_REF_TAG: u8 = 1;
 pub(crate) fn run_rust_driver_node(args: RunDriverNodeArgs) -> Result<(), String> {
     let broadcast_pool_config = parse_broadcast_pool_config(&args.config_json)?;
     let network_fault_config = parse_network_fault_config(&args.config_json, args.pid)?;
+    let byzantine_node_config = parse_byzantine_node_config(&args.config_json, args.pid)?;
     let addresses = parse_addresses_json(&args.addresses_json)?;
     let mut transport = LocalTcpTransport::new(args.pid, addresses, network_fault_config)
         .map_err(|err| err.to_string())?;
@@ -41,6 +44,7 @@ pub(crate) fn run_rust_driver_node(args: RunDriverNodeArgs) -> Result<(), String
         &private_share,
         &args,
         &broadcast_pool_config,
+        byzantine_node_config,
     );
     let host_stats = host.stats();
     let host_shutdown = host.shutdown();

@@ -1,4 +1,4 @@
-use super::config::{BroadcastPoolBackend, BroadcastPoolConfig};
+use super::config::{BroadcastPoolBackend, BroadcastPoolConfig, ByzantineNodeConfig};
 use super::types::{
     BatchArchive, DriverCarryovers, DriverNodeResult, DriverNodeRoundTelemetry, DriverRoundCtx,
     DriverRoundOutcome, QueuePeaksSnapshot,
@@ -145,6 +145,9 @@ fn batch_refs_from_selected_proposals(
                         proposal.proposal_id
                     ));
                 }
+                if inline_payload.is_empty() {
+                    continue;
+                }
                 let batch_ref = decode_batch_ref(&inline_payload)?;
                 if seen_batch_refs.insert(batch_ref) {
                     batch_refs.push(batch_ref);
@@ -163,6 +166,13 @@ struct ResolvedSelectedProposals {
 struct PendingPoolFetchRequest {
     round_id: usize,
     message: PoolFetchWire,
+}
+
+enum FetchRequestAction {
+    None,
+    Served,
+    IgnoredByzantine,
+    InvalidResponseSent,
 }
 
 enum ProposalResolutionError {
@@ -219,7 +229,8 @@ impl PoolFetchTracker {
         pool: &BroadcastMempool,
         request_round_id: usize,
         message: PoolFetchWire,
-    ) -> Result<bool, String> {
+        byzantine_node_config: ByzantineNodeConfig,
+    ) -> Result<FetchRequestAction, String> {
         let PoolFetchWire::Request {
             sender,
             item_id,
@@ -228,26 +239,34 @@ impl PoolFetchTracker {
             roothash,
         } = message
         else {
-            return Ok(false);
+            return Ok(FetchRequestAction::None);
         };
         let sender = sender as usize;
         if sender == pid {
-            return Ok(false);
+            return Ok(FetchRequestAction::None);
         }
         let Some(entry) = pool.get_reusable(&item_id) else {
-            return Ok(false);
+            return Ok(FetchRequestAction::None);
         };
         if entry.round_no != origin_round
             || entry.sender_id != origin_sender
             || entry.roothash != roothash
         {
-            return Ok(false);
+            return Ok(FetchRequestAction::None);
         }
+        if byzantine_node_config.is_silent() {
+            return Ok(FetchRequestAction::IgnoredByzantine);
+        }
+        let response_payload = if byzantine_node_config.sends_invalid_fetch_response() {
+            corrupt_fetch_response_payload(&entry.payload)
+        } else {
+            entry.payload.clone()
+        };
         let payload = encode_pool_fetch_response_wire(
             pid as u32,
             request_round_id as u32,
             &item_id,
-            &entry.payload,
+            &response_payload,
         )?;
         send_frame(
             transport,
@@ -257,7 +276,11 @@ impl PoolFetchTracker {
                 payload,
             },
         )?;
-        Ok(true)
+        Ok(if byzantine_node_config.sends_invalid_fetch_response() {
+            FetchRequestAction::InvalidResponseSent
+        } else {
+            FetchRequestAction::Served
+        })
     }
 
     fn handle_response(
@@ -301,6 +324,15 @@ impl PoolFetchTracker {
         self.pending_references.remove(&item_id);
         Ok(true)
     }
+}
+
+fn corrupt_fetch_response_payload(payload: &[u8]) -> Vec<u8> {
+    if payload.is_empty() {
+        return vec![0xFF];
+    }
+    let mut corrupted = payload.to_vec();
+    corrupted[0] ^= 0xFF;
+    corrupted
 }
 
 fn references_match(left: &PoolReference, right: &PoolReference) -> bool {
@@ -564,27 +596,42 @@ fn run_driver_round(
     let batch = build_driver_round_batch(round_id, ctx.args.pid, ctx.args.batch_size)?;
     let sealed_batch = seal_hb_encrypted_batch(ctx.public_key, &batch)?;
     let build_seconds = round_build_start.elapsed().as_secs_f64();
-    remember_archived_batch(batch_archive, round_id, ctx.args.pid, &sealed_batch);
+    let byzantine_is_silent = ctx.byzantine_node_config.is_silent();
+    let mut byzantine_invalid_fetch_responses_sent = 0usize;
+    let mut byzantine_fetch_requests_ignored = 0usize;
+    let mut byzantine_batch_broadcast_suppressed = 0usize;
+    let mut byzantine_share_broadcast_suppressed = 0usize;
+    let mut byzantine_empty_proposal_used = false;
 
-    broadcast_frame(
-        ctx.transport,
-        ctx.args.nodes,
-        &DriverWireFrame::HbBatch {
-            sender: ctx.args.pid,
-            round_id,
-            sealed_batch: sealed_batch.clone(),
-        },
-    )?;
-    update_queue_peaks(ctx.transport, queue_peaks);
+    if byzantine_is_silent {
+        byzantine_batch_broadcast_suppressed = 1;
+    } else {
+        remember_archived_batch(batch_archive, round_id, ctx.args.pid, &sealed_batch);
+        broadcast_frame(
+            ctx.transport,
+            ctx.args.nodes,
+            &DriverWireFrame::HbBatch {
+                sender: ctx.args.pid,
+                round_id,
+                sealed_batch: sealed_batch.clone(),
+            },
+        )?;
+        update_queue_peaks(ctx.transport, queue_peaks);
+    }
 
     let reuse_enabled =
         matches!(ctx.args.acs_protocol, Protocol::Dumbo) && ctx.broadcast_pool_config.enable_reuse;
-    let proposal_input = build_acs_proposal_input(
-        round_id,
-        ctx.args.pid,
-        rust_broadcast_mempool.as_ref(),
-        ctx.broadcast_pool_config,
-    );
+    let proposal_input = if byzantine_is_silent {
+        byzantine_empty_proposal_used = true;
+        encode_bundle_acs_payload(b"", &[])
+    } else {
+        build_acs_proposal_input(
+            round_id,
+            ctx.args.pid,
+            rust_broadcast_mempool.as_ref(),
+            ctx.broadcast_pool_config,
+        )
+    };
     ctx.host
         .start_round(round_id, &round_sid, &proposal_input)?;
 
@@ -602,7 +649,9 @@ fn run_driver_round(
         .sealed_batches
         .remove(&round_id)
         .unwrap_or_default();
-    received_batches.entry(ctx.args.pid).or_insert(sealed_batch);
+    if !byzantine_is_silent {
+        received_batches.entry(ctx.args.pid).or_insert(sealed_batch);
+    }
     let mut pending_pool_fetch_requests = Vec::new();
     let mut pending_pool_fetch_responses = carryovers
         .pool_fetch_responses
@@ -673,15 +722,27 @@ fn run_driver_round(
         if !pending_pool_fetch_requests.is_empty() || !pending_pool_fetch_responses.is_empty() {
             if let Some(pool) = rust_broadcast_mempool.as_mut() {
                 for request in pending_pool_fetch_requests.drain(..) {
-                    let responded = pool_fetch_tracker.handle_request(
+                    match pool_fetch_tracker.handle_request(
                         ctx.transport,
                         ctx.args.pid,
                         pool,
                         request.round_id,
                         request.message,
-                    )?;
-                    fetch_responses_served += usize::from(responded);
-                    progressed |= responded;
+                        ctx.byzantine_node_config,
+                    )? {
+                        FetchRequestAction::None => {}
+                        FetchRequestAction::Served => {
+                            fetch_responses_served += 1;
+                            progressed = true;
+                        }
+                        FetchRequestAction::IgnoredByzantine => {
+                            byzantine_fetch_requests_ignored += 1;
+                        }
+                        FetchRequestAction::InvalidResponseSent => {
+                            byzantine_invalid_fetch_responses_sent += 1;
+                            progressed = true;
+                        }
+                    }
                 }
                 for response in pending_pool_fetch_responses.drain(..) {
                     fetch_responses_received += 1;
@@ -928,28 +989,32 @@ fn run_driver_round(
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut batch_decryptor =
                     HbBatchDecryptor::new(ctx.public_key.clone(), selected_batches)?;
-                let partial_open_start = Instant::now();
-                let local_shares = batch_decryptor.local_shares(ctx.private_share)?;
-                tpke_partial_open_seconds += partial_open_start.elapsed().as_secs_f64();
-                let local_bundle = local_shares.into_iter().map(Some).collect::<Vec<_>>();
+                if byzantine_is_silent {
+                    byzantine_share_broadcast_suppressed = 1;
+                } else {
+                    let partial_open_start = Instant::now();
+                    let local_shares = batch_decryptor.local_shares(ctx.private_share)?;
+                    tpke_partial_open_seconds += partial_open_start.elapsed().as_secs_f64();
+                    let local_bundle = local_shares.into_iter().map(Some).collect::<Vec<_>>();
 
-                let combine_start = Instant::now();
-                let _ = batch_decryptor.ingest_bundle(ctx.args.pid, local_bundle.clone())?;
-                tpke_combine_seconds += combine_start.elapsed().as_secs_f64();
-                tpke_combine_calls += 1;
-                seen_share_senders.insert(ctx.args.pid);
+                    let combine_start = Instant::now();
+                    let _ = batch_decryptor.ingest_bundle(ctx.args.pid, local_bundle.clone())?;
+                    tpke_combine_seconds += combine_start.elapsed().as_secs_f64();
+                    tpke_combine_calls += 1;
+                    seen_share_senders.insert(ctx.args.pid);
 
-                broadcast_frame(
-                    ctx.transport,
-                    ctx.args.nodes,
-                    &DriverWireFrame::HbShareBundle {
-                        sender: ctx.args.pid,
-                        round_id,
-                        selected_batch_refs: round_batch_refs.clone(),
-                        shares: local_bundle,
-                    },
-                )?;
-                update_queue_peaks(ctx.transport, queue_peaks);
+                    broadcast_frame(
+                        ctx.transport,
+                        ctx.args.nodes,
+                        &DriverWireFrame::HbShareBundle {
+                            sender: ctx.args.pid,
+                            round_id,
+                            selected_batch_refs: round_batch_refs.clone(),
+                            shares: local_bundle,
+                        },
+                    )?;
+                    update_queue_peaks(ctx.transport, queue_peaks);
+                }
                 decryptor = Some(batch_decryptor);
                 local_share_broadcasted = true;
                 progressed = true;
@@ -1036,6 +1101,11 @@ fn run_driver_round(
                         fetch_responses_served,
                         fetch_responses_received,
                         fetched_reference_count,
+                        byzantine_invalid_fetch_responses_sent,
+                        byzantine_fetch_requests_ignored,
+                        byzantine_batch_broadcast_suppressed,
+                        byzantine_share_broadcast_suppressed,
+                        byzantine_empty_proposal_used,
                         selected_proposal_ids: selected_proposal_ids.clone(),
                         selected_pids: selected_pids.clone(),
                         reused_reference_count,
@@ -1069,6 +1139,7 @@ pub(super) fn run_driver_rounds(
     private_share: &HbPkePrivateKeyShare,
     args: &RunDriverNodeArgs,
     broadcast_pool_config: &BroadcastPoolConfig,
+    byzantine_node_config: ByzantineNodeConfig,
 ) -> Result<(DriverNodeResult, QueuePeaksSnapshot), String> {
     let mut queue_peaks = QueuePeaksSnapshot::default();
     let mut carryovers = DriverCarryovers::default();
@@ -1095,6 +1166,11 @@ pub(super) fn run_driver_rounds(
     let mut fetch_responses_served = Vec::with_capacity(args.rounds);
     let mut fetch_responses_received = Vec::with_capacity(args.rounds);
     let mut fetched_reference_count = Vec::with_capacity(args.rounds);
+    let mut byzantine_invalid_fetch_responses_sent = Vec::with_capacity(args.rounds);
+    let mut byzantine_fetch_requests_ignored = Vec::with_capacity(args.rounds);
+    let mut byzantine_batch_broadcast_suppressed = Vec::with_capacity(args.rounds);
+    let mut byzantine_share_broadcast_suppressed = Vec::with_capacity(args.rounds);
+    let mut byzantine_empty_proposal_used = Vec::with_capacity(args.rounds);
     let mut chain_digest = GENESIS_CHAIN_DIGEST;
     let mut per_round_selected_pids = Vec::with_capacity(args.rounds);
     let mut per_round_block_digests = Vec::with_capacity(args.rounds);
@@ -1115,6 +1191,7 @@ pub(super) fn run_driver_rounds(
         private_share,
         args,
         broadcast_pool_config,
+        byzantine_node_config,
     };
 
     for round_id in 0..args.rounds {
@@ -1147,6 +1224,14 @@ pub(super) fn run_driver_rounds(
         fetch_responses_served.push(round_outcome.fetch_responses_served);
         fetch_responses_received.push(round_outcome.fetch_responses_received);
         fetched_reference_count.push(round_outcome.fetched_reference_count);
+        byzantine_invalid_fetch_responses_sent
+            .push(round_outcome.byzantine_invalid_fetch_responses_sent);
+        byzantine_fetch_requests_ignored.push(round_outcome.byzantine_fetch_requests_ignored);
+        byzantine_batch_broadcast_suppressed
+            .push(round_outcome.byzantine_batch_broadcast_suppressed);
+        byzantine_share_broadcast_suppressed
+            .push(round_outcome.byzantine_share_broadcast_suppressed);
+        byzantine_empty_proposal_used.push(round_outcome.byzantine_empty_proposal_used);
         per_round_selected_pids.push(round_outcome.selected_pids.clone());
         let block_digest = crate::sha256_hex(&round_outcome.block_payload);
         let block_size = round_outcome.block_payload.len();
@@ -1182,6 +1267,14 @@ pub(super) fn run_driver_rounds(
             fetch_responses_served: round_outcome.fetch_responses_served,
             fetch_responses_received: round_outcome.fetch_responses_received,
             fetched_reference_count: round_outcome.fetched_reference_count,
+            byzantine_invalid_fetch_responses_sent: round_outcome
+                .byzantine_invalid_fetch_responses_sent,
+            byzantine_fetch_requests_ignored: round_outcome.byzantine_fetch_requests_ignored,
+            byzantine_batch_broadcast_suppressed: round_outcome
+                .byzantine_batch_broadcast_suppressed,
+            byzantine_share_broadcast_suppressed: round_outcome
+                .byzantine_share_broadcast_suppressed,
+            byzantine_empty_proposal_used: round_outcome.byzantine_empty_proposal_used,
             driver_phase_stats: round_outcome.driver_stats,
         });
         if let Some(pool) = rust_broadcast_mempool.as_mut() {
@@ -1215,6 +1308,12 @@ pub(super) fn run_driver_rounds(
             fetch_responses_served,
             fetch_responses_received,
             fetched_reference_count,
+            byzantine_invalid_fetch_responses_sent,
+            byzantine_fetch_requests_ignored,
+            byzantine_batch_broadcast_suppressed,
+            byzantine_share_broadcast_suppressed,
+            byzantine_empty_proposal_used,
+            byzantine_behavior: byzantine_node_config.behavior_label(),
             chain_digest: crate::hex_encode(&chain_digest),
             per_round_selected_pids,
             per_round_block_digests,
@@ -1356,9 +1455,16 @@ mod tests {
 
         let request = recv_single_fetch_wire(&responder_transport, Duration::from_secs(2));
         let responded = PoolFetchTracker::default()
-            .handle_request(&responder_transport, 0, &responder_pool, 5, request)
+            .handle_request(
+                &responder_transport,
+                0,
+                &responder_pool,
+                5,
+                request,
+                ByzantineNodeConfig::default(),
+            )
             .expect("request handling should succeed");
-        assert!(responded);
+        assert!(matches!(responded, FetchRequestAction::Served));
 
         let response = recv_single_fetch_wire(&requester_transport, Duration::from_secs(2));
         let mut requester_pool = BroadcastMempool::new(8, 4);
@@ -1373,6 +1479,89 @@ mod tests {
         assert_eq!(stored.roothash, reference.roothash);
         assert!(
             !requester_tracker
+                .pending_references
+                .contains_key(&reference.item_id)
+        );
+
+        responder_transport
+            .close()
+            .expect("responder transport should close");
+        requester_transport
+            .close()
+            .expect("requester transport should close");
+    }
+
+    #[test]
+    fn test_pool_fetch_tracker_can_send_invalid_byzantine_response() {
+        let reserved = (0..2)
+            .map(|_| TcpListener::bind("127.0.0.1:0").expect("should reserve loopback port"))
+            .collect::<Vec<_>>();
+        let addresses = reserved
+            .iter()
+            .map(|listener| {
+                let addr = listener
+                    .local_addr()
+                    .expect("listener should expose local addr");
+                (String::from("127.0.0.1"), addr.port())
+            })
+            .collect::<Vec<_>>();
+        drop(reserved);
+
+        let mut responder_transport =
+            LocalTcpTransport::new(0, addresses.clone(), Default::default())
+                .expect("transport 0 should bind");
+        let mut requester_transport = LocalTcpTransport::new(1, addresses, Default::default())
+            .expect("transport 1 should bind");
+
+        let payload = encode_bundle_acs_payload(&encode_batch_ref(3, 1), &[]);
+        let encoded = merkle::encode(&payload, 2, 4).expect("payload should encode");
+        let reference = PoolReference {
+            item_id: BroadcastMempool::compute_item_id(2, 0, &encoded.root),
+            origin_round: 2,
+            origin_sender: 0,
+            roothash: encoded.root.to_vec(),
+            proof_payload: vec![7; 8],
+        };
+
+        let mut responder_pool = BroadcastMempool::new(8, 4);
+        responder_pool.add_reusable(
+            payload.clone(),
+            reference.roothash.clone(),
+            reference.proof_payload.clone(),
+            reference.origin_round,
+            reference.origin_sender,
+        );
+
+        let mut requester_tracker = PoolFetchTracker::default();
+        let requested = requester_tracker
+            .request_reference(&requester_transport, 5, 1, 2, &reference)
+            .expect("request should encode and send");
+        assert!(requested);
+
+        let request = recv_single_fetch_wire(&responder_transport, Duration::from_secs(2));
+        let action = PoolFetchTracker::default()
+            .handle_request(
+                &responder_transport,
+                0,
+                &responder_pool,
+                5,
+                request,
+                ByzantineNodeConfig {
+                    behavior: Some(super::super::config::ByzantineBehavior::InvalidFetchResponse),
+                },
+            )
+            .expect("request handling should succeed");
+        assert!(matches!(action, FetchRequestAction::InvalidResponseSent));
+
+        let response = recv_single_fetch_wire(&requester_transport, Duration::from_secs(2));
+        let mut requester_pool = BroadcastMempool::new(8, 4);
+        let inserted = requester_tracker
+            .handle_response(&mut requester_pool, 4, 1, response)
+            .expect("response handling should succeed");
+        assert!(!inserted);
+        assert!(requester_pool.get_reusable(&reference.item_id).is_none());
+        assert!(
+            requester_tracker
                 .pending_references
                 .contains_key(&reference.item_id)
         );

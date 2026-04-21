@@ -34,6 +34,25 @@ def test_render_config_supports_nested_network_faults_inline_tables() -> None:
     )
 
 
+def test_render_config_supports_byzantine_nodes_inline_tables() -> None:
+    rendered = _render_config(
+        sid="bench:test:paper:byzantine",
+        nodes=4,
+        faulty=1,
+        rounds=3,
+        batch_size=8,
+        global_timeout=90.0,
+        config_payload={
+            "acs_host_backend": "rust_fin",
+            "byzantine_nodes": [
+                {"pid": 3, "behavior": "silent"},
+            ],
+        },
+    )
+
+    assert 'byzantine_nodes = [{ pid = 3, behavior = "silent" }]' in rendered
+
+
 def test_expand_experiment_generates_network_fault_labels() -> None:
     metadata, cases = _expand_experiment(
         {
@@ -78,6 +97,8 @@ def test_build_run_record_includes_network_fault_and_transport_metrics() -> None
             "slow_honest": {"pids": [3], "extra_delay_ms": 20},
         },
         "network_fault_label": "fixed5",
+        "byzantine_nodes": [{"pid": 3, "behavior": "silent"}],
+        "byzantine_label": "silent-p3",
     }
     result = {
         "chain_digest": "abc",
@@ -114,6 +135,8 @@ def test_build_run_record_includes_network_fault_and_transport_metrics() -> None
                 "transport_connect_retries": 1,
                 "transport_delayed_frames": 7,
                 "transport_total_injected_delay_ms": 35,
+                "byzantine_empty_proposal_rounds": 1,
+                "byzantine_batch_broadcast_suppressed": 1,
             },
         ],
     }
@@ -130,6 +153,10 @@ def test_build_run_record_includes_network_fault_and_transport_metrics() -> None
     assert record["network_fixed_delay_ms"] == 5
     assert record["network_seed"] == 42
     assert record["network_slow_honest_pids"] == (3,)
+    assert record["byzantine_label"] == "silent-p3"
+    assert record["byzantine_nodes"] == ((3, "silent"),)
     assert record["transport_delayed_frames_total"] == 13
     assert record["transport_injected_delay_ms_total"] == 65
     assert record["transport_max_injected_delay_ms_per_node"] == 35
+    assert record["byzantine_empty_proposal_rounds_total"] == 1
+    assert record["byzantine_batch_broadcast_suppressed_total"] == 1

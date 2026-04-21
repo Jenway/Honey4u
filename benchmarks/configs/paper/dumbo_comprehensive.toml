@@ -117,3 +117,25 @@ network_faults = [
   { label = "slow80p11", enabled = true, seed = 20260416, slow_honest = { pids = [11], extra_delay_ms = 80 } },
   { label = "slow150p11", enabled = true, seed = 20260416, slow_honest = { pids = [11], extra_delay_ms = 150 } },
 ]
+
+[[experiments]]
+name = "byzantine_silent_n12"
+description = "Initial node-level byzantine simulation where one node contributes an empty proposal and suppresses outer broadcasts."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [32]
+rounds = 8
+global_timeout = 240.0
+byzantine_nodes = [{ pid = 11, behavior = "silent" }]
+
+[[experiments]]
+name = "byzantine_invalid_fetch_response_n12"
+description = "Initial node-level byzantine simulation where one node serves corrupted pool-fetch responses."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [32]
+rounds = 8
+global_timeout = 240.0
+byzantine_nodes = [{ pid = 11, behavior = "invalid_fetch_response" }]

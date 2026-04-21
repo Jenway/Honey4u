@@ -53,6 +53,7 @@ SUMMARY_GROUP_KEYS = (
     "enable_pool_reference_proposals",
     "enable_pool_fetch_fallback",
     "network_fault_label",
+    "byzantine_label",
 )
 CASE_LABEL_KEYS = (
     "backend",
@@ -65,6 +66,7 @@ CASE_LABEL_KEYS = (
     "pool_expire_rounds",
     "pool_mempool_max",
     "network_fault_label",
+    "byzantine_label",
 )
 
 
@@ -301,6 +303,33 @@ def _normalize_network_faults(value: object) -> dict[str, object]:
     return normalized
 
 
+def _normalize_byzantine_nodes(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        raise ValueError("byzantine_nodes must be an array of inline tables")
+    normalized: list[dict[str, object]] = []
+    seen_pids: set[int] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError("byzantine_nodes entries must be TOML inline tables")
+        allowed_keys = {"pid", "behavior"}
+        unknown_keys = sorted(key for key in item if key not in allowed_keys)
+        if unknown_keys:
+            raise ValueError(
+                "byzantine_nodes contains unsupported keys: " + ", ".join(unknown_keys)
+            )
+        pid = _normalize_int(item.get("pid"), key=f"byzantine_nodes[{index}].pid", minimum=0)
+        behavior = str(item.get("behavior", ""))
+        if behavior not in {"silent", "invalid_fetch_response"}:
+            raise ValueError(
+                "byzantine_nodes[].behavior must be one of: silent, invalid_fetch_response"
+            )
+        if pid in seen_pids:
+            raise ValueError(f"duplicate byzantine_nodes pid: {pid}")
+        seen_pids.add(pid)
+        normalized.append({"pid": pid, "behavior": behavior})
+    return normalized
+
+
 def _network_fault_payload(network_faults: dict[str, object]) -> dict[str, object]:
     return {key: value for key, value in network_faults.items() if key != "label"}
 
@@ -330,6 +359,15 @@ def _network_fault_label(network_faults: dict[str, object]) -> str:
     if seed:
         parts.append(f"s{seed}")
     return "-".join(parts) if parts else "enabled"
+
+
+def _byzantine_label(byzantine_nodes: list[dict[str, object]]) -> str:
+    if not byzantine_nodes:
+        return "none"
+    parts = []
+    for node in sorted(byzantine_nodes, key=lambda item: int(item["pid"])):
+        parts.append(f"{node['behavior']}-p{node['pid']}")
+    return "-".join(parts)
 
 
 def _normalize_dimension_value(key: str, value: object) -> object:
@@ -383,6 +421,7 @@ def _expand_experiment(
     name = str(merged.pop("name"))
     description = str(merged.pop("description", ""))
     repeats = _normalize_int(merged.pop("repeats", 1), key="repeats", minimum=1)
+    byzantine_nodes = _normalize_byzantine_nodes(merged.pop("byzantine_nodes", []))
 
     dimensions: list[tuple[str, list[object]]] = []
     for key in DIMENSION_KEYS:
@@ -433,8 +472,12 @@ def _expand_experiment(
             case["enable_pool_fetch_fallback"] = True
         if "network_faults" not in case:
             case["network_faults"] = {"enabled": False}
+        case["byzantine_nodes"] = [dict(item) for item in byzantine_nodes]
         case["network_fault_label"] = _network_fault_label(
             dict(case["network_faults"])  # type: ignore[arg-type]
+        )
+        case["byzantine_label"] = _byzantine_label(
+            list(case["byzantine_nodes"])  # type: ignore[arg-type]
         )
         cases.append(case)
 
@@ -517,6 +560,33 @@ def _summarize_transport_metrics(nodes: list[dict[str, Any]]) -> dict[str, int]:
     return totals
 
 
+def _summarize_byzantine_metrics(nodes: list[dict[str, Any]]) -> dict[str, int]:
+    totals = {
+        "byzantine_invalid_fetch_responses_sent_total": 0,
+        "byzantine_fetch_requests_ignored_total": 0,
+        "byzantine_batch_broadcast_suppressed_total": 0,
+        "byzantine_share_broadcast_suppressed_total": 0,
+        "byzantine_empty_proposal_rounds_total": 0,
+    }
+    for node in nodes:
+        totals["byzantine_invalid_fetch_responses_sent_total"] += int(
+            node.get("byzantine_invalid_fetch_responses_sent", 0)
+        )
+        totals["byzantine_fetch_requests_ignored_total"] += int(
+            node.get("byzantine_fetch_requests_ignored", 0)
+        )
+        totals["byzantine_batch_broadcast_suppressed_total"] += int(
+            node.get("byzantine_batch_broadcast_suppressed", 0)
+        )
+        totals["byzantine_share_broadcast_suppressed_total"] += int(
+            node.get("byzantine_share_broadcast_suppressed", 0)
+        )
+        totals["byzantine_empty_proposal_rounds_total"] += int(
+            node.get("byzantine_empty_proposal_rounds", 0)
+        )
+    return totals
+
+
 def _build_run_record(
     *,
     experiment: str,
@@ -526,7 +596,9 @@ def _build_run_record(
     result: dict[str, Any],
 ) -> dict[str, Any]:
     rounds_data = result.get("rounds", [])
-    transport_metrics = _summarize_transport_metrics(result.get("nodes", []))
+    nodes_data = result.get("nodes", [])
+    transport_metrics = _summarize_transport_metrics(nodes_data)
+    byzantine_metrics = _summarize_byzantine_metrics(nodes_data)
     network_faults = _network_fault_payload(dict(case["network_faults"]))  # type: ignore[arg-type]
     slow_honest = network_faults.get("slow_honest")
     slow_honest_pids = []
@@ -559,6 +631,11 @@ def _build_run_record(
         "enable_pool_reference_proposals": bool(case["enable_pool_reference_proposals"]),
         "enable_pool_fetch_fallback": bool(case["enable_pool_fetch_fallback"]),
         "network_fault_label": str(case["network_fault_label"]),
+        "byzantine_label": str(case["byzantine_label"]),
+        "byzantine_nodes": tuple(
+            (int(item["pid"]), str(item["behavior"]))
+            for item in case["byzantine_nodes"]  # type: ignore[index]
+        ),
         "network_fault_enabled": bool(network_faults.get("enabled", False)),
         "network_seed": int(network_faults.get("seed", 0)),
         "network_fixed_delay_ms": int(network_faults.get("fixed_delay_ms", 0)),
@@ -620,6 +697,21 @@ def _build_run_record(
         "transport_max_injected_delay_ms_per_node": int(
             transport_metrics["transport_max_injected_delay_ms_per_node"]
         ),
+        "byzantine_invalid_fetch_responses_sent_total": int(
+            byzantine_metrics["byzantine_invalid_fetch_responses_sent_total"]
+        ),
+        "byzantine_fetch_requests_ignored_total": int(
+            byzantine_metrics["byzantine_fetch_requests_ignored_total"]
+        ),
+        "byzantine_batch_broadcast_suppressed_total": int(
+            byzantine_metrics["byzantine_batch_broadcast_suppressed_total"]
+        ),
+        "byzantine_share_broadcast_suppressed_total": int(
+            byzantine_metrics["byzantine_share_broadcast_suppressed_total"]
+        ),
+        "byzantine_empty_proposal_rounds_total": int(
+            byzantine_metrics["byzantine_empty_proposal_rounds_total"]
+        ),
         "chain_digest": result.get("chain_digest"),
         "result": result,
     }
@@ -661,6 +753,11 @@ def _aggregate_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "transport_injected_delay_ms_total",
         "transport_max_delayed_frames_per_node",
         "transport_max_injected_delay_ms_per_node",
+        "byzantine_invalid_fetch_responses_sent_total",
+        "byzantine_fetch_requests_ignored_total",
+        "byzantine_batch_broadcast_suppressed_total",
+        "byzantine_share_broadcast_suppressed_total",
+        "byzantine_empty_proposal_rounds_total",
     )
     for key, runs in sorted(grouped.items()):
         summary = {field: value for field, value in zip(SUMMARY_GROUP_KEYS, key, strict=True)}

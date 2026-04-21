@@ -341,6 +341,7 @@ fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String>
         .map(|(pid, node_json)| {
             let host_stats = node_json.get("host_stats").cloned().unwrap_or(json!({}));
             let transport_stats = node_json.get("transport_stats").cloned().unwrap_or(json!({}));
+            let byzantine_stats = node_json.get("byzantine_stats").cloned().unwrap_or(json!({}));
             json!({
                 "pid": pid,
                 "worker_ident": host_stats["worker_ident"].as_u64().unwrap_or(0),
@@ -357,6 +358,12 @@ fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String>
                 "worker_running": host_stats["worker_running"].as_bool().unwrap_or(false),
                 "worker_error": host_stats.get("worker_error"),
                 "mempool_size": node_json["mempool_size"].as_u64().unwrap_or(0),
+                "byzantine_behavior": node_json["byzantine_behavior"].as_str().unwrap_or("none"),
+                "byzantine_invalid_fetch_responses_sent": byzantine_stats["invalid_fetch_responses_sent"].as_u64().unwrap_or(0),
+                "byzantine_fetch_requests_ignored": byzantine_stats["fetch_requests_ignored"].as_u64().unwrap_or(0),
+                "byzantine_batch_broadcast_suppressed": byzantine_stats["batch_broadcast_suppressed"].as_u64().unwrap_or(0),
+                "byzantine_share_broadcast_suppressed": byzantine_stats["share_broadcast_suppressed"].as_u64().unwrap_or(0),
+                "byzantine_empty_proposal_rounds": byzantine_stats["empty_proposal_rounds"].as_u64().unwrap_or(0),
                 "transport_sent_frames": transport_stats["sent_frames"].as_u64().unwrap_or(0),
                 "transport_recv_frames": transport_stats["recv_frames"].as_u64().unwrap_or(0),
                 "transport_connect_retries": transport_stats["connect_retries"].as_u64().unwrap_or(0),

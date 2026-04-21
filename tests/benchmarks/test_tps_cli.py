@@ -220,6 +220,8 @@ def _args(*, protocol: str, node_runtime: str) -> argparse.Namespace:
         network_seed=0,
         slow_honest_pids=None,
         slow_honest_extra_delay_ms=0,
+        byzantine_pids=None,
+        byzantine_behavior=None,
         output_json=None,
         ledger_dir="/tmp/ledger",
         fail_on_divergence=False,
@@ -289,6 +291,25 @@ def test_build_benchmark_kwargs_rejects_slow_honest_delay_without_pids() -> None
             batch_size=8,
             transactions_per_node=24,
         )
+
+
+def test_build_benchmark_kwargs_includes_byzantine_nodes_when_configured() -> None:
+    args = _args(protocol="dumbo", node_runtime="rust-driver")
+    args.byzantine_pids = "1,3"
+    args.byzantine_behavior = "silent"
+
+    kwargs = _build_benchmark_kwargs(
+        args,
+        sid="bench:test:dumbo:byzantine",
+        faulty=1,
+        batch_size=8,
+        transactions_per_node=24,
+    )
+
+    assert kwargs["byzantine_nodes"] == [
+        {"pid": 1, "behavior": "silent"},
+        {"pid": 3, "behavior": "silent"},
+    ]
 
 
 def test_build_benchmark_kwargs_for_rust_driver_with_dumbo_acs_includes_provider_config() -> None:

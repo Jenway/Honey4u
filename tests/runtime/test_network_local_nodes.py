@@ -304,3 +304,30 @@ def test_local_dumbo_benchmark_applies_slow_honest_delay_to_selected_pid_only() 
     assert all(
         result.transport_stats.configured_slow_honest_extra_delay_ms == 0 for result in fast_results
     )
+
+
+def test_local_dumbo_benchmark_supports_silent_byzantine_node() -> None:
+    results = benchmark_local_dumbo_nodes_rust_driven(
+        sid="test:bench-driver:dumbo:byzantine:silent",
+        num_nodes=4,
+        faulty=1,
+        batch_size=1,
+        max_rounds=1,
+        global_timeout=10.0,
+        transactions_per_node=1,
+        log_level="ERROR",
+        enable_pool_reference_proposals=True,
+        enable_pool_fetch_fallback=True,
+        byzantine_nodes=[{"pid": 3, "behavior": "silent"}],
+    )
+
+    assert len(results) == 4
+    assert all(result.rounds == 1 for result in results)
+    assert all(result.delivered >= 2 for result in results)
+    silent_result = next(result for result in results if result.pid == 3)
+    honest_results = [result for result in results if result.pid != 3]
+    assert silent_result.byzantine_behavior == "silent"
+    assert silent_result.driver_stats.byzantine_empty_proposal_rounds == 1
+    assert silent_result.driver_stats.byzantine_batch_broadcast_suppressed == 1
+    assert silent_result.driver_stats.byzantine_share_broadcast_suppressed == 1
+    assert all(result.byzantine_behavior in {None, "none"} for result in honest_results)

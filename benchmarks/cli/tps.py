@@ -81,6 +81,15 @@ class TransportSummary:
 
 
 @dataclass(frozen=True)
+class ByzantineStats:
+    invalid_fetch_responses_sent: int = 0
+    fetch_requests_ignored: int = 0
+    batch_broadcast_suppressed: int = 0
+    share_broadcast_suppressed: int = 0
+    empty_proposal_rounds: int = 0
+
+
+@dataclass(frozen=True)
 class BenchmarkSummary:
     sid: str
     num_nodes: int
@@ -124,9 +133,11 @@ class BenchmarkSummary:
     subprotocol_timings: dict[str, TimingStats]
     queue_backlog: dict[str, PeakStats]
     network_faults: dict[str, Any] | None = None
+    byzantine_nodes: tuple[dict[str, Any], ...] = ()
     transport: TransportSummary = field(default_factory=TransportSummary)
     fetch: FetchStats = field(default_factory=FetchStats)
     measured_fetch: FetchStats = field(default_factory=FetchStats)
+    byzantine: ByzantineStats = field(default_factory=ByzantineStats)
     node_runtime: str = "rust-driver"
     acs_protocol: str = "hb"
     all_nodes_agree: bool = True
@@ -281,6 +292,19 @@ def _parse_args() -> argparse.Namespace:
         help="extra delay injected only for the node ids listed in --slow-honest-pids",
     )
     parser.add_argument(
+        "--byzantine-pids",
+        type=str,
+        default=None,
+        help="comma-separated node ids that should use the selected byzantine behavior",
+    )
+    parser.add_argument(
+        "--byzantine-behavior",
+        type=str,
+        choices=("silent", "invalid_fetch_response"),
+        default=None,
+        help="minimal runtime byzantine behavior injected at the rust-driver boundary",
+    )
+    parser.add_argument(
         "--output-json", type=str, default=None, help="write JSON output to this path"
     )
     parser.add_argument(
@@ -312,12 +336,12 @@ def _parse_batch_values(raw: str | None, fallback: int) -> list[int]:
     return values
 
 
-def _parse_pid_values(raw: str | None) -> tuple[int, ...]:
+def _parse_pid_values(raw: str | None, *, flag_name: str) -> tuple[int, ...]:
     if raw is None or not raw.strip():
         return ()
     values = tuple(int(part.strip()) for part in raw.split(",") if part.strip())
     if any(value < 0 for value in values):
-        raise ValueError("--slow-honest-pids only accepts non-negative integers")
+        raise ValueError(f"{flag_name} only accepts non-negative integers")
     return values
 
 
@@ -521,7 +545,10 @@ def _build_network_faults_config(args: argparse.Namespace) -> dict[str, Any] | N
     fixed_delay_ms = getattr(args, "network_fixed_delay_ms", 0)
     jitter_ms = getattr(args, "network_jitter_ms", 0)
     seed = getattr(args, "network_seed", 0)
-    slow_honest_pids = _parse_pid_values(getattr(args, "slow_honest_pids", None))
+    slow_honest_pids = _parse_pid_values(
+        getattr(args, "slow_honest_pids", None),
+        flag_name="--slow-honest-pids",
+    )
     slow_honest_extra_delay_ms = getattr(args, "slow_honest_extra_delay_ms", 0)
 
     if fixed_delay_ms < 0:
@@ -558,6 +585,18 @@ def _build_network_faults_config(args: argparse.Namespace) -> dict[str, Any] | N
     return config
 
 
+def _build_byzantine_nodes_config(args: argparse.Namespace) -> list[dict[str, Any]] | None:
+    pids = _parse_pid_values(getattr(args, "byzantine_pids", None), flag_name="--byzantine-pids")
+    behavior = getattr(args, "byzantine_behavior", None)
+    if pids and behavior is None:
+        raise ValueError("--byzantine-behavior must be provided when --byzantine-pids is set")
+    if behavior is not None and not pids:
+        raise ValueError("--byzantine-pids must be provided when --byzantine-behavior is set")
+    if not pids:
+        return None
+    return [{"pid": pid, "behavior": str(behavior)} for pid in pids]
+
+
 def _select_benchmark_runner(protocol: str, node_runtime: str) -> BenchmarkFn:
     if node_runtime != "rust-driver":
         raise ValueError(f"unsupported node runtime: {node_runtime}")
@@ -590,8 +629,11 @@ def _build_benchmark_kwargs(
         "ledger_dir": getattr(args, "ledger_dir", None),
     }
     network_faults = _build_network_faults_config(args)
+    byzantine_nodes = _build_byzantine_nodes_config(args)
     if network_faults is not None:
         kwargs["network_faults"] = network_faults
+    if byzantine_nodes is not None:
+        kwargs["byzantine_nodes"] = byzantine_nodes
     if args.protocol == "dumbo":
         kwargs.update(
             enable_broadcast_pool_reuse=args.enable_pool_reuse,
@@ -616,6 +658,7 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
     sid = f"{args.sid}:{args.nodes}:{batch_size}:{args.rounds}:{int(time.time())}"
     warmup_rounds = max(0, min(args.warmup_rounds, args.rounds))
     network_faults = _build_network_faults_config(args)
+    byzantine_nodes = _build_byzantine_nodes_config(args)
 
     benchmark_fn = _select_benchmark_runner(args.protocol, args.node_runtime)
 
@@ -695,6 +738,23 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
     fetch = _build_fetch_stats(all_round_details, delivered_transactions)
     measured_fetch = _build_fetch_stats(measured_round_details, measured_delivered_transactions)
     transport = _build_transport_summary(results)
+    byzantine = ByzantineStats(
+        invalid_fetch_responses_sent=sum(
+            result.driver_stats.byzantine_invalid_fetch_responses_sent for result in results
+        ),
+        fetch_requests_ignored=sum(
+            result.driver_stats.byzantine_fetch_requests_ignored for result in results
+        ),
+        batch_broadcast_suppressed=sum(
+            result.driver_stats.byzantine_batch_broadcast_suppressed for result in results
+        ),
+        share_broadcast_suppressed=sum(
+            result.driver_stats.byzantine_share_broadcast_suppressed for result in results
+        ),
+        empty_proposal_rounds=sum(
+            result.driver_stats.byzantine_empty_proposal_rounds for result in results
+        ),
+    )
 
     return BenchmarkSummary(
         sid=sid,
@@ -778,9 +838,11 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
         subprotocol_timings=_build_timing_stats(results),
         queue_backlog=_build_queue_backlog_stats(results),
         network_faults=network_faults,
+        byzantine_nodes=tuple(byzantine_nodes or ()),
         transport=transport,
         fetch=fetch,
         measured_fetch=measured_fetch,
+        byzantine=byzantine,
         all_nodes_agree=all_nodes_agree,
         consensus_chain_digest=consensus_chain_digest,
         diverged_pids=diverged_pids,
@@ -917,6 +979,7 @@ def _build_sweep_payload(
             "node_runtime": args.node_runtime,
             "acs_protocol": getattr(args, "acs_protocol", "hb"),
             "network_faults": _build_network_faults_config(args),
+            "byzantine_nodes": _build_byzantine_nodes_config(args),
             "x_axis": "batch_size",
         },
         "points": [asdict(summary) for summary in summaries],
@@ -985,6 +1048,15 @@ def _run_single_mode(args: argparse.Namespace) -> dict[str, Any]:
             f"delayed_frames={summary.transport.delayed_frames_total} "
             f"injected_delay_ms={summary.transport.total_injected_delay_ms_total} "
             f"max_delay_ms_per_node={summary.transport.max_injected_delay_ms_per_node}"
+        )
+    if summary.byzantine_nodes:
+        print(
+            "Observed byzantine actions: "
+            f"invalid_fetch_responses={summary.byzantine.invalid_fetch_responses_sent} "
+            f"ignored_fetch_requests={summary.byzantine.fetch_requests_ignored} "
+            f"empty_proposals={summary.byzantine.empty_proposal_rounds} "
+            f"suppressed_batch={summary.byzantine.batch_broadcast_suppressed} "
+            f"suppressed_share={summary.byzantine.share_broadcast_suppressed}"
         )
     print(
         "Consistency: "

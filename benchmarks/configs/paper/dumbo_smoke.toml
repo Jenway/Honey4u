@@ -32,3 +32,12 @@ network_faults = [
   { label = "fixed5", enabled = true, seed = 20260416, fixed_delay_ms = 5 },
   { label = "slow20p3", enabled = true, seed = 20260416, slow_honest = { pids = [3], extra_delay_ms = 20 } },
 ]
+
+[[experiments]]
+name = "smoke_byzantine_silent"
+description = "Quick smoke test for the initial silent byzantine-node behavior."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [4]
+batch_size = [8]
+byzantine_nodes = [{ pid = 3, behavior = "silent" }]

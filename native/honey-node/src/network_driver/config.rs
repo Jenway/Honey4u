@@ -26,6 +26,50 @@ pub(super) struct BroadcastPoolConfig {
     pub(super) reuse_limit_per_round: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ByzantineBehavior {
+    Silent,
+    InvalidFetchResponse,
+}
+
+impl ByzantineBehavior {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Silent => "silent",
+            Self::InvalidFetchResponse => "invalid_fetch_response",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "silent" => Ok(Self::Silent),
+            "invalid_fetch_response" => Ok(Self::InvalidFetchResponse),
+            other => Err(format!("unsupported byzantine behavior: {other}")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct ByzantineNodeConfig {
+    pub(super) behavior: Option<ByzantineBehavior>,
+}
+
+impl ByzantineNodeConfig {
+    pub(super) fn behavior_label(self) -> &'static str {
+        self.behavior
+            .map(ByzantineBehavior::as_str)
+            .unwrap_or("none")
+    }
+
+    pub(super) fn is_silent(self) -> bool {
+        self.behavior == Some(ByzantineBehavior::Silent)
+    }
+
+    pub(super) fn sends_invalid_fetch_response(self) -> bool {
+        self.behavior == Some(ByzantineBehavior::InvalidFetchResponse)
+    }
+}
+
 pub(super) fn parse_broadcast_pool_config(
     config_json: &str,
 ) -> Result<BroadcastPoolConfig, String> {
@@ -123,6 +167,47 @@ pub(super) fn parse_network_fault_config(
     })
 }
 
+pub(super) fn parse_byzantine_node_config(
+    config_json: &str,
+    pid: usize,
+) -> Result<ByzantineNodeConfig, String> {
+    let value: Value = serde_json::from_str(config_json).map_err(|err| err.to_string())?;
+    let Some(nodes_value) = value.get("byzantine_nodes") else {
+        return Ok(ByzantineNodeConfig::default());
+    };
+    let nodes = nodes_value
+        .as_array()
+        .ok_or_else(|| String::from("byzantine_nodes must be a JSON array"))?;
+    let mut matched_behavior = None;
+    for entry_value in nodes {
+        let entry = entry_value
+            .as_object()
+            .ok_or_else(|| String::from("byzantine_nodes entries must be JSON objects"))?;
+        let entry_pid = entry
+            .get("pid")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| String::from("byzantine_nodes[].pid must be an integer"))?
+            as usize;
+        let behavior = ByzantineBehavior::parse(
+            entry
+                .get("behavior")
+                .and_then(Value::as_str)
+                .ok_or_else(|| String::from("byzantine_nodes[].behavior must be a string"))?,
+        )?;
+        if entry_pid != pid {
+            continue;
+        }
+        if matched_behavior.replace(behavior).is_some() {
+            return Err(format!(
+                "duplicate byzantine_nodes entry configured for pid {pid}"
+            ));
+        }
+    }
+    Ok(ByzantineNodeConfig {
+        behavior: matched_behavior,
+    })
+}
+
 fn parse_slow_honest_extra_delay_ms(network_faults: &Value, pid: usize) -> Result<u64, String> {
     let Some(slow_honest_value) = network_faults.get("slow_honest") else {
         return Ok(0);
@@ -146,7 +231,7 @@ fn parse_slow_honest_extra_delay_ms(network_faults: &Value, pid: usize) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use super::parse_network_fault_config;
+    use super::{ByzantineBehavior, parse_byzantine_node_config, parse_network_fault_config};
 
     #[test]
     fn parse_network_fault_config_defaults_to_disabled() {
@@ -182,5 +267,49 @@ mod tests {
         assert_eq!(config.fixed_delay_ms, 10);
         assert_eq!(config.jitter_ms, 15);
         assert_eq!(config.slow_honest_extra_delay_ms, 70);
+    }
+
+    #[test]
+    fn parse_byzantine_node_config_defaults_to_none() {
+        let config = parse_byzantine_node_config("{}", 0).expect("config should parse");
+
+        assert_eq!(config.behavior, None);
+        assert_eq!(config.behavior_label(), "none");
+    }
+
+    #[test]
+    fn parse_byzantine_node_config_selects_matching_pid() {
+        let config = parse_byzantine_node_config(
+            r#"{
+                "byzantine_nodes": [
+                    {"pid": 1, "behavior": "silent"},
+                    {"pid": 3, "behavior": "invalid_fetch_response"}
+                ]
+            }"#,
+            3,
+        )
+        .expect("config should parse");
+
+        assert_eq!(
+            config.behavior,
+            Some(ByzantineBehavior::InvalidFetchResponse)
+        );
+        assert_eq!(config.behavior_label(), "invalid_fetch_response");
+    }
+
+    #[test]
+    fn parse_byzantine_node_config_rejects_duplicate_pid_entries() {
+        let error = parse_byzantine_node_config(
+            r#"{
+                "byzantine_nodes": [
+                    {"pid": 2, "behavior": "silent"},
+                    {"pid": 2, "behavior": "invalid_fetch_response"}
+                ]
+            }"#,
+            2,
+        )
+        .expect_err("duplicate pid entries should fail");
+
+        assert!(error.contains("duplicate byzantine_nodes entry"));
     }
 }

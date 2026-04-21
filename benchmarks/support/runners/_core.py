@@ -60,6 +60,11 @@ class MultiprocessDriverStats:
     fetch_responses_served: int = 0
     fetch_responses_received: int = 0
     fetched_reference_count: int = 0
+    byzantine_invalid_fetch_responses_sent: int = 0
+    byzantine_fetch_requests_ignored: int = 0
+    byzantine_batch_broadcast_suppressed: int = 0
+    byzantine_share_broadcast_suppressed: int = 0
+    byzantine_empty_proposal_rounds: int = 0
 
 
 @dataclass(frozen=True)
@@ -85,6 +90,11 @@ class MultiprocessRoundDetail:
     fetch_responses_served: int = 0
     fetch_responses_received: int = 0
     fetched_reference_count: int = 0
+    byzantine_invalid_fetch_responses_sent: int = 0
+    byzantine_fetch_requests_ignored: int = 0
+    byzantine_batch_broadcast_suppressed: int = 0
+    byzantine_share_broadcast_suppressed: int = 0
+    byzantine_empty_proposal_used: bool = False
     driver_phase_stats: RustDrivenDriverPhaseStats | None = None
 
 
@@ -107,6 +117,7 @@ class MultiprocessNodeResult:
     transport_stats: TransportStats = field(default_factory=TransportStats)
     driver_stats: MultiprocessDriverStats = field(default_factory=MultiprocessDriverStats)
     round_details: tuple[MultiprocessRoundDetail, ...] = ()
+    byzantine_behavior: str | None = None
 
 
 @dataclass(frozen=True)
@@ -335,6 +346,11 @@ def _decode_result_payload(pid: int, value: dict[str, Any]) -> MultiprocessNodeR
             _decode_multiprocess_round_detail(cast(dict[str, Any], round_detail))
             for round_detail in value.get("round_details", ())
         ),
+        byzantine_behavior=(
+            str(value["byzantine_behavior"])
+            if value.get("byzantine_behavior") is not None
+            else None
+        ),
     )
 
 
@@ -397,6 +413,17 @@ def _decode_multiprocess_driver_stats(value: dict[str, Any]) -> MultiprocessDriv
         fetch_responses_served=int(value.get("fetch_responses_served", 0)),
         fetch_responses_received=int(value.get("fetch_responses_received", 0)),
         fetched_reference_count=int(value.get("fetched_reference_count", 0)),
+        byzantine_invalid_fetch_responses_sent=int(
+            value.get("byzantine_invalid_fetch_responses_sent", 0)
+        ),
+        byzantine_fetch_requests_ignored=int(value.get("byzantine_fetch_requests_ignored", 0)),
+        byzantine_batch_broadcast_suppressed=int(
+            value.get("byzantine_batch_broadcast_suppressed", 0)
+        ),
+        byzantine_share_broadcast_suppressed=int(
+            value.get("byzantine_share_broadcast_suppressed", 0)
+        ),
+        byzantine_empty_proposal_rounds=int(value.get("byzantine_empty_proposal_rounds", 0)),
     )
 
 
@@ -429,6 +456,17 @@ def _decode_multiprocess_round_detail(value: dict[str, Any]) -> MultiprocessRoun
         fetch_responses_served=int(value.get("fetch_responses_served", 0)),
         fetch_responses_received=int(value.get("fetch_responses_received", 0)),
         fetched_reference_count=int(value.get("fetched_reference_count", 0)),
+        byzantine_invalid_fetch_responses_sent=int(
+            value.get("byzantine_invalid_fetch_responses_sent", 0)
+        ),
+        byzantine_fetch_requests_ignored=int(value.get("byzantine_fetch_requests_ignored", 0)),
+        byzantine_batch_broadcast_suppressed=int(
+            value.get("byzantine_batch_broadcast_suppressed", 0)
+        ),
+        byzantine_share_broadcast_suppressed=int(
+            value.get("byzantine_share_broadcast_suppressed", 0)
+        ),
+        byzantine_empty_proposal_used=bool(value.get("byzantine_empty_proposal_used", False)),
         driver_phase_stats=(
             _decode_rust_driven_driver_phase_stats(
                 cast(dict[str, Any], value.get("driver_phase_stats", {}))
@@ -917,13 +955,16 @@ def _run_rust_driven_dumbo(
     return _decode_rust_driven_dumbo_payload(cast(dict[str, Any], json.loads(payload)))
 
 
-def _inject_network_faults(
+def _inject_runtime_faults(
     config_payload: dict[str, Any],
     network_faults: dict[str, Any] | None,
+    byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     merged = dict(config_payload)
     if network_faults:
         merged["network_faults"] = network_faults
+    if byzantine_nodes:
+        merged["byzantine_nodes"] = byzantine_nodes
     return merged
 
 
@@ -1034,6 +1075,7 @@ def benchmark_local_honeybadger_nodes_rust_driven(
     broadcast_mempool_backend: BroadcastPoolBackend = "rust",
     pool_mempool_max: int = 1000,
     network_faults: dict[str, Any] | None = None,
+    byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> list[MultiprocessNodeResult]:
     del round_timeout, log_level, rust_tx_pool_max_bytes
     if tx_input != "json_str":
@@ -1071,7 +1113,7 @@ def benchmark_local_honeybadger_nodes_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         acs_protocol=acs_protocol,
-        config_payload=_inject_network_faults(config_payload, network_faults),
+        config_payload=_inject_runtime_faults(config_payload, network_faults, byzantine_nodes),
     )
 
 
@@ -1094,6 +1136,7 @@ def benchmark_local_dumbo_nodes_rust_driven(
     rust_tx_pool_max_bytes: int = 0,
     ledger_dir: str | None = None,
     network_faults: dict[str, Any] | None = None,
+    byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> list[MultiprocessNodeResult]:
     del round_timeout
     del log_level
@@ -1117,7 +1160,7 @@ def benchmark_local_dumbo_nodes_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         acs_protocol="dumbo",
-        config_payload=_inject_network_faults(
+        config_payload=_inject_runtime_faults(
             {
                 "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
                 "enable_pool_reference_proposals": enable_pool_reference_proposals,
@@ -1125,6 +1168,7 @@ def benchmark_local_dumbo_nodes_rust_driven(
                 "pool_grace_ms": pool_grace_ms,
             },
             network_faults,
+            byzantine_nodes,
         ),
     )
 
@@ -1139,6 +1183,7 @@ def run_local_honeybadger_acs_rust_driven(
     broadcast_mempool_backend: BroadcastPoolBackend = "rust",
     pool_mempool_max: int = 1000,
     network_faults: dict[str, Any] | None = None,
+    byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> RustDrivenAcsRunResult:
     return _run_rust_driven_acs(
         protocol="hb",
@@ -1147,13 +1192,14 @@ def run_local_honeybadger_acs_rust_driven(
         faulty=faulty,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        config_payload=_inject_network_faults(
+        config_payload=_inject_runtime_faults(
             {
                 "hb_broadcast_protocol": hb_broadcast_protocol,
                 "broadcast_mempool_backend": broadcast_mempool_backend,
                 "pool_mempool_max": pool_mempool_max,
             },
             network_faults,
+            byzantine_nodes,
         ),
     )
 
@@ -1172,6 +1218,7 @@ def run_local_honeybadger_rust_driven(
     broadcast_mempool_backend: BroadcastPoolBackend = "rust",
     pool_mempool_max: int = 1000,
     network_faults: dict[str, Any] | None = None,
+    byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> RustDrivenHoneyBadgerRunResult:
     acs_config_payload: dict[str, Any] | None = None
     if acs_protocol == "dumbo":
@@ -1194,7 +1241,7 @@ def run_local_honeybadger_rust_driven(
         max_rounds=max_rounds,
         global_timeout=global_timeout,
         acs_protocol=acs_protocol,
-        acs_config_payload=_inject_network_faults(config_payload, network_faults),
+        acs_config_payload=_inject_runtime_faults(config_payload, network_faults, byzantine_nodes),
     )
 
 
@@ -1208,6 +1255,7 @@ def run_local_dumbo_rust_driven(
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
     network_faults: dict[str, Any] | None = None,
+    byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> RustDrivenDumboRunResult:
     return _run_rust_driven_dumbo(
         sid=sid,
@@ -1216,12 +1264,13 @@ def run_local_dumbo_rust_driven(
         batch_size=batch_size,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        config_payload=_inject_network_faults(
+        config_payload=_inject_runtime_faults(
             {
                 "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
                 "pool_grace_ms": pool_grace_ms,
             },
             network_faults,
+            byzantine_nodes,
         ),
     )
 
@@ -1235,6 +1284,7 @@ def run_local_dumbo_acs_rust_driven(
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
     network_faults: dict[str, Any] | None = None,
+    byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> RustDrivenAcsRunResult:
     config_payload: dict[str, Any] = {
         "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
@@ -1247,7 +1297,7 @@ def run_local_dumbo_acs_rust_driven(
         faulty=faulty,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        config_payload=_inject_network_faults(config_payload, network_faults),
+        config_payload=_inject_runtime_faults(config_payload, network_faults, byzantine_nodes),
     )
 
 
@@ -1268,6 +1318,7 @@ def run_local_dumbo_new_driver(
     ledger_dir: str | None = None,
     tx_payload: list[list[str]] | None = None,
     network_faults: dict[str, Any] | None = None,
+    byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> RustDrivenDumboRunResult:
     """Run the Dumbo BFT protocol using the unified Rust-native ``bench-driver`` entrypoint.
 
@@ -1297,7 +1348,7 @@ def run_local_dumbo_new_driver(
         batch_size=batch_size,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        config_payload=_inject_network_faults(config_payload, network_faults),
+        config_payload=_inject_runtime_faults(config_payload, network_faults, byzantine_nodes),
         ledger_dir=ledger_dir,
         tx_payload=tx_payload,
     )
