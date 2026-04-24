@@ -4,9 +4,28 @@ use honey_crypto::threshold::keygen::{
     Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams, SigPrivateKeyShare,
     SigPublicParams,
 };
-use honey_crypto::threshold::utils::{
-    fr_from_bytes, fr_to_bytes, g1_from_bytes, g1_to_bytes, g2_from_bytes, g2_to_bytes,
-};
+use honey_crypto::{bls::fr::Fr, bls::g1::G1, bls::g2::G2};
+
+fn fr_from_bytes(bytes: &[u8]) -> Result<Fr, String> {
+    let arr: &[u8; 32] = bytes
+        .try_into()
+        .map_err(|_| format!("expected 32 bytes for Fr, got {}", bytes.len()))?;
+    Fr::from_scalar_bytes(arr).ok_or_else(|| "invalid Fr scalar bytes".into())
+}
+
+fn g1_from_bytes(bytes: &[u8]) -> Result<G1, String> {
+    let arr: &[u8; 48] = bytes
+        .try_into()
+        .map_err(|_| format!("expected 48 bytes for G1, got {}", bytes.len()))?;
+    G1::from_compressed_bytes(arr)
+}
+
+fn g2_from_bytes(bytes: &[u8]) -> Result<G2, String> {
+    let arr: &[u8; 96] = bytes
+        .try_into()
+        .map_err(|_| format!("expected 96 bytes for G2, got {}", bytes.len()))?;
+    G2::from_compressed_bytes(arr)
+}
 
 #[derive(Archive, Serialize, Deserialize)]
 pub struct SigPublicParamsWire {
@@ -21,8 +40,12 @@ impl SigPublicParamsWire {
         Self {
             total_players: value.total_players,
             threshold: value.threshold,
-            master_public_key: g2_to_bytes(&value.master_public_key),
-            verification_vector: value.verification_vector.iter().map(g2_to_bytes).collect(),
+            master_public_key: value.master_public_key.to_compressed_bytes().to_vec(),
+            verification_vector: value
+                .verification_vector
+                .iter()
+                .map(|point| point.to_compressed_bytes().to_vec())
+                .collect(),
         }
     }
 
@@ -50,7 +73,7 @@ impl SigPrivateKeyShareWire {
     pub fn from_runtime(value: &SigPrivateKeyShare) -> Self {
         Self {
             player_id: value.player_id,
-            secret: fr_to_bytes(&value.secret),
+            secret: value.secret.to_scalar_bytes().to_vec(),
         }
     }
 
@@ -75,8 +98,12 @@ impl PkePublicParamsWire {
         Self {
             total_players: value.total_players,
             threshold: value.threshold,
-            master_public_key: g1_to_bytes(&value.master_public_key),
-            verification_vector: value.verification_vector.iter().map(g2_to_bytes).collect(),
+            master_public_key: value.master_public_key.to_compressed_bytes().to_vec(),
+            verification_vector: value
+                .verification_vector
+                .iter()
+                .map(|point| point.to_compressed_bytes().to_vec())
+                .collect(),
         }
     }
 
@@ -104,7 +131,7 @@ impl PkePrivateKeyShareWire {
     pub fn from_runtime(value: &PkePrivateKeyShare) -> Self {
         Self {
             player_id: value.player_id,
-            secret: fr_to_bytes(&value.secret),
+            secret: value.secret.to_scalar_bytes().to_vec(),
         }
     }
 
@@ -126,9 +153,9 @@ pub struct CiphertextWire {
 impl CiphertextWire {
     pub fn from_runtime(value: &Ciphertext) -> Self {
         Self {
-            u: g1_to_bytes(&value.u),
+            u: value.u.to_compressed_bytes().to_vec(),
             v: value.v.to_vec(),
-            w: g2_to_bytes(&value.w),
+            w: value.w.to_compressed_bytes().to_vec(),
         }
     }
 
@@ -160,7 +187,7 @@ impl PartialDecryptionShareWire {
     pub fn from_runtime(value: &PartialDecryptionShare) -> Self {
         Self {
             player_id: value.player_id,
-            value: g1_to_bytes(&value.value),
+            value: value.value.to_compressed_bytes().to_vec(),
         }
     }
 

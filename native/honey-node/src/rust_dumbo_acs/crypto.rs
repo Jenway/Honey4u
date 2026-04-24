@@ -157,7 +157,7 @@ impl RustDumboAcsHost {
             .iter()
             .take(threshold)
             .map(|(sender, share)| {
-                let value = g1_from_bytes(share)?;
+                let value = parse_g1_compressed(share)?;
                 Ok::<_, String>(PartialSignature {
                     player_id: sender + 1,
                     value,
@@ -168,7 +168,7 @@ impl RustDumboAcsHost {
             .map_err(|err| err.to_string())?;
         Ok(ThresholdProof {
             roothash,
-            signature: g1_to_bytes(&combined),
+            signature: combined.to_compressed_bytes().to_vec(),
         })
     }
 
@@ -177,7 +177,7 @@ impl RustDumboAcsHost {
         proof: &ThresholdProof,
         msg: &[u8],
     ) -> bool {
-        let Ok(signature) = g1_from_bytes(&proof.signature) else {
+        let Ok(signature) = parse_g1_compressed(&proof.signature) else {
             return false;
         };
         threshold::sig::verify_combined(params, &signature, msg).is_ok()

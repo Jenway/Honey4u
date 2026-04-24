@@ -1,10 +1,17 @@
+use honey_crypto::bls::g1::G1;
 use honey_crypto::threshold;
 use honey_crypto::threshold::keygen::PartialSignature;
-use honey_crypto::threshold::utils::{g1_from_bytes, g1_to_bytes};
 use honey_node::wire::api::{decode_result, encode_result};
 use honey_node::wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+
+fn parse_g1_compressed(bytes: &[u8]) -> Result<G1, String> {
+    let arr: &[u8; 48] = bytes
+        .try_into()
+        .map_err(|_| format!("expected 48 bytes for G1, got {}", bytes.len()))?;
+    G1::from_compressed_bytes(arr)
+}
 
 #[pyclass(from_py_object)]
 #[derive(Clone)]
@@ -31,7 +38,7 @@ impl SigPublicKey {
         sig_bytes: &[u8],
         msg: &[u8],
     ) -> PyResult<bool> {
-        let value = match g1_from_bytes(sig_bytes) {
+        let value = match parse_g1_compressed(sig_bytes) {
             Ok(value) => value,
             Err(_) => return Ok(false),
         };
@@ -44,7 +51,7 @@ impl SigPublicKey {
     }
 
     fn verify_combined(&self, py: Python<'_>, sig_bytes: &[u8], msg: &[u8]) -> PyResult<bool> {
-        let sig = match g1_from_bytes(sig_bytes) {
+        let sig = match parse_g1_compressed(sig_bytes) {
             Ok(value) => value,
             Err(_) => return Ok(false),
         };
@@ -59,7 +66,7 @@ impl SigPublicKey {
     ) -> PyResult<Vec<bool>> {
         let mut partials = Vec::with_capacity(shares.len());
         for (player_id, sig_bytes, msg) in shares {
-            let partial = match g1_from_bytes(&sig_bytes) {
+            let partial = match parse_g1_compressed(&sig_bytes) {
                 Ok(value) => Some(PartialSignature {
                     player_id: player_id + 1,
                     value,
@@ -90,8 +97,8 @@ impl SigPublicKey {
     ) -> PyResult<Vec<u8>> {
         let mut partial_sigs = Vec::with_capacity(shares.len());
         for (player_id, sig_bytes) in shares {
-            let value =
-                g1_from_bytes(&sig_bytes).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let value = parse_g1_compressed(&sig_bytes)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
             partial_sigs.push(threshold::keygen::PartialSignature {
                 player_id: player_id + 1,
                 value,
@@ -101,7 +108,7 @@ impl SigPublicKey {
         let msg = msg.to_vec();
         py.detach(move || {
             match threshold::sig::combine_with_verify(&self.inner, &msg, &partial_sigs) {
-                Ok(combined_sig) => Ok(g1_to_bytes(&combined_sig)),
+                Ok(combined_sig) => Ok(combined_sig.to_compressed_bytes().to_vec()),
                 Err(e) => Err(PyValueError::new_err(e.to_string())),
             }
         })
@@ -115,8 +122,8 @@ impl SigPublicKey {
     ) -> PyResult<Vec<u8>> {
         let mut partial_sigs = Vec::with_capacity(shares.len());
         for (player_id, sig_bytes) in shares {
-            let value =
-                g1_from_bytes(&sig_bytes).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let value = parse_g1_compressed(&sig_bytes)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
             partial_sigs.push(threshold::keygen::PartialSignature {
                 player_id: player_id + 1,
                 value,
@@ -126,7 +133,7 @@ impl SigPublicKey {
         let msg = msg.to_vec();
         py.detach(
             move || match threshold::sig::combine_trusted(&self.inner, &msg, &partial_sigs) {
-                Ok(combined_sig) => Ok(g1_to_bytes(&combined_sig)),
+                Ok(combined_sig) => Ok(combined_sig.to_compressed_bytes().to_vec()),
                 Err(e) => Err(PyValueError::new_err(e.to_string())),
             },
         )
@@ -166,7 +173,7 @@ impl SigPrivateShare {
         let msg = msg.to_vec();
         py.detach(move || {
             let partial = threshold::sig::sign(&self.inner, &msg);
-            Ok(g1_to_bytes(&partial.value))
+            Ok(partial.value.to_compressed_bytes().to_vec())
         })
     }
 

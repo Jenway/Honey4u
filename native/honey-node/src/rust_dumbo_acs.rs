@@ -2,11 +2,11 @@
 
 use super::*;
 use crate::acs_host::{AcsCryptoMaterial, AcsHost, AcsHostStats, AcsWireEvent};
+use honey_crypto::bls::g1::G1;
 use honey_crypto::ecdsa;
 use honey_crypto::merkle::{self, MerkleProof};
 use honey_crypto::threshold;
 use honey_crypto::threshold::keygen::{PartialSignature, SigPrivateKeyShare, SigPublicParams};
-use honey_crypto::threshold::utils::{g1_from_bytes, g1_to_bytes};
 use honey_node::wire::api::decode_result;
 use honey_node::wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
 use serde::{Deserialize, Serialize};
@@ -31,6 +31,13 @@ use wire::*;
 #[cfg(test)]
 #[path = "rust_dumbo_acs/tests.rs"]
 mod tests;
+
+fn parse_g1_compressed(bytes: &[u8]) -> Result<G1, String> {
+    let arr: &[u8; 48] = bytes
+        .try_into()
+        .map_err(|_| format!("expected 48 bytes for G1, got {}", bytes.len()))?;
+    G1::from_compressed_bytes(arr)
+}
 
 const PRBC_READY_DOMAIN: &[u8] = b"prbc-ready|";
 const PD_STORED_DOMAIN: &[u8] = b"stored|";

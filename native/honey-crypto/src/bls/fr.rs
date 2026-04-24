@@ -4,9 +4,11 @@
 /// Fr: scalar field element
 /// An element of the BLS12-381 scalar field Fr.
 use blst::{
-    blst_fr, blst_fr_from_scalar, blst_fr_from_uint64, blst_scalar, blst_scalar_from_be_bytes,
+    blst_bendian_from_scalar, blst_fr, blst_fr_from_scalar, blst_fr_from_uint64, blst_scalar,
+    blst_scalar_from_be_bytes, blst_scalar_from_fr,
 };
 use rand::rand_core::{CryptoRng, Rng};
+use std::mem::MaybeUninit;
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
@@ -18,7 +20,7 @@ impl Fr {
     #[inline]
     pub fn from_u64(v: u64) -> Self {
         unsafe {
-            let mut fr = std::mem::MaybeUninit::<blst_fr>::uninit();
+            let mut fr = MaybeUninit::<blst_fr>::uninit();
             let limbs = [v, 0u64, 0u64, 0u64];
             blst_fr_from_uint64(fr.as_mut_ptr(), limbs.as_ptr());
             Fr {
@@ -29,10 +31,10 @@ impl Fr {
 
     pub fn from_scalar_bytes(bytes: &[u8; 32]) -> Option<Self> {
         unsafe {
-            let mut scalar = std::mem::MaybeUninit::<blst_scalar>::uninit();
+            let mut scalar = MaybeUninit::<blst_scalar>::uninit();
             // blst_scalar_from_be_bytes validates that the value is < r (the curve order)
             if blst_scalar_from_be_bytes(scalar.as_mut_ptr(), bytes.as_ptr(), 32) {
-                let mut fr = std::mem::MaybeUninit::<blst_fr>::uninit();
+                let mut fr = MaybeUninit::<blst_fr>::uninit();
                 blst_fr_from_scalar(fr.as_mut_ptr(), scalar.as_ptr());
                 Some(Fr {
                     inner: fr.assume_init(),
@@ -49,9 +51,9 @@ impl Fr {
             rng.fill_bytes(&mut bytes);
 
             unsafe {
-                let mut scalar = std::mem::MaybeUninit::<blst_scalar>::uninit();
+                let mut scalar = MaybeUninit::<blst_scalar>::uninit();
                 if blst_scalar_from_be_bytes(scalar.as_mut_ptr(), bytes.as_ptr(), 32) {
-                    let mut fr = std::mem::MaybeUninit::<blst_fr>::uninit();
+                    let mut fr = MaybeUninit::<blst_fr>::uninit();
                     blst_fr_from_scalar(fr.as_mut_ptr(), scalar.as_ptr());
                     return Fr {
                         inner: fr.assume_init(),
@@ -59,5 +61,16 @@ impl Fr {
                 }
             }
         }
+    }
+
+    pub fn to_scalar_bytes(&self) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        unsafe {
+            let mut scalar = MaybeUninit::<blst_scalar>::uninit();
+            blst_scalar_from_fr(scalar.as_mut_ptr(), &self.inner);
+            let scalar = scalar.assume_init();
+            blst_bendian_from_scalar(bytes.as_mut_ptr(), &scalar);
+        }
+        bytes
     }
 }

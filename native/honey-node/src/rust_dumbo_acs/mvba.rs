@@ -90,7 +90,10 @@ impl RustDumboAcsHost {
             &Self::pd_sid(&round.sid, leader),
             &roothash,
         );
-        let share = g1_to_bytes(&threshold::sig::sign(&self.crypto.proof_sk, &share_message).value);
+        let share = threshold::sig::sign(&self.crypto.proof_sk, &share_message)
+            .value
+            .to_compressed_bytes()
+            .to_vec();
         if self.pid == leader {
             pd.stored_shares.insert(self.pid, share);
         } else {
@@ -126,7 +129,7 @@ impl RustDumboAcsHost {
             return Ok(false);
         }
         if sender != self.pid {
-            let Ok(value) = g1_from_bytes(&share) else {
+            let Ok(value) = parse_g1_compressed(&share) else {
                 return Ok(false);
             };
             let partial = PartialSignature {
@@ -193,7 +196,10 @@ impl RustDumboAcsHost {
         pd.local_lock = Some(proof.clone());
         round.mvba.locks.entry(leader).or_insert(proof.clone());
         let locked_digest = Self::pd_digest(PD_LOCKED_DOMAIN, &pd_sid, &proof.roothash);
-        let share = g1_to_bytes(&threshold::sig::sign(&self.crypto.proof_sk, &locked_digest).value);
+        let share = threshold::sig::sign(&self.crypto.proof_sk, &locked_digest)
+            .value
+            .to_compressed_bytes()
+            .to_vec();
         if self.pid == leader {
             pd.locked_shares.insert(self.pid, share);
         } else {
@@ -229,7 +235,7 @@ impl RustDumboAcsHost {
         let pd_sid = Self::pd_sid(&round.sid, leader);
         let digest = Self::pd_digest(PD_LOCKED_DOMAIN, &pd_sid, &roothash);
         if sender != self.pid {
-            let Ok(value) = g1_from_bytes(&share) else {
+            let Ok(value) = parse_g1_compressed(&share) else {
                 return Ok(false);
             };
             let partial = PartialSignature {
@@ -311,7 +317,7 @@ impl RustDumboAcsHost {
                 state.local_sent = true;
                 let message = Self::coin_message(&round.sid, scope);
                 let partial = threshold::sig::sign(&self.crypto.coin_sk, &message);
-                let share = g1_to_bytes(&partial.value);
+                let share = partial.value.to_compressed_bytes().to_vec();
                 state.shares.insert(self.pid, share.clone());
                 outbound_share = Some(share);
                 changed = true;
@@ -335,7 +341,7 @@ impl RustDumboAcsHost {
                 .into_iter()
                 .flat_map(|state| state.shares.iter().take(self.coin_threshold()))
                 .map(|(sender, share)| {
-                    let value = g1_from_bytes(share)?;
+                    let value = parse_g1_compressed(&share)?;
                     Ok::<_, String>(PartialSignature {
                         player_id: sender + 1,
                         value,
@@ -345,7 +351,7 @@ impl RustDumboAcsHost {
             let combined =
                 threshold::sig::combine_trusted(&self.crypto.coin_pk, &message, &partials)
                     .map_err(|err| err.to_string())?;
-            let digest = Sha256::digest(g1_to_bytes(&combined));
+            let digest = Sha256::digest(combined.to_compressed_bytes());
             if let Some(state) = round.mvba.coin_states.get_mut(&scope)
                 && state.output.is_none()
             {
@@ -1029,7 +1035,7 @@ impl RustDumboAcsHost {
             return Ok(false);
         }
         let message = Self::coin_message(&round.sid, scope);
-        let value = match g1_from_bytes(&share) {
+        let value = match parse_g1_compressed(&share) {
             Ok(value) => value,
             Err(_) => return Ok(false),
         };

@@ -1,7 +1,8 @@
 use super::fr::Fr;
 use blst::{
-    blst_hash_to_g2, blst_p2, blst_p2_affine, blst_p2_generator, blst_p2_is_equal, blst_p2_mult,
-    blst_p2_to_affine, blst_scalar, blst_scalar_from_fr,
+    BLST_ERROR, blst_hash_to_g2, blst_p2, blst_p2_affine, blst_p2_compress, blst_p2_from_affine,
+    blst_p2_generator, blst_p2_is_equal, blst_p2_mult, blst_p2_to_affine, blst_p2_uncompress,
+    blst_scalar, blst_scalar_from_fr,
 };
 use std::mem::MaybeUninit;
 /// BLS12-381 field/group wrappers
@@ -66,6 +67,30 @@ impl G2 {
             let mut aff = MaybeUninit::<blst_p2_affine>::uninit();
             blst_p2_to_affine(aff.as_mut_ptr(), &self.inner);
             aff.assume_init()
+        }
+    }
+
+    pub fn to_compressed_bytes(&self) -> [u8; 96] {
+        let mut bytes = [0u8; 96];
+        unsafe {
+            blst_p2_compress(bytes.as_mut_ptr(), &self.inner);
+        }
+        bytes
+    }
+
+    pub fn from_compressed_bytes(bytes: &[u8; 96]) -> Result<Self, String> {
+        unsafe {
+            let mut affine = MaybeUninit::<blst_p2_affine>::uninit();
+            let err = blst_p2_uncompress(affine.as_mut_ptr(), bytes.as_ptr());
+            if err != BLST_ERROR::BLST_SUCCESS {
+                return Err("invalid compressed G2 point".into());
+            }
+            let affine = affine.assume_init();
+            let mut inner = MaybeUninit::<blst_p2>::uninit();
+            blst_p2_from_affine(inner.as_mut_ptr(), &affine);
+            Ok(G2 {
+                inner: inner.assume_init(),
+            })
         }
     }
 }
