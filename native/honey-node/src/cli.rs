@@ -173,8 +173,7 @@ where
         .clone()
         .unwrap_or_else(|| String::from("bench:driver:hb"));
     let protocol = resolve_protocol(&file_config, "protocol")?.unwrap_or(Protocol::HoneyBadger);
-    let acs_protocol =
-        resolve_protocol(&file_config, "acs_protocol")?.unwrap_or(Protocol::HoneyBadger);
+    let _ = resolve_protocol(&file_config, "acs_protocol")?.unwrap_or(Protocol::HoneyBadger);
     let nodes = file_config.nodes.unwrap_or(4);
     let faulty = file_config.faulty.unwrap_or(1);
     let rounds = file_config.rounds.unwrap_or(1);
@@ -204,19 +203,16 @@ where
     }
 
     Ok(BenchDriverArgs {
+        config_path,
         mode,
         sid,
         protocol,
-        acs_protocol,
         nodes,
         faulty,
         rounds,
-        batch_size,
         global_timeout,
         config_json,
         result_path,
-        ledger_dir,
-        tx_json,
     })
 }
 
@@ -322,25 +318,13 @@ pool_grace_ms = 125
         assert_eq!(parsed.sid, "bench:file");
         assert_eq!(parsed.nodes, 5);
         assert_eq!(parsed.rounds, 2);
-        assert_eq!(parsed.batch_size, 3);
         assert_eq!(parsed.global_timeout, 45.0);
-        assert_eq!(parsed.ledger_dir.as_deref(), Some("/tmp/ledger"));
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&parsed.config_json).expect("valid JSON"),
             serde_json::json!({
                 "enable_broadcast_pool_reuse": true,
                 "pool_grace_ms": 125,
             })
-        );
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(
-                parsed
-                    .tx_json
-                    .as_deref()
-                    .expect("tx_json should be present")
-            )
-            .expect("valid JSON"),
-            serde_json::json!([["tx-0"], ["tx-1"]])
         );
     }
 

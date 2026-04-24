@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
-_HONEY_NODE_BINARY: Path | None = None
+_HONEY_BENCH_BINARY: Path | None = None
 TxInputMode = Literal["json_str", "bytes"]
 TransportBackend = Literal["tcp", "quic"]
 AcsRuntimeProtocol = Literal["hb", "dumbo"]
@@ -627,25 +627,25 @@ def _configure_logging(log_level: str) -> None:
     )
 
 
-def _build_honey_node_binary() -> Path:
-    global _HONEY_NODE_BINARY
-    if _HONEY_NODE_BINARY is not None and _HONEY_NODE_BINARY.exists():
-        return _HONEY_NODE_BINARY
+def _build_honey_bench_binary() -> Path:
+    global _HONEY_BENCH_BINARY
+    if _HONEY_BENCH_BINARY is not None and _HONEY_BENCH_BINARY.exists():
+        return _HONEY_BENCH_BINARY
     # Allow an explicit override via environment variable (useful for release builds).
-    env_override = os.environ.get("HONEY_NODE_BINARY")
+    env_override = os.environ.get("HONEY_BENCH_BINARY") or os.environ.get("HONEY_NODE_BINARY")
     if env_override:
         override_path = Path(env_override)
         if override_path.exists():
-            _HONEY_NODE_BINARY = override_path
-            return _HONEY_NODE_BINARY
+            _HONEY_BENCH_BINARY = override_path
+            return _HONEY_BENCH_BINARY
     use_release = os.environ.get("HONEY_NODE_RELEASE", "").lower() in ("1", "true", "yes")
-    build_args = ["cargo", "build", "--manifest-path", "native/Cargo.toml", "-p", "honey-node"]
+    build_args = ["cargo", "build", "--manifest-path", "native/Cargo.toml", "-p", "honey-bench"]
     if use_release:
         build_args.append("--release")
     subprocess.run(build_args, check=True)
     profile = "release" if use_release else "debug"
-    _HONEY_NODE_BINARY = Path(f"native/target/{profile}/honey-node")
-    return _HONEY_NODE_BINARY
+    _HONEY_BENCH_BINARY = Path(f"native/target/{profile}/honey-bench")
+    return _HONEY_BENCH_BINARY
 
 
 def _format_toml_key(key: str) -> str:
@@ -723,12 +723,12 @@ def _render_bench_driver_config(
 
 
 def _run_bench_driver(*, config_text: str) -> subprocess.CompletedProcess[str]:
-    binary = _build_honey_node_binary()
+    binary = _build_honey_bench_binary()
     with tempfile.TemporaryDirectory(prefix="honey-bench-driver-") as temp_dir:
         config_path = Path(temp_dir) / "bench-driver.toml"
         config_path.write_text(config_text, encoding="utf-8")
         return subprocess.run(
-            [str(binary), "bench-driver", "--config", str(config_path)],
+            [str(binary), "run", "--config", str(config_path)],
             cwd=Path.cwd(),
             capture_output=True,
             text=True,
@@ -1320,10 +1320,10 @@ def run_local_dumbo_new_driver(
     network_faults: dict[str, Any] | None = None,
     byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> RustDrivenDumboRunResult:
-    """Run the Dumbo BFT protocol using the unified Rust-native ``bench-driver`` entrypoint.
+    """Run the Dumbo BFT protocol using the unified Rust-native ``honey-bench`` entrypoint.
 
     Unlike ``benchmark_local_dumbo_nodes_rust_driven`` which consumes benchmark-style node output,
-    this function writes a temporary TOML config for ``bench-driver`` to manage BroadcastMempool,
+    this function writes a temporary TOML config for ``honey-bench`` to manage BroadcastMempool,
     PoolReference building, and carryover processing fully in Rust.
 
     Args:

@@ -526,6 +526,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "honey-bench"
+version = "0.1.0"
+dependencies = [
+ "honey-node",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "honey-crypto"
 version = "0.1.0"
 dependencies = [

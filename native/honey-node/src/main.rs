@@ -15,22 +15,18 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::fs::{self, File};
-use std::net::TcpListener;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod acs_host;
 mod cli;
 mod drive_acs;
-mod drive_dumbo;
-mod drive_hb;
 mod network_driver;
 mod pool_reuse;
 mod py_host;
-mod runner;
 mod rust_acs;
 mod rust_dumbo_acs;
 mod rust_hb_acs;
@@ -39,7 +35,6 @@ mod threaded_acs_host;
 // Re-export types that live in submodules but must be visible across all drivers
 // via the `use super::*;` pattern used in the submodule files.
 pub(crate) use acs_host::{AcsHost, AcsHostStats, AcsRoundOutcome, AcsWireEvent, build_acs_host};
-pub(crate) use runner::SpawnedNode;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProposalArtifact {
@@ -118,19 +113,16 @@ struct RunDriverNodeArgs {
 }
 
 struct BenchDriverArgs {
+    config_path: String,
     mode: BenchDriverMode,
     sid: String,
     protocol: Protocol,
-    acs_protocol: Protocol,
     nodes: usize,
     faulty: usize,
     rounds: usize,
-    batch_size: usize,
     global_timeout: f64,
     config_json: String,
     result_path: Option<String>,
-    ledger_dir: Option<String>,
-    tx_json: Option<String>,
 }
 
 struct BenchAcsArgs {
@@ -142,35 +134,6 @@ struct BenchAcsArgs {
     global_timeout: f64,
     config_json: String,
     result_path: Option<String>,
-}
-
-struct BenchHoneyBadgerArgs {
-    sid: String,
-    acs_protocol: Protocol,
-    nodes: usize,
-    faulty: usize,
-    rounds: usize,
-    batch_size: usize,
-    global_timeout: f64,
-    config_json: String,
-    result_path: Option<String>,
-}
-
-struct BenchDumboArgs {
-    sid: String,
-    nodes: usize,
-    faulty: usize,
-    rounds: usize,
-    batch_size: usize,
-    global_timeout: f64,
-    config_json: String,
-    result_path: Option<String>,
-    /// Directory to write per-round ledger block files (optional).
-    ledger_dir: Option<String>,
-    /// JSON-encoded per-node transaction lists: `[[tx, ...], ...]`.
-    /// Index 0 = node 0's transactions, consumed `batch_size` per round.
-    /// If absent, deterministic dummy transactions are generated.
-    tx_json: Option<String>,
 }
 
 const GENESIS_CHAIN_DIGEST: [u8; 32] = [0; 32];
@@ -226,8 +189,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_bench_driver(args: BenchDriverArgs) -> Result<(), String> {
+    if !matches!(args.mode, BenchDriverMode::Acs)
+        && let Some(binary) = resolve_honey_bench_binary()
+    {
+        return run_honey_bench_shim(&binary, &args.config_path);
+    }
+
     match args.mode {
-        BenchDriverMode::Benchmark => network_driver::run_bench_rust_driver(args),
+        BenchDriverMode::Benchmark | BenchDriverMode::HoneyBadger | BenchDriverMode::Dumbo => {
+            Err(String::from(
+                "honey-node bench-driver non-ACS modes require honey-bench; use `honey-bench run --config <path>` or set HONEY_BENCH_BINARY",
+            ))
+        }
         BenchDriverMode::Acs => drive_acs::run_drive_acs(BenchAcsArgs {
             protocol: args.protocol,
             sid: args.sid,
@@ -238,30 +211,46 @@ fn run_bench_driver(args: BenchDriverArgs) -> Result<(), String> {
             config_json: args.config_json,
             result_path: args.result_path,
         }),
-        BenchDriverMode::HoneyBadger => drive_hb::run_drive_honeybadger(BenchHoneyBadgerArgs {
-            sid: args.sid,
-            acs_protocol: args.acs_protocol,
-            nodes: args.nodes,
-            faulty: args.faulty,
-            rounds: args.rounds,
-            batch_size: args.batch_size,
-            global_timeout: args.global_timeout,
-            config_json: args.config_json,
-            result_path: args.result_path,
-        }),
-        BenchDriverMode::Dumbo => drive_dumbo::run_drive_dumbo(BenchDumboArgs {
-            sid: args.sid,
-            nodes: args.nodes,
-            faulty: args.faulty,
-            rounds: args.rounds,
-            batch_size: args.batch_size,
-            global_timeout: args.global_timeout,
-            config_json: args.config_json,
-            result_path: args.result_path,
-            ledger_dir: args.ledger_dir,
-            tx_json: args.tx_json,
-        }),
     }
+}
+
+fn resolve_honey_bench_binary() -> Option<PathBuf> {
+    if let Some(value) = std::env::var_os("HONEY_BENCH_BINARY") {
+        let path = PathBuf::from(value);
+        return path.exists().then_some(path);
+    }
+    std::env::current_exe()
+        .ok()
+        .map(|path| path.with_file_name("honey-bench"))
+        .filter(|path| path.exists())
+}
+
+fn run_honey_bench_shim(binary: &Path, config_path: &str) -> Result<(), String> {
+    let output = Command::new(binary)
+        .arg("run")
+        .arg("--config")
+        .arg(config_path)
+        .env(
+            "HONEY_NODE_BINARY",
+            std::env::current_exe().map_err(|err| err.to_string())?,
+        )
+        .output()
+        .map_err(|err| format!("failed to run honey-bench compatibility shim: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.trim().is_empty() {
+            stdout
+        } else {
+            stderr
+        };
+        return Err(format!(
+            "honey-bench compatibility shim failed: {}",
+            detail.trim()
+        ));
+    }
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    Ok(())
 }
 
 fn take_value<I>(argv: &mut I, flag: &str) -> Result<String, String>
@@ -399,56 +388,11 @@ fn serialize_crypto_payloads(
     }
 }
 
-fn allocate_loopback_addresses(num_nodes: usize) -> Result<Vec<(String, u16)>, String> {
-    let mut listeners = Vec::with_capacity(num_nodes);
-    for _ in 0..num_nodes {
-        let listener = TcpListener::bind("127.0.0.1:0").map_err(|err| err.to_string())?;
-        listeners.push(listener);
-    }
-    let addresses = listeners
-        .iter()
-        .map(|listener| {
-            listener
-                .local_addr()
-                .map(|addr| (String::from("127.0.0.1"), addr.port()))
-                .map_err(|err| err.to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(addresses)
-}
-
-fn build_result_dir(prefix: &str, sid: &str) -> Result<PathBuf, String> {
-    let scratch_root = PathBuf::from(".tmp_multiprocess_results");
-    fs::create_dir_all(&scratch_root).map_err(|err| err.to_string())?;
-    let safe_sid: String = sid
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
-        .take(48)
-        .collect();
-    let safe_sid = safe_sid.trim_matches('-');
-    let safe_sid = if safe_sid.is_empty() { "sid" } else { safe_sid };
-    let dir_name = format!(
-        "{prefix}-{safe_sid}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|err| err.to_string())?
-            .as_nanos()
-    );
-    let result_dir = scratch_root.join(dir_name);
-    fs::create_dir_all(&result_dir).map_err(|err| err.to_string())?;
-    Ok(result_dir)
-}
-
 fn current_time_millis() -> Result<u64, String> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|err| err.to_string())?;
     u64::try_from(duration.as_millis()).map_err(|_| String::from("current time overflow"))
-}
-
-fn read_log_file(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_else(|_| String::from("unable to read worker stderr"))
 }
 
 fn write_output(result_path: Option<&str>, rendered: &str) -> Result<(), String> {

@@ -14,7 +14,7 @@ from statistics import fmean
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BINARY = REPO_ROOT / "native" / "target" / "release" / "honey-node"
+DEFAULT_BINARY = REPO_ROOT / "native" / "target" / "release" / "honey-bench"
 DEFAULT_BACKENDS = ("python", "rust_fin")
 DEFAULT_REUSE_MODES = (False, True)
 
@@ -101,7 +101,7 @@ def _render_config(
 
 def _run_case(binary: Path, config_path: Path) -> dict[str, Any]:
     completed = subprocess.run(
-        [str(binary), "bench-driver", "--config", str(config_path)],
+        [str(binary), "run", "--config", str(config_path)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -111,7 +111,7 @@ def _run_case(binary: Path, config_path: Path) -> dict[str, Any]:
         raise RuntimeError(error_text)
     payload = completed.stdout.strip()
     if not payload:
-        raise RuntimeError("bench-driver produced no output")
+        raise RuntimeError("honey-bench produced no output")
     return json.loads(payload)
 
 

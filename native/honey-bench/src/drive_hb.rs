@@ -1,5 +1,4 @@
 use super::*;
-use crate::drive_acs::driver_phase_stats_json;
 
 fn json_array_field<'a>(value: &'a Value, key: &str) -> Result<&'a [Value], String> {
     value
@@ -167,7 +166,10 @@ fn aggregate_driver_phase_stats(
     aggregated
 }
 
-fn run_drive_honeybadger_multiprocess(args: &BenchHoneyBadgerArgs) -> Result<String, String> {
+fn run_drive_honeybadger_multiprocess(
+    args: &BenchHoneyBadgerArgs,
+    node_binary: &Path,
+) -> Result<String, String> {
     debug_acs_driver("hb-mp:serialize_hb_crypto_payloads:start");
     let hb_crypto_payloads =
         serialize_crypto_payloads(Protocol::HoneyBadger, args.nodes, args.faulty)?;
@@ -187,8 +189,7 @@ fn run_drive_honeybadger_multiprocess(args: &BenchHoneyBadgerArgs) -> Result<Str
     let start_at_ms = current_time_millis()?
         .checked_add(5_000)
         .ok_or_else(|| String::from("bench-driver:hb: start time overflow"))?;
-    let binary = std::env::current_exe()
-        .map_err(|err| format!("bench-driver:hb: cannot determine binary path: {err}"))?;
+    let binary = node_binary;
 
     let mut processes: Vec<SpawnedNode> = Vec::with_capacity(args.nodes);
     for pid in 0..args.nodes {
@@ -490,7 +491,7 @@ fn run_drive_honeybadger_multiprocess(args: &BenchHoneyBadgerArgs) -> Result<Str
     .map_err(|err| err.to_string())
 }
 
-pub(crate) fn run_drive_honeybadger(args: BenchHoneyBadgerArgs) -> Result<(), String> {
-    let rendered = run_drive_honeybadger_multiprocess(&args)?;
+pub fn run_drive_honeybadger(args: BenchHoneyBadgerArgs, node_binary: &Path) -> Result<(), String> {
+    let rendered = run_drive_honeybadger_multiprocess(&args, node_binary)?;
     write_output(args.result_path.as_deref(), &rendered)
 }

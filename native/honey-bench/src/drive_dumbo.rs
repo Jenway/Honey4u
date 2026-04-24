@@ -6,7 +6,10 @@ use super::*;
 /// connections. TPKE partial-decryption shares are exchanged directly between
 /// sibling subprocesses over real TCP using the `HbShareBundle` wire frame,
 /// matching the distributed `bench-driver` execution model.
-fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String> {
+fn run_drive_dumbo_multiprocess(
+    args: &BenchDumboArgs,
+    node_binary: &Path,
+) -> Result<String, String> {
     if args.tx_json.is_some() {
         return Err(String::from(
             "bench-driver:dumbo does not support tx_json; only deterministic per-node dummy transactions are supported",
@@ -35,8 +38,7 @@ fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String>
         .checked_add(5_000)
         .ok_or_else(|| String::from("bench-driver:dumbo: start time overflow"))?;
 
-    let binary = std::env::current_exe()
-        .map_err(|e| format!("bench-driver:dumbo: cannot determine binary path: {e}"))?;
+    let binary = node_binary;
 
     let mut processes: Vec<SpawnedNode> = Vec::with_capacity(args.nodes);
     for pid in 0..args.nodes {
@@ -395,7 +397,7 @@ fn run_drive_dumbo_multiprocess(args: &BenchDumboArgs) -> Result<String, String>
     .map_err(|e| e.to_string())
 }
 
-pub(crate) fn run_drive_dumbo(args: BenchDumboArgs) -> Result<(), String> {
-    let rendered = run_drive_dumbo_multiprocess(&args)?;
+pub fn run_drive_dumbo(args: BenchDumboArgs, node_binary: &Path) -> Result<(), String> {
+    let rendered = run_drive_dumbo_multiprocess(&args, node_binary)?;
     write_output(args.result_path.as_deref(), &rendered)
 }
