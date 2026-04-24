@@ -1,6 +1,6 @@
-use honey_crypto::hb;
-use honey_crypto::wire::api::{decode_result, encode_result};
-use honey_crypto::wire::format::TxBatchWire;
+use honey_node::hb;
+use honey_node::wire::api::{decode_result, encode_result};
+use honey_node::wire::format::TxBatchWire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;

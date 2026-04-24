@@ -1,11 +1,11 @@
-use honey_crypto::hb;
-use honey_crypto::wire::api::{
+use honey_node::hb;
+use honey_node::wire::api::{
     decode_result as decode_crypto_result, encode_result as encode_crypto_result,
 };
-use honey_crypto::wire::format::EncryptedBatchWire;
 use honey_node::wire::api::{
     decode_result as decode_protocol_result, encode_result as encode_protocol_result,
 };
+use honey_node::wire::format::EncryptedBatchWire;
 use honey_node::wire::format::{
     AbaPayloadWire, ChannelWire, MessageWire, PdStoreRecordWire, PrbcProofWire,
     ProtocolEnvelopeWire, ThresholdShareProofWire,

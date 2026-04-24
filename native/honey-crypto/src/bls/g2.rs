@@ -3,12 +3,14 @@ use blst::{
     blst_hash_to_g2, blst_p2, blst_p2_affine, blst_p2_generator, blst_p2_is_equal, blst_p2_mult,
     blst_p2_to_affine, blst_scalar, blst_scalar_from_fr,
 };
+use std::mem::MaybeUninit;
 /// BLS12-381 field/group wrappers
 ///
 /// G2: BLS12-381 G2 point (blst_p2, Jacobian coordinates)
 // ── G2 ──────────────────────────────────────────────────────────────────────
 
 /// A point on the BLS12-381 G2 curve (Jacobian coordinates).
+#[repr(transparent)]
 #[derive(Clone, Debug, Copy)]
 pub struct G2 {
     pub(crate) inner: blst_p2,
@@ -22,13 +24,18 @@ impl G2 {
         }
     }
 
+    pub fn identity() -> Self {
+        G2::generator().scalar_mult(&Fr::from_u64(0))
+    }
+
     /// Multiply this point by an Fr scalar.
 
     #[inline]
     pub fn scalar_mult(mut self, s: &Fr) -> G2 {
         unsafe {
-            let mut scalar = std::mem::zeroed::<blst_scalar>();
-            blst_scalar_from_fr(&mut scalar, &s.inner);
+            let mut scalar = MaybeUninit::<blst_scalar>::uninit();
+            blst_scalar_from_fr(scalar.as_mut_ptr(), &s.inner);
+            let scalar = scalar.assume_init();
             // Fr order r is 255 bits
             const FR_BITS: usize = 255;
             blst_p2_mult(&mut self.inner, &self.inner, scalar.b.as_ptr(), FR_BITS);
@@ -38,9 +45,9 @@ impl G2 {
 
     pub fn hash_to_g2(msg: &[u8], dst: &[u8]) -> Self {
         unsafe {
-            let mut p = std::mem::zeroed::<blst_p2>();
+            let mut p = MaybeUninit::<blst_p2>::uninit();
             blst_hash_to_g2(
-                &mut p,
+                p.as_mut_ptr(),
                 msg.as_ptr(),
                 msg.len(),
                 dst.as_ptr(),
@@ -48,15 +55,17 @@ impl G2 {
                 std::ptr::null(),
                 0,
             );
-            G2 { inner: p }
+            G2 {
+                inner: p.assume_init(),
+            }
         }
     }
 
     pub fn to_affine(&self) -> blst_p2_affine {
         unsafe {
-            let mut aff = std::mem::zeroed::<blst_p2_affine>();
-            blst_p2_to_affine(&mut aff, &self.inner);
-            aff
+            let mut aff = MaybeUninit::<blst_p2_affine>::uninit();
+            blst_p2_to_affine(aff.as_mut_ptr(), &self.inner);
+            aff.assume_init()
         }
     }
 }

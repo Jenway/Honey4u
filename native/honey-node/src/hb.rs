@@ -2,18 +2,18 @@ use rand::RngExt;
 use std::collections::{BTreeMap, HashSet};
 use std::thread;
 
-use crate::threshold;
-use crate::threshold::keygen::{
-    Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams,
-};
 use crate::wire::api::{decode_result, encode_result};
 use crate::wire::crypto_wire::{
     CiphertextWire, PartialDecryptionShareWire, PkePrivateKeyShareWire, PkePublicParamsWire,
 };
 use crate::wire::format::{EncryptedBatchWire, TxBatchWire};
-use crate::{aes, ecdsa};
+use honey_crypto::threshold;
+use honey_crypto::threshold::keygen::{
+    Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams,
+};
+use honey_crypto::{aes, ecdsa};
 
-pub use crate::threshold::keygen::{
+pub use honey_crypto::threshold::keygen::{
     PartialDecryptionShare as HbPartialDecryptionShare, PkePrivateKeyShare as HbPkePrivateKeyShare,
     PkePublicParams as HbPkePublicParams,
 };
@@ -366,7 +366,7 @@ pub fn ecdsa_verify_threshold_sigs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::threshold::keygen::generate_pke_keys;
+    use honey_crypto::threshold::keygen::generate_pke_keys;
 
     #[test]
     fn test_hb_block_round_trip_and_merge() {

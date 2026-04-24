@@ -2,12 +2,9 @@ use crate::crypto_error::CryptoError;
 
 use serde::{Deserialize, Serialize};
 
-use crate::bls::{
-    fr::Fr,
-    g1::G1,
-    g2::G2,
-    poly::{poly_eval, random_poly},
-};
+use crate::bls::{fr::Fr, g1::G1, g2::G2};
+use blst::{blst_fr, blst_fr_add, blst_fr_mul};
+use rand;
 
 // ── Types for Threshold Signatures (pk∈G2, sig∈G1) ──────────────────────────
 
@@ -76,6 +73,23 @@ pub struct PartialDecryptionShare {
     pub value: G1,
 }
 
+/// Evaluate a polynomial at x using Horner's method.
+/// coeffs[0] is the constant term.
+pub fn poly_eval(coeffs: &[Fr], x: &Fr) -> Fr {
+    if coeffs.is_empty() {
+        return Fr::from_u64(0);
+    }
+    let mut result = coeffs[coeffs.len() - 1];
+    unsafe {
+        let mut tmp = std::mem::MaybeUninit::<blst_fr>::uninit();
+        for c in coeffs[..coeffs.len() - 1].iter().rev() {
+            blst_fr_mul(tmp.as_mut_ptr(), &result.inner, &x.inner);
+            blst_fr_add(&mut result.inner, tmp.as_mut_ptr(), &c.inner);
+        }
+    }
+    result
+}
+
 // ── Key generation (generic) ─────────────────────────────────────────────────
 
 /// Generate key material for threshold signatures.
@@ -84,7 +98,8 @@ pub fn generate_sig_keys(n: usize, k: usize) -> Result<SigKeySet, CryptoError> {
     if k < 1 || k > n {
         return Err(CryptoError::InvalidArgument("k must be 1..=n".into()));
     }
-    let poly = random_poly(k);
+    let rng = &mut rand::rng();
+    let poly: Vec<Fr> = (0..k).map(|_| Fr::random(rng)).collect();
     let master_secret = poly[0];
     let master_pk = G2::generator().scalar_mult(&master_secret);
 
@@ -119,7 +134,8 @@ pub fn generate_pke_keys(n: usize, k: usize) -> Result<PkeKeySet, CryptoError> {
     if k < 1 || k > n {
         return Err(CryptoError::InvalidArgument("k must be 1..=n".into()));
     }
-    let poly = random_poly(k);
+    let rng = &mut rand::rng();
+    let poly: Vec<Fr> = (0..k).map(|_| Fr::random(rng)).collect();
     let master_secret = poly[0];
     let master_pk = G1::generator().scalar_mult(&master_secret);
 

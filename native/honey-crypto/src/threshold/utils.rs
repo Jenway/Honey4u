@@ -1,10 +1,11 @@
 use crate::bls::{fr::Fr, g1::G1, g2::G2};
 use blst::{
-    blst_bendian_from_scalar, blst_p1_compress, blst_p1_to_affine, blst_p2, blst_p2_affine,
-    blst_p2_compress, blst_p2_from_affine, blst_p2_uncompress, blst_scalar, blst_scalar_from_fr,
+    blst_bendian_from_scalar, blst_p1_compress, blst_p2, blst_p2_affine, blst_p2_compress,
+    blst_p2_from_affine, blst_p2_uncompress, blst_scalar, blst_scalar_from_fr,
 };
 use sha2::{Digest, Sha256};
 use std::convert::TryInto;
+use std::mem::MaybeUninit;
 
 pub fn hash_g(p: &G1) -> [u8; 32] {
     let mut compressed = [0u8; 48];
@@ -39,8 +40,9 @@ pub fn g1_to_bytes(p: &G1) -> Vec<u8> {
 pub fn fr_to_bytes(value: &Fr) -> Vec<u8> {
     let mut bytes = [0u8; 32];
     unsafe {
-        let mut scalar = std::mem::zeroed::<blst_scalar>();
-        blst_scalar_from_fr(&mut scalar, &value.inner);
+        let mut scalar = MaybeUninit::<blst_scalar>::uninit();
+        blst_scalar_from_fr(scalar.as_mut_ptr(), &value.inner);
+        let scalar = scalar.assume_init();
         blst_bendian_from_scalar(bytes.as_mut_ptr(), &scalar);
     }
     bytes.to_vec()
@@ -57,18 +59,19 @@ pub fn g1_from_bytes(bytes: &[u8]) -> Result<G1, String> {
     if bytes.len() != 48 {
         return Err(format!("expected 48 bytes for G1, got {}", bytes.len()));
     }
-    let mut p = G1::identity();
     unsafe {
-        let mut p_affine = std::mem::zeroed::<blst::blst_p1_affine>();
-        blst_p1_to_affine(&mut p_affine, &p.inner);
-
-        let res = blst::blst_p1_uncompress(&mut p_affine, bytes.as_ptr());
+        let mut p_affine = MaybeUninit::<blst::blst_p1_affine>::uninit();
+        let res = blst::blst_p1_uncompress(p_affine.as_mut_ptr(), bytes.as_ptr());
         if res != blst::BLST_ERROR::BLST_SUCCESS {
             return Err("invalid G1 point bytes".into());
         }
-        blst::blst_p1_from_affine(&mut p.inner, &p_affine);
+        let p_affine = p_affine.assume_init();
+        let mut inner = MaybeUninit::<blst::blst_p1>::uninit();
+        blst::blst_p1_from_affine(inner.as_mut_ptr(), &p_affine);
+        Ok(G1 {
+            inner: inner.assume_init(),
+        })
     }
-    Ok(p)
 }
 
 pub fn g2_to_bytes(p: &G2) -> Vec<u8> {
@@ -85,14 +88,17 @@ pub fn g2_from_bytes(bytes: &[u8]) -> Result<G2, String> {
     }
 
     unsafe {
-        let mut p_affine = std::mem::zeroed::<blst_p2_affine>();
-        let res = blst_p2_uncompress(&mut p_affine, bytes.as_ptr());
+        let mut p_affine = MaybeUninit::<blst_p2_affine>::uninit();
+        let res = blst_p2_uncompress(p_affine.as_mut_ptr(), bytes.as_ptr());
         if res != blst::BLST_ERROR::BLST_SUCCESS {
             return Err("invalid G2 point bytes".into());
         }
+        let p_affine = p_affine.assume_init();
 
-        let mut inner = std::mem::zeroed::<blst_p2>();
-        blst_p2_from_affine(&mut inner, &p_affine);
-        Ok(G2 { inner })
+        let mut inner = MaybeUninit::<blst_p2>::uninit();
+        blst_p2_from_affine(inner.as_mut_ptr(), &p_affine);
+        Ok(G2 {
+            inner: inner.assume_init(),
+        })
     }
 }

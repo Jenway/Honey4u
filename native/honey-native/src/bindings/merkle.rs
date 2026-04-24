@@ -1,6 +1,6 @@
 use honey_crypto::merkle;
-use honey_crypto::wire::api::{decode_result, encode_result};
-use honey_crypto::wire::format::{EncodedShardWire, MerkleProofWire, MerkleResultWire};
+use honey_node::wire::api::{decode_result, encode_result};
+use honey_node::wire::format::{EncodedShardWire, MerkleProofWire, MerkleResultWire};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

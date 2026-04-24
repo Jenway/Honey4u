@@ -1,8 +1,8 @@
 use honey_crypto::threshold;
 use honey_crypto::threshold::keygen::PartialSignature;
 use honey_crypto::threshold::utils::{g1_from_bytes, g1_to_bytes};
-use honey_crypto::wire::api::{decode_result, encode_result};
-use honey_crypto::wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
+use honey_node::wire::api::{decode_result, encode_result};
+use honey_node::wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 

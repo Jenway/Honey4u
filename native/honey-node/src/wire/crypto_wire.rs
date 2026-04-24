@@ -1,10 +1,10 @@
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::threshold::keygen::{
+use honey_crypto::threshold::keygen::{
     Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams, SigPrivateKeyShare,
     SigPublicParams,
 };
-use crate::threshold::utils::{
+use honey_crypto::threshold::utils::{
     fr_from_bytes, fr_to_bytes, g1_from_bytes, g1_to_bytes, g2_from_bytes, g2_to_bytes,
 };
 

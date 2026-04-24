@@ -10,7 +10,8 @@ use crate::bls::{
 
 /// Encrypt a 32-byte message under the master public key.
 pub fn seal(mpk: &G1, msg: [u8; 32]) -> Ciphertext {
-    let r = Fr::random();
+    let rng = &mut rand::rng();
+    let r = Fr::random(rng);
 
     // U = r·G1
     let u = G1::generator().scalar_mult(&r);

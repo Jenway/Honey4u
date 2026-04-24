@@ -2,12 +2,12 @@ use k256::ecdsa::SigningKey;
 use k256::elliptic_curve::rand_core::OsRng;
 use serde_json::json;
 
-use crate::ecdsa;
-use crate::threshold;
 use crate::wire::api::encode_result;
 use crate::wire::crypto_wire::{
     PkePrivateKeyShareWire, PkePublicParamsWire, SigPrivateKeyShareWire, SigPublicParamsWire,
 };
+use honey_crypto::ecdsa;
+use honey_crypto::threshold;
 
 fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()

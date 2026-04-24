@@ -6,7 +6,7 @@
 ///
 /// The JSON schema mirrors the format expected by `build_crypto_params_from_json`
 /// in `honey_acs/host_crypto.py`.
-use honey_crypto::host_crypto::{
+use honey_node::host_crypto::{
     generate_dumbo_crypto_payloads_json as generate_dumbo_crypto_payloads_json_rust,
     generate_hb_crypto_payloads_json as generate_hb_crypto_payloads_json_rust,
 };

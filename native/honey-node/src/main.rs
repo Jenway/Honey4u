@@ -1,11 +1,11 @@
-use honey_crypto::hb::{
+use honey_node::hb::{
     BatchDecryptor as HbBatchDecryptor, HbPkePrivateKeyShare, HbPkePublicParams,
     decode_pke_private_share, decode_pke_public_params, decode_tx_batch as decode_hb_tx_batch,
     encode_json_string as encode_hb_json_string, encode_tx_batch as encode_hb_tx_batch,
     merge_tx_batches_bytes as merge_hb_tx_batches_bytes,
     seal_encrypted_batch as seal_hb_encrypted_batch,
 };
-use honey_crypto::host_crypto::{
+use honey_node::host_crypto::{
     generate_dumbo_crypto_payloads_json, generate_hb_crypto_payloads_json,
 };
 use pyo3::prelude::*;
