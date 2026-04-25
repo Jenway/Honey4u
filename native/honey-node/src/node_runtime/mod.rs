@@ -11,6 +11,7 @@ pub(crate) mod crypto;
 pub(crate) mod digest;
 pub(crate) mod io;
 pub(crate) mod phase_stats;
+pub(super) mod pool_reuse;
 mod result;
 mod round;
 mod types;

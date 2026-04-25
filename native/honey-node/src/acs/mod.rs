@@ -3,13 +3,12 @@ pub(crate) mod backends;
 pub(crate) mod harness;
 pub(crate) mod proposal;
 pub(crate) mod protocol;
-pub(crate) mod python;
 pub(crate) mod threaded;
 
+use self::backends::python::PyAcsBackend;
 use self::backends::rust_dumbo::RustDumboAcsBackend;
 use self::backends::rust_fin::RustAcsBackend;
 use self::backends::rust_hb::RustHbAcsBackend;
-use self::python::PyAcsBackend;
 use self::threaded::ThreadedAcsBackend;
 use crate::acs::proposal::AvailableProposal;
 use crate::acs::protocol::AcsProtocol;

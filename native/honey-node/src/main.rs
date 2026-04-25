@@ -2,7 +2,6 @@ mod acs;
 mod cli;
 mod codec;
 mod node_runtime;
-mod pool_reuse;
 
 #[cfg(test)]
 pub(crate) use acs::AcsRoundOutcome;
