@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "native/honey-crypto",
+    "native/honey-native",
+    "native/honey-node",
+    "benchmarks/honey-bench",
+]
+resolver = "2"

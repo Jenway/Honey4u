@@ -14,7 +14,7 @@
 - Current benchmark work is centered on four entrypoints: `benchmarks/cli/tps.py` for general TPS/latency runs, `benchmarks/cli/dumbo_reuse_sweep.py` for reuse on/off sweeps, `benchmarks/cli/dumbo_backend_reuse_compare.py` for Python-vs-Rust backend comparisons, and `benchmarks/cli/dumbo_paper_suite.py` for thesis-oriented experiment batches.
 - Checked-in benchmark evidence currently covers large Dumbo reuse sweeps and a backend comparison between `python` and `rust_fin`. In the current workspace, archived local formal reruns now exist under `benchmarks/results/paper-final-highload-20260421T182250Z/`, `benchmarks/results/paper-final-grace-python-20260421T191900Z/`, `benchmarks/results/paper-final-boundary-20260421T180132Z/`, `benchmarks/results/paper-final-network-jitter-20260422T000021Z/`, and `benchmarks/results/paper-final-network-fixed-delay-20260422T020028Z/`; there is still no archived `rust_dumbo` comparison.
 - The current worktree also includes controlled runtime fault injection at the `rust-driver` boundary: network faults (`fixed_delay_ms`, `jitter_ms`, `slow_honest`) and initial Byzantine node behaviors (`silent`, `invalid_fetch_response`). Treat those capabilities as implemented tooling. Minimal archived evidence now exists for the slow-honest and two initial byzantine scenarios, but do not generalize that to full WAN or broad Byzantine robustness claims.
-- A top-level Rust workspace exists at `native/Cargo.toml` with three members: `honey-crypto`, `honey-native`, and `honey-node`.
+- A top-level Rust workspace exists at `Cargo.toml` (project root) with four members: `native/honey-crypto`, `native/honey-native`, `native/honey-node`, and `benchmarks/honey-bench`.
 - `native/honey-native/src/bindings/ledger.rs` and the Python bridge add optional SQLite-backed block persistence and chain-digest tracking.
 - The project scope is intentionally limited to ACS-based asynchronous BFT in the HoneyBadger/Dumbo family; do not preserve extensibility for DAG-style, dispersed-ledger, or unrelated consensus families unless the task explicitly requires it.
 - HoneyBadger outer orchestration, ACS scheduling, and other runtime-facing control logic are valid Rust-downshift targets; agents should not keep them in Python just to preserve a generic or overly extensible framework shape.
@@ -34,7 +34,7 @@
 - The rust-driver broadcast mempool runtime lives in `native/honey-node/src/pool_reuse.rs`; Python-side configuration for it flows through `packages/honey-acs/src/honey_acs/params.py`.
 - Telemetry and metrics live in `packages/honey-acs/src/honey_acs/telemetry.py`.
 - Protocol exceptions live in `packages/honey-acs/src/honey_acs/exceptions.py`.
-- The native Rust workspace lives under `native/`; `native/honey-crypto/` is the shared crypto library, `native/honey-native/` builds the `honey-native` PyO3 package, and `native/honey-node/` contains the Rust-hosted node binary plus the Rust-native ACS backends.
+- The Rust workspace is defined at the project root `Cargo.toml`; `native/honey-crypto/` is the shared crypto library, `native/honey-native/` builds the `honey-native` PyO3 package, `native/honey-node/` contains the Rust-hosted node binary plus the Rust-native ACS backends, and `benchmarks/honey-bench/` is the Rust benchmark orchestrator that spawns `honey-node` subprocesses.
 - `native/honey-node/src/network_driver.rs` is the rust-driver entry module; its detailed logic is split across `native/honey-node/src/network_driver/`.
 - `native/honey-node/src/rust_acs.rs` is the FIN-style ACS host root; protocol logic is split across `native/honey-node/src/rust_acs/`.
 - `native/honey-node/src/rust_dumbo_acs.rs` is the Rust-native Dumbo ACS host root; protocol logic is split across `native/honey-node/src/rust_dumbo_acs/`.
@@ -116,7 +116,7 @@
 - Install or refresh the full dev environment: `uv sync --dev --locked`
 - CI-equivalent bootstrap for native builds:
   `export PYO3_PYTHON="$(python -c 'import sys; print(sys.executable)')" && uv sync --dev --locked`
-- Build the full native workspace: `cargo build --manifest-path native/Cargo.toml`
+- Build the full Rust workspace: `cargo build`
 - Build the root Python package wheel/sdist if needed: `uv build`
 - Compile the current thesis manuscript PDF: `typst compile paper/main-codex-refer.typ`
 - Compile the template/demo PDF: `typst compile paper/main.typ`
@@ -128,9 +128,9 @@
 - Python format check: `uv run ruff format --check .`
 - Python format rewrite: `uv run ruff format .`
 - Python typecheck: `uv run ty check`
-- Rust workspace format check: `cargo fmt --manifest-path native/Cargo.toml --all --check`
-- Rust workspace format rewrite: `cargo fmt --manifest-path native/Cargo.toml --all`
-- Rust workspace lint: `cargo clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings`
+- Rust workspace format check: `cargo fmt --all --check`
+- Rust workspace format rewrite: `cargo fmt --all`
+- Rust workspace lint: `cargo clippy --workspace --all-targets -- -D warnings`
 
 ## Test Commands
 - Run the full Python suite: `uv run pytest`
@@ -138,15 +138,15 @@
 - Run one Python test by node id: `uv run pytest tests/acs/test_acs.py::test_acs_run_single_round`
 - Run Python tests matching a pattern: `uv run pytest -k pool_reuse`
 - Run ACS host and local-node integration tests: `uv run pytest tests/runtime/`
-- Run the full Rust suite the same way CI does: `cargo nextest run --manifest-path native/Cargo.toml --workspace`
-- Run one Rust test by filter with nextest: `cargo nextest run --manifest-path native/Cargo.toml --workspace -E 'test(seal_and_open)'`
-- Run one Rust test exactly with `cargo test`: `cargo test --manifest-path native/Cargo.toml --workspace test_seal_and_open_success -- --exact`
+- Run the full Rust suite the same way CI does: `cargo nextest run --workspace`
+- Run one Rust test by filter with nextest: `cargo nextest run --workspace -E 'test(seal_and_open)'`
+- Run one Rust test exactly with `cargo test`: `cargo test --workspace test_seal_and_open_success -- --exact`
 
 ## Command Notes
 - First-time Python test runs may build the `honey-native` extension because the root package depends on the Rust workspace member.
-- The Python package consumes `native/honey-native` through the `uv` workspace; the broader native workspace is defined in `native/Cargo.toml`.
-- Building the root native workspace pulls in all three crates (`honey-crypto`, `honey-native`, `honey-node`); keep `native/Cargo.lock` in sync if a workspace dependency changes.
-- Running native workspace commands may create or refresh `native/Cargo.lock` and `native/target/`; treat both as generated unless the task explicitly includes workspace lock updates.
+- The Python package consumes `native/honey-native` through the `uv` workspace; the Rust workspace is defined at the project root `Cargo.toml`.
+- Building the Rust workspace pulls in all four crates (`honey-crypto`, `honey-native`, `honey-node`, `honey-bench`); keep the root `Cargo.lock` in sync if a workspace dependency changes.
+- Running Rust workspace commands may create or refresh `Cargo.lock` and `target/`; treat both as generated unless the task explicitly includes workspace lock updates.
 - `honey-node bench-driver` is config-file driven. Prefer editing or generating TOML benchmark configs rather than extending the CLI argument surface.
 - The internal `run-driver-node` command still uses explicit flags because it is spawned by the benchmark driver, not by end users.
 - `ty` is configured with `error-on-warning = true`, so warnings should be treated as failures.
@@ -256,5 +256,5 @@
 - When editing mixed Python/Rust features, keep Python-side types and Rust-side wire formats synchronized.
 - Do not collapse the newly split Rust backend modules back into giant single files. If a protocol submodule becomes too large, split it again by responsibility rather than re-centralizing it.
 - When identifying reuse across Rust ACS backends, prefer extracting only low-risk shared shell/helper code first, such as wire envelope helpers, outbound queue helpers, counters, or threshold-coin utilities. Do not force protocol-core generic abstractions unless the benefit is clear and the invariants line up.
-- When reviewing or staging changes, separate source edits from generated artifacts such as `native/target/`, `.codex`, and ad hoc benchmark result directories.
+- When reviewing or staging changes, separate source edits from generated artifacts such as `target/`, `.codex`, and ad hoc benchmark result directories.
 - After changes, run the narrowest relevant checks first, then the broader suite if the change has cross-cutting impact.

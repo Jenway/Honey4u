@@ -17,7 +17,7 @@ from statistics import fmean
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BINARY = REPO_ROOT / "native" / "target" / "release" / "honey-bench"
+DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "honey-bench"
 DEFAULT_SUITE_CONFIG = REPO_ROOT / "benchmarks" / "configs" / "paper" / "dumbo_comprehensive.toml"
 
 SUPPORTED_BACKENDS = {"python", "rust_fin", "rust_dumbo"}

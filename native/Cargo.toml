@@ -1,3 +1,0 @@
-[workspace]
-members = ["honey-crypto", "honey-native", "honey-node", "honey-bench"]
-resolver = "2"

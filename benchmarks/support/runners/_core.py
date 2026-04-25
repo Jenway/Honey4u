@@ -639,12 +639,12 @@ def _build_honey_bench_binary() -> Path:
             _HONEY_BENCH_BINARY = override_path
             return _HONEY_BENCH_BINARY
     use_release = os.environ.get("HONEY_NODE_RELEASE", "").lower() in ("1", "true", "yes")
-    build_args = ["cargo", "build", "--manifest-path", "native/Cargo.toml", "-p", "honey-bench"]
+    build_args = ["cargo", "build", "-p", "honey-bench"]
     if use_release:
         build_args.append("--release")
     subprocess.run(build_args, check=True)
     profile = "release" if use_release else "debug"
-    _HONEY_BENCH_BINARY = Path(f"native/target/{profile}/honey-bench")
+    _HONEY_BENCH_BINARY = Path(f"target/{profile}/honey-bench")
     return _HONEY_BENCH_BINARY
 
 
@@ -1103,6 +1103,7 @@ def benchmark_local_honeybadger_nodes_rust_driven(
             "hb_broadcast_protocol": hb_broadcast_protocol,
         }
     config_payload = dict(acs_config_payload or {})
+    config_payload["acs_host_backend"] = "python"
     config_payload["broadcast_mempool_backend"] = broadcast_mempool_backend
     config_payload["pool_mempool_max"] = pool_mempool_max
     return _benchmark_rust_driver_nodes(
@@ -1162,6 +1163,7 @@ def benchmark_local_dumbo_nodes_rust_driven(
         acs_protocol="dumbo",
         config_payload=_inject_runtime_faults(
             {
+                "acs_host_backend": "python",
                 "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
                 "enable_pool_reference_proposals": enable_pool_reference_proposals,
                 "enable_pool_fetch_fallback": enable_pool_fetch_fallback,
@@ -1194,6 +1196,7 @@ def run_local_honeybadger_acs_rust_driven(
         global_timeout=global_timeout,
         config_payload=_inject_runtime_faults(
             {
+                "acs_host_backend": "python",
                 "hb_broadcast_protocol": hb_broadcast_protocol,
                 "broadcast_mempool_backend": broadcast_mempool_backend,
                 "pool_mempool_max": pool_mempool_max,
@@ -1231,6 +1234,7 @@ def run_local_honeybadger_rust_driven(
             "hb_broadcast_protocol": hb_broadcast_protocol,
         }
     config_payload = dict(acs_config_payload or {})
+    config_payload["acs_host_backend"] = "python"
     config_payload["broadcast_mempool_backend"] = broadcast_mempool_backend
     config_payload["pool_mempool_max"] = pool_mempool_max
     return _run_rust_driven_honeybadger(
@@ -1266,6 +1270,7 @@ def run_local_dumbo_rust_driven(
         global_timeout=global_timeout,
         config_payload=_inject_runtime_faults(
             {
+                "acs_host_backend": "python",
                 "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
                 "pool_grace_ms": pool_grace_ms,
             },
@@ -1287,6 +1292,7 @@ def run_local_dumbo_acs_rust_driven(
     byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> RustDrivenAcsRunResult:
     config_payload: dict[str, Any] = {
+        "acs_host_backend": "python",
         "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
         "pool_grace_ms": pool_grace_ms,
     }
@@ -1333,6 +1339,7 @@ def run_local_dumbo_new_driver(
             Each inner list must contain at least ``batch_size * max_rounds`` entries.
     """
     config_payload: dict[str, Any] = {
+        "acs_host_backend": "python",
         "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
         "enable_pool_reference_proposals": enable_pool_reference_proposals,
         "enable_pool_fetch_fallback": enable_pool_fetch_fallback,

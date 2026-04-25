@@ -100,7 +100,7 @@ See these files for the current authoritative status:
 
 ```bash
 uv sync --dev --locked
-cargo build --manifest-path native/Cargo.toml
+cargo build
 uv run pytest tests/runtime/
 uv run python benchmarks/cli/dumbo_paper_suite.py \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \

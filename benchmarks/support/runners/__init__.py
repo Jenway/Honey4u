@@ -1,7 +1,7 @@
 """Runner helpers used by benchmark CLIs and runtime tests."""
 
 from benchmarks.support.runners._core import (
-    _build_honey_node_binary,
+    _build_honey_bench_binary,
 )
 from benchmarks.support.runners.results import (
     MetricTimingSummary,
@@ -48,7 +48,7 @@ __all__ = [
     "RustDrivenHoneyBadgerRoundResult",
     "RustDrivenHoneyBadgerRunResult",
     "TransportStats",
-    "_build_honey_node_binary",
+    "_build_honey_bench_binary",
     "benchmark_local_dumbo_nodes_rust_driven",
     "benchmark_local_honeybadger_nodes_rust_driven",
     "run_local_dumbo_acs_rust_driven",

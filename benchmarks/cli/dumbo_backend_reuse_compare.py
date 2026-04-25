@@ -14,7 +14,7 @@ from statistics import fmean
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_BINARY = REPO_ROOT / "native" / "target" / "release" / "honey-bench"
+DEFAULT_BINARY = REPO_ROOT / "target" / "release" / "honey-bench"
 DEFAULT_BACKENDS = ("python", "rust_fin")
 DEFAULT_REUSE_MODES = (False, True)
 

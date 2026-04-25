@@ -26,15 +26,15 @@ repos:
         files: ^(pyproject\.toml|src/.*\.py|tests/.*\.py)$
 
       - id: cargo-fmt-check
-        name: cargo fmt --check (native)
-        entry: cargo fmt --manifest-path native/Cargo.toml --all --check
+        name: cargo fmt --check
+        entry: cargo fmt --all --check
         language: system
         pass_filenames: false
-        files: ^native/(Cargo\.toml|Cargo\.lock|.*\.rs)$
+        files: ^(Cargo\.(toml|lock)|native/.*\.rs|benchmarks/honey-bench/.*\.rs)$
 
       - id: cargo-clippy
-        name: cargo clippy (native)
-        entry: cargo clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings
+        name: cargo clippy
+        entry: cargo clippy --workspace --all-targets -- -D warnings
         language: system
         pass_filenames: false
-        files: ^native/(Cargo\.toml|Cargo\.lock|.*\.rs)$
+        files: ^(Cargo\.(toml|lock)|native/.*\.rs|benchmarks/honey-bench/.*\.rs)$
