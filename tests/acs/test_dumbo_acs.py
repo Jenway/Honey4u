@@ -2,9 +2,22 @@ from __future__ import annotations
 
 import asyncio
 
+import honey_native
 import pytest
-from honey_acs.crypto import ecdsa, sig
 from honey_acs.dumbo.dumbo_acs import DumboACSParams, dumbo_acs
+from honey_acs.runtime.native import (
+    NativeMerkleRuntime,
+    NativePrbcCryptoRuntime,
+    NativeThresholdSignatureRuntime,
+)
+
+MERKLE = NativeMerkleRuntime()
+
+
+def _threshold_runtimes(players: int, threshold: int) -> list[NativeThresholdSignatureRuntime]:
+    pk, sks = honey_native.sig_generate(players, threshold)
+    pk_bytes = pk.to_bytes()
+    return [NativeThresholdSignatureRuntime.from_bytes(pk_bytes, sk.to_bytes()) for sk in sks]
 
 
 def _network_sender(
@@ -21,9 +34,9 @@ def _network_sender(
 async def test_dumbo_acs_agrees_on_prbc_selected_values() -> None:
     n = 4
     f = 1
-    coin_pk, coin_sks = sig.generate(n, f + 1)
-    proof_pk, proof_sks = sig.generate(n, n - f)
-    ecdsa_pks, ecdsa_sks = ecdsa.generate(n)
+    coin_runtimes = _threshold_runtimes(n, f + 1)
+    proof_runtimes = _threshold_runtimes(n, n - f)
+    ecdsa_pks, ecdsa_sks = honey_native.ecdsa_generate_keys(n)
 
     recv_queues = [asyncio.Queue() for _ in range(n)]
     input_queues = [asyncio.Queue(1) for _ in range(n)]
@@ -45,12 +58,10 @@ async def test_dumbo_acs_agrees_on_prbc_selected_values() -> None:
                             N=n,
                             f=f,
                             leader=0,
-                            coin_pk=coin_pk,
-                            coin_sk=coin_sks[pid],
-                            proof_pk=proof_pk,
-                            proof_sk=proof_sks[pid],
-                            ecdsa_pks=ecdsa_pks,
-                            ecdsa_sk=ecdsa_sks[pid],
+                            coin=coin_runtimes[pid],
+                            proof=proof_runtimes[pid],
+                            merkle=MERKLE,
+                            prbc=NativePrbcCryptoRuntime(ecdsa_pks, ecdsa_sks[pid]),
                         ),
                         input_queues[pid],
                         decide_queues[pid],

@@ -7,6 +7,7 @@ from typing import cast
 import honey_native
 from honey_acs.host_bridge import PersistentAcsHost, build_persistent_acs_host
 from honey_acs.messages import ProtocolEnvelope
+from honey_acs.runtime.native import NativePrbcCryptoRuntime
 from honey_acs.subprotocols.provable_reliable_broadcast import (
     deserialize_prbc_proof,
     validate_prbc_proof,
@@ -304,7 +305,7 @@ def test_persistent_hb_acs_host_supports_prbc_broadcast_mode() -> None:
                     f"{round_sid}CSRBC{proposer}",
                     num_nodes,
                     faulty,
-                    ecdsa_pks,
+                    NativePrbcCryptoRuntime(ecdsa_pks),
                     proof,
                 )
     finally:

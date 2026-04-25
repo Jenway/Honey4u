@@ -15,8 +15,8 @@ def ba_network(signing_keys):
     """
 
     def _make(tg: asyncio.TaskGroup, inputs: list[int], N=4, f=1, sid="test_ba"):
-        # 依赖于 conftest.py (或本模块) 提供的真实门限签名密钥 fixture
-        pk, sks = signing_keys
+        # 依赖于 conftest.py 提供的真实门限签名 runtime fixture
+        runtimes = signing_keys
 
         # 1. BA 协议专属队列
         input_qs = [asyncio.Queue(1) for _ in range(N)]
@@ -34,7 +34,7 @@ def ba_network(signing_keys):
 
         # 初始化真实的 SharedCoin
         coins = [
-            SharedCoin(CoinParams(sid=sid, pid=i, N=N, f=f, leader=0, PK=pk, SK=sks[i]))
+            SharedCoin(CoinParams(sid=sid, pid=i, N=N, f=f, leader=0, crypto=runtimes[i]))
             for i in range(N)
         ]
 

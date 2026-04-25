@@ -2,7 +2,6 @@ import os
 
 import honey_native
 import pytest
-from honey_acs.crypto import merkle
 from honey_acs.dumbo.dumbo_acs import DumboProofDiffuse
 from honey_acs.exceptions import SerializationError
 from honey_acs.messages import (
@@ -214,10 +213,15 @@ def test_merkle_decode_from_dicts_matches_object_path() -> None:
     k = num_nodes - 2 * faulty
     payload = encode_tx_batch([encode_tx(f"tx-{i}") for i in range(6)])
 
-    root, shards, proofs = merkle.encode(payload, k, num_nodes)
-    available = [honey_native.EncodedShard(i, shards[i], proofs[i]) for i in range(k)]
-    stripe_map = {i: shards[i] for i in range(k)}
-    proof_map = {i: proofs[i].to_bytes() for i in range(k)}
+    encoded = honey_native.merkle_encode(payload, k, num_nodes)
+    available = [
+        honey_native.EncodedShard(i, encoded.shards[i], encoded.proofs[i]) for i in range(k)
+    ]
+    stripe_map = {i: encoded.shards[i] for i in range(k)}
+    proof_map = {i: encoded.proofs[i].to_bytes() for i in range(k)}
 
-    assert merkle.decode(available, root, k, num_nodes) == payload
-    assert merkle.decode_from_dicts(stripe_map, proof_map, root, k, num_nodes) == payload
+    assert honey_native.merkle_decode(available, encoded.root, k, num_nodes) == payload
+    assert (
+        honey_native.merkle_decode_dicts(stripe_map, proof_map, encoded.root, k, num_nodes)
+        == payload
+    )

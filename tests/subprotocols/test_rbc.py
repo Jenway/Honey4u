@@ -2,10 +2,15 @@ import asyncio
 import json
 
 import pytest
-from honey_acs.crypto.merkle import encode
 from honey_acs.messages import RbcEcho, RbcReady, RbcVal
-from honey_acs.params import CommonParams
-from honey_acs.subprotocols.reliable_broadcast import RbcOutput, reliablebroadcast
+from honey_acs.runtime.native import NativeMerkleRuntime
+from honey_acs.subprotocols.reliable_broadcast import BroadcastParams, RbcOutput, reliablebroadcast
+
+MERKLE = NativeMerkleRuntime()
+
+
+def _rbc_params(sid: str, pid: int, num_nodes: int, faulty: int, leader: int) -> BroadcastParams:
+    return BroadcastParams(sid=sid, pid=pid, N=num_nodes, f=faulty, leader=leader, merkle=MERKLE)
 
 
 async def msg_router(sender_idx: int, send_queues: list, recv_queues: list):
@@ -59,7 +64,7 @@ async def test_rbc_single_leader():
 
     tasks = []
     for pid in range(num_nodes):
-        params = CommonParams(sid=sid, pid=pid, N=num_nodes, f=faulty, leader=leader)
+        params = _rbc_params(sid, pid, num_nodes, faulty, leader)
         tasks.append(
             asyncio.create_task(
                 reliablebroadcast(params, input_queues[pid], recv_queues[pid], send_queues[pid])
@@ -104,7 +109,7 @@ async def test_rbc_different_leaders():
 
         tasks = []
         for pid in range(num_nodes):
-            params = CommonParams(sid=sid, pid=pid, N=num_nodes, f=faulty, leader=leader)
+            params = _rbc_params(sid, pid, num_nodes, faulty, leader)
             tasks.append(
                 asyncio.create_task(
                     reliablebroadcast(
@@ -156,7 +161,7 @@ async def test_rbc_json_data():
 
     tasks = []
     for pid in range(num_nodes):
-        params = CommonParams(sid=sid, pid=pid, N=num_nodes, f=faulty, leader=leader)
+        params = _rbc_params(sid, pid, num_nodes, faulty, leader)
         tasks.append(
             asyncio.create_task(
                 reliablebroadcast(params, input_queues[pid], recv_queues[pid], send_queues[pid])
@@ -195,12 +200,12 @@ async def test_rbc_rejects_invalid_echo_index():
     sid = "test:rbc:invalid-echo"
     payload = b"invalid echo should not count"
 
-    roothash, shards, proofs = encode(payload, num_nodes - 2 * faulty, num_nodes)
+    roothash, shards, proofs = MERKLE.encode(payload, num_nodes - 2 * faulty, num_nodes)
 
     input_queue = asyncio.Queue()
     recv_queue = asyncio.Queue()
     send_queue = asyncio.Queue()
-    params = CommonParams(sid=sid, pid=pid, N=num_nodes, f=faulty, leader=leader)
+    params = _rbc_params(sid, pid, num_nodes, faulty, leader)
 
     task = asyncio.create_task(reliablebroadcast(params, input_queue, recv_queue, send_queue))
 
@@ -209,7 +214,7 @@ async def test_rbc_rejects_invalid_echo_index():
             leader,
             RbcVal(
                 roothash=roothash,
-                proof=proofs[pid].to_bytes(),
+                proof=proofs[pid],
                 stripe=shards[pid],
                 stripe_index=pid,
             ),
@@ -221,7 +226,7 @@ async def test_rbc_rejects_invalid_echo_index():
             2,
             RbcEcho(
                 roothash=roothash,
-                proof=proofs[2].to_bytes(),
+                proof=proofs[2],
                 stripe=shards[2],
                 stripe_index=pid,
             ),
@@ -238,7 +243,7 @@ async def test_rbc_rejects_invalid_echo_index():
             2,
             RbcEcho(
                 roothash=roothash,
-                proof=proofs[2].to_bytes(),
+                proof=proofs[2],
                 stripe=shards[2],
                 stripe_index=2,
             ),
@@ -249,7 +254,7 @@ async def test_rbc_rejects_invalid_echo_index():
             3,
             RbcEcho(
                 roothash=roothash,
-                proof=proofs[3].to_bytes(),
+                proof=proofs[3],
                 stripe=shards[3],
                 stripe_index=3,
             ),

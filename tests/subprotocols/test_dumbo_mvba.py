@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 
+import honey_native
 import pytest
-from honey_acs.crypto import merkle, sig
+from honey_acs.runtime.native import NativeMerkleRuntime, NativeThresholdSignatureRuntime
 from honey_acs.subprotocols.dumbo_mvba import (
     MVBAParams,
     PdDone,
@@ -17,7 +17,13 @@ from honey_acs.subprotocols.dumbo_mvba import (
     dumbo_mvba,
 )
 
-dumbo_mvba_module = importlib.import_module("honey_acs.subprotocols.dumbo_mvba")
+MERKLE = NativeMerkleRuntime()
+
+
+def _threshold_runtimes(players: int, threshold: int) -> list[NativeThresholdSignatureRuntime]:
+    pk, sks = honey_native.sig_generate(players, threshold)
+    pk_bytes = pk.to_bytes()
+    return [NativeThresholdSignatureRuntime.from_bytes(pk_bytes, sk.to_bytes()) for sk in sks]
 
 
 def _network_sender(
@@ -34,8 +40,8 @@ def _network_sender(
 async def test_dumbo_mvba_agrees_on_valid_inputs() -> None:
     n = 4
     f = 1
-    coin_pk, coin_sks = sig.generate(n, f + 1)
-    proof_pk, proof_sks = sig.generate(n, n - f)
+    coin_runtimes = _threshold_runtimes(n, f + 1)
+    proof_runtimes = _threshold_runtimes(n, n - f)
 
     recv_queues = [asyncio.Queue() for _ in range(n)]
     input_queues = [asyncio.Queue(1) for _ in range(n)]
@@ -54,10 +60,9 @@ async def test_dumbo_mvba_agrees_on_valid_inputs() -> None:
                 N=n,
                 f=f,
                 leader=0,
-                coin_pk=coin_pk,
-                coin_sk=coin_sks[pid],
-                proof_pk=proof_pk,
-                proof_sk=proof_sks[pid],
+                coin=coin_runtimes[pid],
+                proof=proof_runtimes[pid],
+                merkle=MERKLE,
             )
             tasks.append(
                 tg.create_task(
@@ -85,8 +90,8 @@ async def test_dumbo_mvba_agrees_on_valid_inputs() -> None:
 async def test_dumbo_mvba_skips_invalid_local_value() -> None:
     n = 4
     f = 1
-    coin_pk, coin_sks = sig.generate(n, f + 1)
-    proof_pk, proof_sks = sig.generate(n, n - f)
+    coin_runtimes = _threshold_runtimes(n, f + 1)
+    proof_runtimes = _threshold_runtimes(n, n - f)
 
     recv_queues = [asyncio.Queue() for _ in range(n)]
     input_queues = [asyncio.Queue(1) for _ in range(n)]
@@ -108,10 +113,9 @@ async def test_dumbo_mvba_skips_invalid_local_value() -> None:
                 N=n,
                 f=f,
                 leader=0,
-                coin_pk=coin_pk,
-                coin_sk=coin_sks[pid],
-                proof_pk=proof_pk,
-                proof_sk=proof_sks[pid],
+                coin=coin_runtimes[pid],
+                proof=proof_runtimes[pid],
+                merkle=MERKLE,
             )
             tasks.append(
                 tg.create_task(
@@ -137,36 +141,47 @@ async def test_dumbo_mvba_skips_invalid_local_value() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provable_dispersal_skips_self_and_surplus_share_verification(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_provable_dispersal_skips_self_and_surplus_share_verification() -> None:
     n = 7
     f = 2
     pid = 0
     leader = 0
     sid = "test:mvba:pd-share-prune"
     value = b"pd-share-prune"
-    coin_pk, coin_sks = sig.generate(n, f + 1)
-    proof_pk, proof_sks = sig.generate(n, n - f)
-    roothash, _stripes, _proofs = merkle.encode(value, n - 2 * f, n)
+    coin_runtimes = _threshold_runtimes(n, f + 1)
+    proof_runtimes = _threshold_runtimes(n, n - f)
+    roothash, _stripes, _proofs = MERKLE.encode(value, n - 2 * f, n)
     pd_sid = _pd_sid(sid, leader)
     stored_digest = _stored_digest(pd_sid, roothash)
     locked_digest = _locked_digest(pd_sid, roothash)
 
-    verify_calls = 0
-    original_verify_share = dumbo_mvba_module.sig.verify_share
+    class CountingThresholdRuntime:
+        def __init__(self, inner: NativeThresholdSignatureRuntime) -> None:
+            self.inner = inner
+            self.verify_calls = 0
 
-    def counting_verify_share(
-        pk: sig.PublicKey,
-        signature: bytes,
-        sender: int,
-        message: bytes,
-    ) -> bool:
-        nonlocal verify_calls
-        verify_calls += 1
-        return original_verify_share(pk, signature, sender, message)
+        @property
+        def players(self) -> int:
+            return self.inner.players
 
-    monkeypatch.setattr(dumbo_mvba_module.sig, "verify_share", counting_verify_share)
+        @property
+        def threshold(self) -> int:
+            return self.inner.threshold
+
+        def sign_share(self, msg: bytes) -> bytes:
+            return self.inner.sign_share(msg)
+
+        def verify_share(self, player_id: int, share: bytes, msg: bytes) -> bool:
+            self.verify_calls += 1
+            return self.inner.verify_share(player_id, share, msg)
+
+        def combine_trusted_shares(self, shares: dict[int, bytes], msg: bytes) -> bytes:
+            return self.inner.combine_trusted_shares(shares, msg)
+
+        def verify_combined(self, signature: bytes, msg: bytes) -> bool:
+            return self.inner.verify_combined(signature, msg)
+
+    counting_proof = CountingThresholdRuntime(proof_runtimes[pid])
 
     receive_queue: asyncio.Queue[tuple[int, object]] = asyncio.Queue()
     event_queue: asyncio.Queue[object] = asyncio.Queue()
@@ -190,10 +205,9 @@ async def test_provable_dispersal_skips_self_and_surplus_share_verification(
                 N=n,
                 f=f,
                 leader=leader,
-                coin_pk=coin_pk,
-                coin_sk=coin_sks[pid],
-                proof_pk=proof_pk,
-                proof_sk=proof_sks[pid],
+                coin=coin_runtimes[pid],
+                proof=counting_proof,
+                merkle=MERKLE,
             ),
             sid=sid,
             leader=leader,
@@ -214,7 +228,7 @@ async def test_provable_dispersal_skips_self_and_surplus_share_verification(
                 PdStored(
                     leader=leader,
                     roothash=roothash,
-                    share=proof_sks[sender].sign(stored_digest),
+                    share=proof_runtimes[sender].sign_share(stored_digest),
                 ),
             )
         )
@@ -227,7 +241,7 @@ async def test_provable_dispersal_skips_self_and_surplus_share_verification(
                 PdStored(
                     leader=leader,
                     roothash=roothash,
-                    share=proof_sks[sender].sign(stored_digest),
+                    share=proof_runtimes[sender].sign_share(stored_digest),
                 ),
             )
         )
@@ -240,7 +254,7 @@ async def test_provable_dispersal_skips_self_and_surplus_share_verification(
                 PdLocked(
                     leader=leader,
                     roothash=roothash,
-                    share=proof_sks[sender].sign(locked_digest),
+                    share=proof_runtimes[sender].sign_share(locked_digest),
                 ),
             )
         )
@@ -253,7 +267,7 @@ async def test_provable_dispersal_skips_self_and_surplus_share_verification(
                 PdLocked(
                     leader=leader,
                     roothash=roothash,
-                    share=proof_sks[sender].sign(locked_digest),
+                    share=proof_runtimes[sender].sign_share(locked_digest),
                 ),
             )
         )
@@ -263,4 +277,4 @@ async def test_provable_dispersal_skips_self_and_surplus_share_verification(
     await receive_queue.put((pid, held_done))
     await asyncio.wait_for(task, timeout=1.0)
 
-    assert verify_calls == 8
+    assert counting_proof.verify_calls == 8
