@@ -1,3 +1,7 @@
+from honey_acs.crypto.bootstrap import (
+    build_crypto_params_from_json,
+    build_crypto_params_from_payload,
+)
 from honey_acs.dumbo.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
 from honey_acs.exceptions import (
     ProtocolInvariantError,
@@ -6,9 +10,9 @@ from honey_acs.exceptions import (
     UnknownTagError,
 )
 from honey_acs.hb.bkr93 import CSParams, commonsubset, run_bkr93_acs_with_send
-from honey_acs.host_bridge import PersistentAcsHost, build_persistent_acs_host_from_json
+from honey_acs.host import PersistentAcsHost, build_persistent_acs_host_from_json
 from honey_acs.messages import Channel, ProtocolMessage
-from honey_acs.params import CommonParams, CryptoParams, HBConfig
+from honey_acs.params import CommonParams, HBConfig
 from honey_acs.pool_reuse import (
     DecodedAcsPayload,
     PoolBundleProposal,
@@ -20,16 +24,11 @@ from honey_acs.pool_reuse import (
     encode_inline_acs_payload,
     encode_reference_acs_payload,
 )
-from honey_acs.runtime.host import (
-    build_crypto_params_from_json,
-    build_crypto_params_from_payload,
-)
 
 __all__ = [
     "CSParams",
     "Channel",
     "CommonParams",
-    "CryptoParams",
     "DecodedAcsPayload",
     "DumboACSParams",
     "DumboProofDiffuse",

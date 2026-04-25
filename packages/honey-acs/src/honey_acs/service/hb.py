@@ -4,10 +4,11 @@ import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, cast
 
+from honey_acs.crypto.protocols import AcsRuntimeCrypto
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.hb.bkr93 import CSParams, run_bkr93_acs_with_send
 from honey_acs.messages import Channel
-from honey_acs.params import CryptoParams, HBConfig
+from honey_acs.params import HBConfig
 from honey_acs.service.base import (
     AcsOutputMode,
     AcsRoundContext,
@@ -204,7 +205,7 @@ class HoneyBadgerAcsService(AcsService):
         pid: int,
         nodes: int,
         faulty: int,
-        crypto: CryptoParams,
+        crypto: AcsRuntimeCrypto,
         config: HBConfig | None = None,
         event_notifier: Callable[[], None] | None = None,
         output_mode: AcsOutputMode = "selected_pids",

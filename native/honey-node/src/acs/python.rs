@@ -757,7 +757,7 @@ impl PyAcsBackend {
     ) -> Result<Self, String> {
         Python::attach(|py| -> PyResult<Self> {
             prepend_python_paths(py)?;
-            let module = PyModule::import(py, "honey_acs.host_bridge")?;
+            let module = PyModule::import(py, "honey_acs.host")?;
             let kwargs = PyDict::new(py);
             kwargs.set_item("protocol", protocol.as_str())?;
             kwargs.set_item("pid", pid)?;

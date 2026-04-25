@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from typing import cast
 
+from honey_acs.crypto.protocols import AcsRuntimeCrypto
 from honey_acs.dumbo.dumbo_acs import (
     DumboACSDecision,
     DumboACSParams,
@@ -12,7 +13,7 @@ from honey_acs.dumbo.dumbo_acs import (
 )
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import Channel
-from honey_acs.params import CryptoParams, HBConfig
+from honey_acs.params import HBConfig
 from honey_acs.service.base import (
     AcsOutputMode,
     AcsRoundContext,
@@ -107,7 +108,7 @@ class DumboRoundSession(ManagedRoundSession):
         carryover_queue: asyncio.Queue[tuple[PrbcOutcome, ...]] | None = None
         if self.context.config.enable_broadcast_pool_reuse:
             carryover_queue = asyncio.Queue(1)
-        runtime = self.context.crypto.runtime
+        runtime = self.context.crypto
         if runtime.proof is None:
             raise ProtocolInvariantError("Dumbo ACS requires proof signature runtime")
 
@@ -217,7 +218,7 @@ class DumboAcsService(AcsService):
         pid: int,
         nodes: int,
         faulty: int,
-        crypto: CryptoParams,
+        crypto: AcsRuntimeCrypto,
         config: HBConfig | None = None,
         event_notifier: Callable[[], None] | None = None,
         output_mode: AcsOutputMode = "selected_pids",

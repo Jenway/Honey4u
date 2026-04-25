@@ -5,7 +5,7 @@ import time
 from typing import cast
 
 import honey_native
-from honey_acs.host_bridge import PersistentAcsHost, build_persistent_acs_host
+from honey_acs.host import PersistentAcsHost, build_persistent_acs_host
 from honey_acs.subprotocols.provable_reliable_broadcast import (
     deserialize_prbc_proof,
     validate_prbc_proof,

@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from honey_acs.runtime.crypto import AcsRuntimeCrypto
+from typing import Any
 
 
 @dataclass
@@ -29,17 +26,6 @@ class CommonParams:
             raise ValueError(f"pid={self.pid} must be in range [0, {self.N})")
         if not 0 <= self.leader < self.N:
             raise ValueError(f"leader={self.leader} must be in range [0, {self.N})")
-
-
-@dataclass
-class CryptoParams:
-    """Runtime cryptographic capabilities for ACS protocols."""
-
-    runtime: AcsRuntimeCrypto
-
-    def __post_init__(self) -> None:
-        if self.runtime is None:
-            raise ValueError("runtime crypto must not be None")
 
 
 @dataclass

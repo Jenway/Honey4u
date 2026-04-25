@@ -2,8 +2,8 @@ import asyncio
 import json
 
 import pytest
+from honey_acs.crypto.native import NativeMerkleRuntime
 from honey_acs.messages import RbcEcho, RbcReady, RbcVal
-from honey_acs.runtime.native import NativeMerkleRuntime
 from honey_acs.subprotocols.reliable_broadcast import BroadcastParams, RbcOutput, reliablebroadcast
 
 MERKLE = NativeMerkleRuntime()

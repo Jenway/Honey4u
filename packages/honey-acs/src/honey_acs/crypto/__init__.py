@@ -1,4 +1,4 @@
-from honey_acs.runtime.crypto import (
+from honey_acs.crypto.protocols import (
     AcsRuntimeCrypto,
     MerkleRuntime,
     PrbcCryptoRuntime,

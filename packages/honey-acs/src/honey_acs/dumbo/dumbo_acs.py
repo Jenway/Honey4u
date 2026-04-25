@@ -7,8 +7,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from honey_acs.crypto.protocols import PrbcCryptoRuntime
 from honey_acs.exceptions import ProtocolInvariantError
-from honey_acs.runtime.crypto import PrbcCryptoRuntime
 from honey_acs.subprotocols.dumbo_mvba import MVBAParams, dumbo_mvba
 from honey_acs.subprotocols.provable_reliable_broadcast import (
     PrbcEcho,

@@ -14,8 +14,8 @@ from pathlib import Path
 from queue import Queue
 from typing import Any, cast
 
+from honey_acs.crypto.bootstrap import build_crypto_params, build_crypto_params_from_json
 from honey_acs.params import HBConfig
-from honey_acs.runtime.host import build_crypto_params, build_crypto_params_from_json
 from honey_acs.service import (
     AcsProtocol,
     AcsService,

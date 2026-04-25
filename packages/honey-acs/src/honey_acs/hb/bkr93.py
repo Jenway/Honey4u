@@ -4,9 +4,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
+from honey_acs.crypto.protocols import AcsRuntimeCrypto
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import Channel, ProtocolMessage
-from honey_acs.params import CommonParams, CryptoParams
+from honey_acs.params import CommonParams
 from honey_acs.subprotocols.binary_agreement import BAParams, binaryagreement
 from honey_acs.subprotocols.common_coin import CoinParams, SharedCoin
 from honey_acs.subprotocols.provable_reliable_broadcast import (
@@ -238,7 +239,7 @@ async def _forward_point_to_point_queue(
 async def run_bkr93_acs_with_send(
     *,
     params: CSParams,
-    crypto: CryptoParams,
+    crypto: AcsRuntimeCrypto,
     task_group: asyncio.TaskGroup,
     spawn: Callable[[Awaitable[Any]], asyncio.Task[Any]],
     coin_recvs: list[asyncio.Queue[CoinRecv]],
@@ -306,7 +307,7 @@ async def run_bkr93_acs_with_send(
                     N=n,
                     f=f,
                     leader=j,
-                    crypto=crypto.runtime.coin,
+                    crypto=crypto.coin,
                 )
             )
             coins.append(coin)
@@ -341,8 +342,8 @@ async def run_bkr93_acs_with_send(
                             N=n,
                             f=f,
                             leader=j,
-                            crypto=crypto.runtime.prbc,
-                            merkle=crypto.runtime.merkle,
+                            crypto=crypto.prbc,
+                            merkle=crypto.merkle,
                         ),
                         rbc_input,
                         rbc_recvs[j],
@@ -368,7 +369,7 @@ async def run_bkr93_acs_with_send(
                             N=n,
                             f=f,
                             leader=j,
-                            merkle=crypto.runtime.merkle,
+                            merkle=crypto.merkle,
                         ),
                         rbc_input,
                         rbc_recvs[j],

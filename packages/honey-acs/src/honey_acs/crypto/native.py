@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import honey_native
 
-from honey_acs.runtime.crypto import AcsRuntimeCrypto
+from honey_acs.crypto.protocols import AcsRuntimeCrypto
 
 
 class NativeMerkleRuntime:

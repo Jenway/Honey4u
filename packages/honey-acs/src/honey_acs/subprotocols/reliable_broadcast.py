@@ -4,10 +4,10 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from honey_acs.crypto.protocols import MerkleRuntime
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import RbcEcho, RbcReady, RbcVal
 from honey_acs.params import CommonParams
-from honey_acs.runtime.crypto import MerkleRuntime
 from honey_acs.telemetry import METRICS, timed_metric
 
 

@@ -5,9 +5,9 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
+from honey_acs.crypto.protocols import ThresholdSignatureRuntime
 from honey_acs.messages import CoinShareMessage
 from honey_acs.params import CommonParams
-from honey_acs.runtime.crypto import ThresholdSignatureRuntime
 from honey_acs.telemetry import METRICS
 
 

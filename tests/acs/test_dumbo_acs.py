@@ -4,8 +4,8 @@ import asyncio
 
 import honey_native
 import pytest
+from honey_acs.crypto.native import NativeMerkleRuntime
 from honey_acs.dumbo.dumbo_acs import DumboACSParams, dumbo_acs
-from honey_acs.runtime.native import NativeMerkleRuntime
 
 MERKLE = NativeMerkleRuntime()
 

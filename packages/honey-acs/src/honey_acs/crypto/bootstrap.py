@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import cast
 
-from honey_acs.params import CryptoParams
-from honey_acs.runtime.native import build_runtime_crypto
+from honey_acs.crypto.native import build_runtime_crypto
+from honey_acs.crypto.protocols import AcsRuntimeCrypto
 
 
 def _decode_hex(value: str) -> bytes:
@@ -20,21 +20,19 @@ def build_crypto_params(
     ecdsa_sk: bytes,
     proof_sig_pk: bytes | None = None,
     proof_sig_sk: bytes | None = None,
-) -> CryptoParams:
-    return CryptoParams(
-        runtime=build_runtime_crypto(
-            protocol,
-            sig_pk=sig_pk,
-            sig_sk=sig_sk,
-            ecdsa_pks=ecdsa_pks,
-            ecdsa_sk=ecdsa_sk,
-            proof_sig_pk=proof_sig_pk,
-            proof_sig_sk=proof_sig_sk,
-        )
+) -> AcsRuntimeCrypto:
+    return build_runtime_crypto(
+        protocol,
+        sig_pk=sig_pk,
+        sig_sk=sig_sk,
+        ecdsa_pks=ecdsa_pks,
+        ecdsa_sk=ecdsa_sk,
+        proof_sig_pk=proof_sig_pk,
+        proof_sig_sk=proof_sig_sk,
     )
 
 
-def build_crypto_params_from_payload(protocol: str, payload: dict[str, object]) -> CryptoParams:
+def build_crypto_params_from_payload(protocol: str, payload: dict[str, object]) -> AcsRuntimeCrypto:
     return build_crypto_params(
         protocol,
         sig_pk=_decode_hex(str(payload["sig_pk"])),
@@ -46,7 +44,7 @@ def build_crypto_params_from_payload(protocol: str, payload: dict[str, object]) 
     )
 
 
-def build_crypto_params_from_json(protocol: str, payload_json: str) -> CryptoParams:
+def build_crypto_params_from_json(protocol: str, payload_json: str) -> AcsRuntimeCrypto:
     return build_crypto_params_from_payload(
         protocol, cast(dict[str, object], json.loads(payload_json))
     )

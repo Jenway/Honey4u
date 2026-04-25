@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from queue import Empty, Queue
 from typing import Literal
 
+from honey_acs.crypto.protocols import AcsRuntimeCrypto
 from honey_acs.exceptions import ProtocolInvariantError
-from honey_acs.params import CryptoParams, HBConfig
+from honey_acs.params import HBConfig
 
 type AcsProtocol = Literal["hb", "dumbo"]
 type AcsOutputMode = Literal["selected_pids", "payloads"]
@@ -23,7 +24,7 @@ class AcsRoundContext:
     pid: int
     nodes: int
     faulty: int
-    crypto: CryptoParams
+    crypto: AcsRuntimeCrypto
     config: HBConfig
     output_mode: AcsOutputMode
     logger: logging.LoggerAdapter
@@ -82,7 +83,7 @@ class AcsService:
         pid: int,
         nodes: int,
         faulty: int,
-        crypto: CryptoParams,
+        crypto: AcsRuntimeCrypto,
         config: HBConfig | None = None,
         logger_name: str | None = None,
         event_notifier: Callable[[], None] | None = None,

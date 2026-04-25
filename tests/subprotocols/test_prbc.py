@@ -4,7 +4,7 @@ import asyncio
 
 import honey_native
 import pytest
-from honey_acs.runtime.native import NativeMerkleRuntime
+from honey_acs.crypto.native import NativeMerkleRuntime
 from honey_acs.subprotocols.provable_reliable_broadcast import (
     PrbcEcho,
     PRBCParams,
