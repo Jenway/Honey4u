@@ -201,7 +201,7 @@ fn run_drive_honeybadger_multiprocess(
         let stderr_handle = File::create(&stderr_path)
             .map_err(|err| format!("bench-driver:hb pid={pid}: stderr log: {err}"))?;
 
-        let child = Command::new(&binary)
+        let child = Command::new(binary)
             .arg("run-driver-node")
             .arg("--pid")
             .arg(pid.to_string())

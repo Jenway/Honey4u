@@ -156,6 +156,7 @@ impl BatchDecryptor {
         Ok(shares)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn local_runtime_share_bundles(
         &self,
         private_shares: &[(usize, PkePrivateKeyShare)],

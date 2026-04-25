@@ -50,7 +50,7 @@ fn run_drive_dumbo_multiprocess(
         let stderr_hdl = File::create(&stderr_path)
             .map_err(|e| format!("bench-driver:dumbo pid={pid}: stderr log: {e}"))?;
 
-        let child = Command::new(&binary)
+        let child = Command::new(binary)
             .arg("run-driver-node")
             .arg("--pid")
             .arg(pid.to_string())

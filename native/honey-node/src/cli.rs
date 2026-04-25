@@ -1,25 +1,7 @@
-use super::*;
-use serde::Deserialize;
+use crate::acs::protocol::AcsProtocol;
+use crate::node_runtime::args::NodeRuntimeArgs;
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BenchDriverConfigFile {
-    mode: Option<String>,
-    sid: Option<String>,
-    protocol: Option<String>,
-    acs_protocol: Option<String>,
-    nodes: Option<usize>,
-    faulty: Option<usize>,
-    rounds: Option<usize>,
-    batch_size: Option<usize>,
-    global_timeout: Option<f64>,
-    result_path: Option<String>,
-    ledger_dir: Option<String>,
-    tx_json: Option<toml::Value>,
-    config: Option<toml::Value>,
-}
-
-pub(crate) fn parse_cli<I>(mut argv: I) -> Result<CliCommand, String>
+pub(crate) fn parse_cli<I>(mut argv: I) -> Result<NodeRuntimeArgs, String>
 where
     I: Iterator<Item = String>,
 {
@@ -29,19 +11,56 @@ where
     };
 
     match command.as_str() {
-        "run-driver-node" => parse_run_driver_node_args(argv).map(CliCommand::RunDriverNode),
-        "bench-driver" => parse_bench_driver_args(argv).map(CliCommand::BenchDriver),
+        "run-driver-node" => parse_run_driver_node_args(argv),
         _ => Err(format!("unknown command: {command}")),
     }
 }
 
-fn parse_run_driver_node_args<I>(mut argv: I) -> Result<RunDriverNodeArgs, String>
+fn take_value<I>(argv: &mut I, flag: &str) -> Result<String, String>
+where
+    I: Iterator<Item = String>,
+{
+    argv.next()
+        .ok_or_else(|| format!("{flag} requires a value"))
+}
+
+fn parse_usize_flag<I>(argv: &mut I, flag: &str) -> Result<usize, String>
+where
+    I: Iterator<Item = String>,
+{
+    let value = take_value(argv, flag)?;
+    value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid {flag} value: {value}"))
+}
+
+fn parse_u64_flag<I>(argv: &mut I, flag: &str) -> Result<u64, String>
+where
+    I: Iterator<Item = String>,
+{
+    let value = take_value(argv, flag)?;
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("invalid {flag} value: {value}"))
+}
+
+fn parse_f64_flag<I>(argv: &mut I, flag: &str) -> Result<f64, String>
+where
+    I: Iterator<Item = String>,
+{
+    let value = take_value(argv, flag)?;
+    value
+        .parse::<f64>()
+        .map_err(|_| format!("invalid {flag} value: {value}"))
+}
+
+fn parse_run_driver_node_args<I>(mut argv: I) -> Result<NodeRuntimeArgs, String>
 where
     I: Iterator<Item = String>,
 {
     let mut pid = 0usize;
     let mut sid = String::from("driver:hb");
-    let mut acs_protocol = Protocol::HoneyBadger;
+    let mut acs_protocol = AcsProtocol::HoneyBadger;
     let mut nodes = 4usize;
     let mut faulty = 1usize;
     let mut rounds = 1usize;
@@ -63,7 +82,7 @@ where
                 sid = take_value(&mut argv, "--sid")?;
             }
             "--acs-protocol" => {
-                acs_protocol = Protocol::parse(&take_value(&mut argv, "--acs-protocol")?)?;
+                acs_protocol = AcsProtocol::parse(&take_value(&mut argv, "--acs-protocol")?)?;
             }
             "--nodes" => {
                 nodes = parse_usize_flag(&mut argv, "--nodes")?;
@@ -118,7 +137,7 @@ where
         return Err(String::from("--global-timeout must be > 0"));
     }
 
-    Ok(RunDriverNodeArgs {
+    Ok(NodeRuntimeArgs {
         pid,
         sid,
         acs_protocol,
@@ -139,240 +158,57 @@ where
     })
 }
 
-fn parse_bench_driver_args<I>(mut argv: I) -> Result<BenchDriverArgs, String>
-where
-    I: Iterator<Item = String>,
-{
-    let mut config_path: Option<String> = None;
-
-    while let Some(arg) = argv.next() {
-        match arg.as_str() {
-            "--config" => {
-                if config_path.is_some() {
-                    return Err(String::from(
-                        "bench-driver accepts exactly one --config <path>",
-                    ));
-                }
-                config_path = Some(take_value(&mut argv, "--config")?);
-            }
-            _ => {
-                return Err(format!(
-                    "bench-driver only supports --config <path>; found {arg}"
-                ));
-            }
-        }
-    }
-
-    let config_path =
-        config_path.ok_or_else(|| String::from("bench-driver requires --config <path>"))?;
-    let file_config = load_bench_driver_config(&config_path)?;
-
-    let mode = resolve_bench_mode(&file_config)?;
-    let sid = file_config
-        .sid
-        .clone()
-        .unwrap_or_else(|| String::from("bench:driver:hb"));
-    let protocol = resolve_protocol(&file_config, "protocol")?.unwrap_or(Protocol::HoneyBadger);
-    let _ = resolve_protocol(&file_config, "acs_protocol")?.unwrap_or(Protocol::HoneyBadger);
-    let nodes = file_config.nodes.unwrap_or(4);
-    let faulty = file_config.faulty.unwrap_or(1);
-    let rounds = file_config.rounds.unwrap_or(1);
-    let batch_size = file_config.batch_size.unwrap_or(1);
-    let global_timeout = file_config.global_timeout.unwrap_or(30.0);
-    let config_json = resolve_json_field(file_config.config.as_ref(), "config", "{}")?;
-    let result_path = file_config.result_path.clone();
-    let ledger_dir = file_config.ledger_dir.clone();
-    let tx_json = resolve_optional_json_field(file_config.tx_json.as_ref(), "tx_json")?;
-
-    if nodes == 0 {
-        return Err(String::from("--nodes must be > 0"));
-    }
-    if rounds == 0 {
-        return Err(String::from("--rounds must be > 0"));
-    }
-    if !matches!(mode, BenchDriverMode::Acs) && batch_size == 0 {
-        return Err(String::from("--batch-size must be > 0"));
-    }
-    if global_timeout <= 0.0 {
-        return Err(String::from("--global-timeout must be > 0"));
-    }
-    if !matches!(mode, BenchDriverMode::Dumbo) && (ledger_dir.is_some() || tx_json.is_some()) {
-        return Err(String::from(
-            "ledger_dir/tx_json are supported only with bench-driver mode \"dumbo\"",
-        ));
-    }
-
-    Ok(BenchDriverArgs {
-        config_path,
-        mode,
-        sid,
-        protocol,
-        nodes,
-        faulty,
-        rounds,
-        global_timeout,
-        config_json,
-        result_path,
-    })
-}
-
-fn load_bench_driver_config(path: &str) -> Result<BenchDriverConfigFile, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|err| format!("failed to read bench-driver config '{path}': {err}"))?;
-    toml::from_str(&content)
-        .map_err(|err| format!("failed to parse bench-driver config '{path}': {err}"))
-}
-
-fn resolve_bench_mode(file_config: &BenchDriverConfigFile) -> Result<BenchDriverMode, String> {
-    match file_config.mode.as_deref() {
-        Some(value) => BenchDriverMode::parse(value),
-        None => Ok(BenchDriverMode::Benchmark),
-    }
-}
-
-fn resolve_protocol(
-    file_config: &BenchDriverConfigFile,
-    field_name: &str,
-) -> Result<Option<Protocol>, String> {
-    match field_name {
-        "protocol" => file_config.protocol.as_deref(),
-        "acs_protocol" => file_config.acs_protocol.as_deref(),
-        _ => None,
-    }
-    .map(Protocol::parse)
-    .transpose()
-}
-
-fn resolve_json_field(
-    file_value: Option<&toml::Value>,
-    field_name: &str,
-    default: &str,
-) -> Result<String, String> {
-    match file_value {
-        Some(value) => toml_value_to_json_string(value, field_name),
-        None => Ok(String::from(default)),
-    }
-}
-
-fn resolve_optional_json_field(
-    file_value: Option<&toml::Value>,
-    field_name: &str,
-) -> Result<Option<String>, String> {
-    file_value
-        .map(|value| toml_value_to_json_string(value, field_name))
-        .transpose()
-}
-
-fn toml_value_to_json_string(value: &toml::Value, field_name: &str) -> Result<String, String> {
-    match value {
-        toml::Value::String(value) => Ok(value.clone()),
-        _ => serde_json::to_string(value).map_err(|err| {
-            format!("failed to convert bench-driver field '{field_name}' to JSON: {err}")
-        }),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::parse_cli;
 
-    fn temp_config_path(file_name: &str) -> std::path::PathBuf {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!("honey-node-{file_name}-{unique}.toml"))
+    fn minimal_args() -> Vec<String> {
+        vec![
+            "honey-node".to_string(),
+            "run-driver-node".to_string(),
+            "--pid".to_string(),
+            "0".to_string(),
+            "--nodes".to_string(),
+            "1".to_string(),
+            "--faulty".to_string(),
+            "0".to_string(),
+            "--rounds".to_string(),
+            "1".to_string(),
+            "--batch-size".to_string(),
+            "1".to_string(),
+            "--addresses-json".to_string(),
+            "[[\"127.0.0.1\", 10000]]".to_string(),
+            "--hb-crypto-json".to_string(),
+            "{}".to_string(),
+            "--acs-crypto-json".to_string(),
+            "{}".to_string(),
+        ]
     }
 
     #[test]
-    fn parse_bench_driver_args_supports_toml_config_file() {
-        let path = temp_config_path("bench-config");
-        std::fs::write(
-            &path,
-            r#"
-mode = "dumbo"
-sid = "bench:file"
-nodes = 5
-faulty = 1
-rounds = 2
-batch_size = 3
-global_timeout = 45.0
-ledger_dir = "/tmp/ledger"
-tx_json = [["tx-0"], ["tx-1"]]
+    fn parse_cli_accepts_run_driver_node() {
+        let parsed = parse_cli(minimal_args().into_iter()).expect("args should parse");
 
-[config]
-enable_broadcast_pool_reuse = true
-pool_grace_ms = 125
-"#,
-        )
-        .expect("config file should write");
-
-        let parsed = parse_bench_driver_args(
-            vec!["--config".to_string(), path.to_string_lossy().into_owned()].into_iter(),
-        )
-        .expect("config file should parse");
-
-        let _ = std::fs::remove_file(&path);
-
-        assert!(matches!(parsed.mode, BenchDriverMode::Dumbo));
-        assert_eq!(parsed.sid, "bench:file");
-        assert_eq!(parsed.nodes, 5);
-        assert_eq!(parsed.rounds, 2);
-        assert_eq!(parsed.global_timeout, 45.0);
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&parsed.config_json).expect("valid JSON"),
-            serde_json::json!({
-                "enable_broadcast_pool_reuse": true,
-                "pool_grace_ms": 125,
-            })
-        );
+        assert_eq!(parsed.pid, 0);
+        assert_eq!(parsed.nodes, 1);
+        assert_eq!(parsed.batch_size, 1);
+        assert_eq!(parsed.addresses_json, "[[\"127.0.0.1\", 10000]]");
     }
 
     #[test]
-    fn parse_bench_driver_args_requires_config_file() {
-        let error = parse_bench_driver_args(Vec::<String>::new().into_iter())
-            .err()
-            .expect("config required");
-
-        assert_eq!(error, "bench-driver requires --config <path>");
-    }
-
-    #[test]
-    fn parse_bench_driver_args_rejects_legacy_flags() {
-        let path = temp_config_path("bench-config-override");
-        std::fs::write(
-            &path,
-            r#"
-mode = "hb"
-sid = "bench:file"
-nodes = 5
-faulty = 1
-rounds = 2
-batch_size = 3
-global_timeout = 45.0
-
-[config]
-pool_grace_ms = 125
-"#,
-        )
-        .expect("config file should write");
-
-        let error = parse_bench_driver_args(
+    fn parse_cli_rejects_bench_driver() {
+        let error = parse_cli(
             vec![
+                "honey-node".to_string(),
+                "bench-driver".to_string(),
                 "--config".to_string(),
-                path.to_string_lossy().into_owned(),
-                "--nodes".to_string(),
+                "bench.toml".to_string(),
             ]
             .into_iter(),
         )
         .err()
-        .expect("legacy flags should be rejected");
+        .expect("bench-driver should be removed");
 
-        let _ = std::fs::remove_file(&path);
-
-        assert_eq!(
-            error,
-            "bench-driver only supports --config <path>; found --nodes"
-        );
+        assert_eq!(error, "unknown command: bench-driver");
     }
 }
