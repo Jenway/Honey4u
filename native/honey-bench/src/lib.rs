@@ -163,9 +163,6 @@ struct DriverPhaseStats {
 
 pub fn run_config_path(config_path: &Path, node_binary: &Path) -> Result<(), String> {
     let args = load_bench_driver_args(config_path)?;
-    if matches!(args.mode, BenchDriverMode::Acs) {
-        return run_acs_via_node(config_path, node_binary);
-    }
     run_with_args(args, node_binary)
 }
 
@@ -173,7 +170,7 @@ pub fn run_with_args(args: BenchDriverArgs, node_binary: &Path) -> Result<(), St
     match args.mode {
         BenchDriverMode::Benchmark => run_bench_rust_driver(args, node_binary),
         BenchDriverMode::Acs => Err(String::from(
-            "mode=acs is only supported through honey-node bench-driver during migration",
+            "mode=acs has not been migrated to honey-bench yet; use benchmark/hb/dumbo modes",
         )),
         BenchDriverMode::HoneyBadger => drive_hb::run_drive_honeybadger(
             BenchHoneyBadgerArgs {
@@ -277,30 +274,6 @@ fn build_args(file_config: BenchDriverConfigFile) -> Result<BenchDriverArgs, Str
         ledger_dir: file_config.ledger_dir,
         tx_json,
     })
-}
-
-fn run_acs_via_node(config_path: &Path, node_binary: &Path) -> Result<(), String> {
-    let output = Command::new(node_binary)
-        .arg("bench-driver")
-        .arg("--config")
-        .arg(config_path)
-        .output()
-        .map_err(|err| format!("failed to run honey-node ACS compatibility path: {err}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = if stderr.trim().is_empty() {
-            stdout
-        } else {
-            stderr
-        };
-        return Err(format!(
-            "honey-node ACS compatibility path failed: {}",
-            detail.trim()
-        ));
-    }
-    print!("{}", String::from_utf8_lossy(&output.stdout));
-    Ok(())
 }
 
 fn resolve_json_field(
