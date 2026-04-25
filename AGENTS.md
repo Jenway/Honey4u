@@ -12,8 +12,8 @@
 - `benchmarks/cli/tps.py` accepts `--node-runtime rust-driver` only; other runtime labels have been removed from the CLI.
 - `honey-node bench-driver` now takes benchmark configuration from a TOML file via `--config <path>`. Benchmark helper scripts generate or point to TOML configs instead of assembling long CLI flag lists.
 - Current benchmark work is centered on four entrypoints: `benchmarks/cli/tps.py` for general TPS/latency runs, `benchmarks/cli/dumbo_reuse_sweep.py` for reuse on/off sweeps, `benchmarks/cli/dumbo_backend_reuse_compare.py` for Python-vs-Rust backend comparisons, and `benchmarks/cli/dumbo_paper_suite.py` for thesis-oriented experiment batches.
-- Checked-in benchmark evidence currently covers large Dumbo reuse sweeps and a backend comparison between `python` and `rust_fin`; there is not yet a checked-in result set for `rust_dumbo`, network-perturbation experiments, or Byzantine-node injection experiments.
-- The current worktree also includes controlled runtime fault injection at the `rust-driver` boundary: network faults (`fixed_delay_ms`, `jitter_ms`, `slow_honest`) and initial Byzantine node behaviors (`silent`, `invalid_fetch_response`). Treat those capabilities as implemented tooling until formal clean-tree result sets are archived.
+- Checked-in benchmark evidence currently covers large Dumbo reuse sweeps and a backend comparison between `python` and `rust_fin`. In the current workspace, archived local formal reruns now exist under `benchmarks/results/paper-final-highload-20260421T182250Z/`, `benchmarks/results/paper-final-grace-python-20260421T191900Z/`, `benchmarks/results/paper-final-boundary-20260421T180132Z/`, `benchmarks/results/paper-final-network-jitter-20260422T000021Z/`, and `benchmarks/results/paper-final-network-fixed-delay-20260422T020028Z/`; there is still no archived `rust_dumbo` comparison.
+- The current worktree also includes controlled runtime fault injection at the `rust-driver` boundary: network faults (`fixed_delay_ms`, `jitter_ms`, `slow_honest`) and initial Byzantine node behaviors (`silent`, `invalid_fetch_response`). Treat those capabilities as implemented tooling. Minimal archived evidence now exists for the slow-honest and two initial byzantine scenarios, but do not generalize that to full WAN or broad Byzantine robustness claims.
 - A top-level Rust workspace exists at `native/Cargo.toml` with three members: `honey-crypto`, `honey-native`, and `honey-node`.
 - `native/honey-native/src/bindings/ledger.rs` and the Python bridge add optional SQLite-backed block persistence and chain-digest tracking.
 - The project scope is intentionally limited to ACS-based asynchronous BFT in the HoneyBadger/Dumbo family; do not preserve extensibility for DAG-style, dispersed-ledger, or unrelated consensus families unless the task explicitly requires it.
@@ -43,26 +43,60 @@
 - Benchmark CLIs live under `benchmarks/cli/`; reusable runner helpers live under `benchmarks/support/runners/`.
 - Benchmark comparison helpers currently include `benchmarks/cli/dumbo_reuse_sweep.py`, `benchmarks/cli/dumbo_backend_reuse_compare.py`, and `benchmarks/cli/dumbo_paper_suite.py`.
 - Benchmark output snapshots and ad hoc reports may be written under `benchmarks/results/`.
-- Thesis sources live under `paper/`. `paper/main-codex-refer.typ` is the active thesis draft, `paper/main.typ` is a template/example document, `paper/sdu-thesis.typ` is the local SDU Typst template, `paper/refer.bib` is the bibliography database, and `paper/reference/` stores local PDF references.
+- Thesis sources live under `paper/`. `paper/main-codex-refer.typ` is the active thesis manuscript source, `paper/main.typ` is a template/example document, `paper/sdu-thesis.typ` is the local SDU Typst template, `paper/refer.bib` is the bibliography database, and `paper/reference/` stores local PDF references.
 - The root project uses `uv` workspaces; both `packages/honey-acs` and `native/honey-native` are workspace members (see `pyproject.toml`).
 
 ## Benchmark Status
 - The general benchmark entrypoint is `benchmarks/cli/tps.py`. It reports throughput, multiple elapsed-time views, transaction and round latency, subprotocol timing summaries, queue backlog, and chain-digest agreement/divergence.
 - When runtime faults are configured, `benchmarks/cli/tps.py` also records transport perturbation counters and node-level byzantine action counters.
 - `benchmarks/cli/dumbo_reuse_sweep.py` has already been used to produce checked-in results under `benchmarks/results/dumbo_reuse_sweep_20260408_large/` and `benchmarks/results/dumbo_reuse_sweep_20260408_n12_knee_full/`.
-- The checked-in reuse sweep evidence shows a stable positive reuse effect at larger scales. The large sweep covers `n=4,8,12,16`; the separate `n=12` sweep is the main mid-stage data point used in the thesis draft.
+- The checked-in reuse sweep evidence shows a stable positive reuse effect at larger scales. The large sweep covers `n=4,8,12,16`; the separate `n=12` sweep is the main mid-stage data point used in the thesis manuscript.
 - `benchmarks/cli/dumbo_backend_reuse_compare.py` supports `python`, `rust_fin`, and `rust_dumbo`, but the checked-in result set under `benchmarks/results/dumbo-backend-reuse-20260410T093234Z/` currently includes only `python` and `rust_fin`.
 - Existing backend-comparison evidence indicates that the Rust FIN-style ACS backend is materially faster than the Python Dumbo host on the tested local setup. Use the checked-in JSON for exact numbers rather than restating them from memory.
 - `benchmarks/cli/dumbo_paper_suite.py` and `benchmarks/configs/paper/` now cover thesis-oriented experiment groups for high-load baselines, grace sensitivity, network perturbation, and initial byzantine-node scenarios.
-- Do not claim that the repository already has frozen formal evidence for realistic WAN jitter or Byzantine robustness. Network perturbation currently has preliminary quick results, while byzantine-node injection currently has smoke coverage plus suite configs but no archived `paper-final-byzantine-*` result set.
+- A local archived high-load rerun now exists under `benchmarks/results/paper-final-highload-20260421T182250Z/`. It covers the full `highload_n12` sweep with `planned_runs == executed_runs == 140`, only documentation edits in `manifest.json.git.status_short`, and positive throughput deltas across all tested Python and `rust_fin` batch sizes.
+- A local archived grace rerun now exists under `benchmarks/results/paper-final-grace-python-20260421T191900Z/`. It covers `grace_python_n12_micro` with `planned_runs == executed_runs == 8`, only documentation edits in `manifest.json.git.status_short`, and shows that the `50/100/200 ms` grace settings cluster closely while `400 ms` degrades throughput.
+- A local archived jitter rerun now exists under `benchmarks/results/paper-final-network-jitter-20260422T000021Z/`. It covers `network_jitter_n12` with `planned_runs == executed_runs == 30`, only documentation/thesis edits in `manifest.json.git.status_short`, and positive throughput deltas for `none`, `jitter10`, and `jitter25`.
+- A local archived fixed-delay rerun now exists under `benchmarks/results/paper-final-network-fixed-delay-20260422T020028Z/`. It covers `network_fixed_delay_n12` with `planned_runs == executed_runs == 30`, only documentation/thesis edits in `manifest.json.git.status_short`, and positive throughput deltas for `none`, `fixed10`, and `fixed25`.
+- A focused archived boundary result set now exists locally under `benchmarks/results/paper-final-boundary-20260421T180132Z/`. It covers `slow_honest_n12`, `byzantine_silent_n12`, and `byzantine_invalid_fetch_response_n12`, with `planned_runs == executed_runs == 50` and only documentation edits in `manifest.json.git.status_short`.
+- Do not claim that the repository already has realistic WAN evidence or general Byzantine robustness. The archived jitter and fixed-delay reruns are still local transport-perturbation experiments, and the archived boundary rerun is intentionally narrow.
 - Treat `benchmarks/results/` as experiment artifacts. Keep them out of commits unless the task explicitly asks to check in new reports or reference outputs.
 
 ## Thesis And Graduation Context
+- One-line status: the task-book protocol/benchmark goals are effectively complete; the remaining
+  delivery risk is thesis finalization and conservative result integration.
 - The formal task description is in `TARGET.md`. The thesis topic is narrowly defined: mitigate bandwidth waste in ACS-based asynchronous BFT caused by honest-but-delayed broadcast outputs being discarded by the current round.
 - The task book sets four concrete success conditions: implement the cross-round reuse module, preserve safety/liveness, obtain a throughput improvement of at least 10% in high-load settings, and provide a stable, well-documented system plus a complete thesis.
-- As of 2026-04-21, the implementation and performance sides of the task book are effectively satisfied: the reuse module is implemented, current local-TCP evidence exceeds the 10% throughput target, and the supported scenarios show no observed safety/liveness regression in the existing runtime and benchmark checks. The remaining delivery risk is frozen clean-tree reruns plus final thesis completion, not missing protocol-core functionality.
+- In the current repository state, the implementation and performance sides of the task book are effectively satisfied: the reuse module is implemented, current local-TCP evidence exceeds the 10% throughput target, and the supported scenarios show no observed safety/liveness regression in the existing runtime and benchmark checks. The minimum thesis experiment package now also has archived local reruns for high-load, grace sensitivity, bounded jitter, bounded fixed delay, slow-honest, and two minimal byzantine boundary cases. Overall task-book delivery is still not complete until the thesis itself is finished, but the remaining risk is thesis integration and wording discipline, not missing protocol-core functionality or missing minimum freeze data.
+- The active thesis manuscript source `paper/main-codex-refer.typ` has already been updated to match the archived result sets and currently compiles successfully via `typst compile`. Internal writing-plan/sample appendix text has been removed; remaining non-technical paper work includes final figure/table integration, conservative wording review, and filling the manual cover metadata fields.
+- Preferred next-work order for agents:
+  1. turn `paper-final-highload-20260421T182250Z`, `paper-final-grace-python-20260421T191900Z`, `paper-final-boundary-20260421T180132Z`, `paper-final-network-jitter-20260422T000021Z`, and `paper-final-network-fixed-delay-20260422T020028Z` into final thesis tables/figures and tighten wording
+  2. finish thesis cleanup, threat-to-validity wording, abstract/conclusion consistency, and conservative claim review
+  3. run one minimal cross-machine rerun
+  4. if time remains after the required delivery items are done, tighten Rust fetch-stat appendix wording
+- Practical delivery order for the current workspace:
+  1. finalize `paper/main-codex-refer.typ`
+  2. run one minimal cross-machine rerun
+  3. fill manual cover metadata fields
+  4. export the final PDF only after one last conservative wording pass
+- Two remaining closure items cannot be finished by protocol/source edits alone:
+  1. the minimal cross-machine rerun requires a second machine or distinct external environment
+  2. the thesis cover metadata requires manual entry of real personal information
+- In practice, the remaining delivery blockers now reduce to three categories:
+  1. thesis manuscript finalization
+  2. one minimal cross-machine trend rerun
+  3. local/manual cover metadata completion and final PDF export
+- Any extra backend comparison, extra byzantine behavior, or generalized network-simulation work
+  beyond that point is optional follow-on work, not a blocker for closing the current task book.
+- Treat the thesis/task-book delivery as fully closed only when all four practical delivery items above are done.
+- Equivalent completion criteria for future agents:
+  1. `paper/main-codex-refer.typ` has final-form body text, tables, captions, appendix placement, and threat-to-validity wording
+  2. at least one minimal cross-machine trend rerun has been completed and archived with run metadata
+  3. the manual thesis cover metadata fields have been filled locally and the final PDF exports cleanly
+  4. the final wording keeps `fixed-delay` as appendix-grade pressure testing, keeps `fetch` as a boundary observation, and does not generalize the results to arbitrary ACS black boxes, realistic WAN validation, or broad Byzantine robustness
+- Deprioritize the following until thesis-result integration is done: standalone WAN simulators, new protocol families/backends, generalized byzantine attack frameworks, and cosmetic large-scale refactors.
 - The mid-term report is in `mid-term.md`. It records the already-established narrative that the project targets ACS-style HoneyBadger/Dumbo protocols rather than DAG-style protocols, and it reports preliminary local-TCP results around `N=12, f=3`.
-- The current thesis draft is `paper/main-codex-refer.typ`. It is already aligned with the narrowed repository direction and should be treated as the main writing target; `paper/main.typ` is only a template/demo file and should not be mistaken for the actual thesis content.
+- The current thesis manuscript source is `paper/main-codex-refer.typ`. It is already aligned with the narrowed repository direction and should be treated as the main writing target; `paper/main.typ` is only a template/demo file and should not be mistaken for the actual thesis content.
 - The thesis must stay academically conservative. Do not write that the reuse mechanism applies to arbitrary ACS black boxes. The current argument is strongest when the reused object already carries a strong availability guarantee such as PRBC-style output/proof material.
 - Likewise, do not claim that FIN-ACS itself has already been fully adopted as the thesis baseline. What is implemented and benchmarked in the repository is a Rust FIN-style ACS backend inside the current Honey4u runtime, not a paper-faithful end-to-end reimplementation of every external codebase that was discussed during exploration.
 - The papers in `paper/reference/` are the primary local references for protocol analysis. Prefer grounding architectural comparisons and thesis statements in those PDFs rather than in remembered summaries of third-party code.
@@ -84,7 +118,7 @@
   `export PYO3_PYTHON="$(python -c 'import sys; print(sys.executable)')" && uv sync --dev --locked`
 - Build the full native workspace: `cargo build --manifest-path native/Cargo.toml`
 - Build the root Python package wheel/sdist if needed: `uv build`
-- Compile the current thesis draft PDF: `typst compile paper/main-codex-refer.typ`
+- Compile the current thesis manuscript PDF: `typst compile paper/main-codex-refer.typ`
 - Compile the template/demo PDF: `typst compile paper/main.typ`
 - Run repository hooks in one shot: `uv run pre-commit run --all-files`
 
