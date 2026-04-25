@@ -125,7 +125,7 @@
         v(0.8cm)
         text(font: 西文字体, size: 16pt, weight: "bold")[#english_title]
       }
-      #v(2.2cm)
+      #v(1cm)
       #grid(
         columns: (3.2cm, 8.6cm),
         column-gutter: 0.4cm,
