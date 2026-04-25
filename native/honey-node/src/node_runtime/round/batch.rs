@@ -4,7 +4,10 @@ use super::super::pool_reuse::{
     AcsPayload, BroadcastMempool, PoolReference, decode_acs_payload, encode_bundle_acs_payload,
 };
 use super::super::types::BatchArchive;
-use crate::{AvailableProposal, ProposalStore, encode_hb_json_string, encode_hb_tx_batch};
+use crate::acs::proposal::{AvailableProposal, ProposalStore};
+use honey_node::hb::{
+    encode_json_string as encode_hb_json_string, encode_tx_batch as encode_hb_tx_batch,
+};
 use std::collections::BTreeSet;
 
 pub(super) fn build_driver_round_batch(

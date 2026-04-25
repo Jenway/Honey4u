@@ -4,7 +4,7 @@ use super::super::wire::{
     DriverWireFrame, encode_driver_frame, fanout_encoded_payload, send_frame,
 };
 use super::batch::decode_batch_ref;
-use crate::AvailableProposal;
+use crate::acs::proposal::AvailableProposal;
 use honey_crypto::merkle;
 use honey_node::pool_wire::{
     PoolFetchWire, encode_pool_fetch_request_wire, encode_pool_fetch_response_wire,

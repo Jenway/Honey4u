@@ -15,6 +15,7 @@ mod tests {
         FetchRequestAction, PoolFetchTracker, ProposalResolutionError, ResolvedSelectedProposals,
         resolve_selected_proposals,
     };
+    use crate::acs::proposal::AvailableProposal;
     use honey_crypto::merkle;
     use honey_node::pool_wire::{PoolFetchWire, decode_pool_fetch_from_wire};
     use honey_node::transport::LocalTcpTransport;
@@ -30,7 +31,7 @@ mod tests {
             roothash: vec![7; 32],
             proof_payload: vec![9; 8],
         };
-        let proposal = crate::AvailableProposal {
+        let proposal = AvailableProposal {
             proposal_id: String::from("1:2:deadbeef"),
             proposer: 2,
             payload: encode_bundle_acs_payload(b"", std::slice::from_ref(&reference)),

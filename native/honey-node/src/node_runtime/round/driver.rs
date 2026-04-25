@@ -1,5 +1,8 @@
+use super::super::args::NodeRuntimeArgs;
 use super::super::config::{BroadcastPoolBackend, BroadcastPoolConfig, ByzantineNodeConfig};
-use super::super::phase_stats::{record_pull, record_push};
+use super::super::digest::{GENESIS_CHAIN_DIGEST, compute_chain_digest, sha256_hex};
+use super::super::io::current_time_millis;
+use super::super::phase_stats::{DriverHostPhaseStats, DriverPhaseStats, record_pull, record_push};
 use super::super::pool_reuse::{BroadcastMempool, encode_bundle_acs_payload};
 use super::super::types::{
     BatchArchive, DriverCarryovers, DriverNodeResult, DriverNodeRoundTelemetry, DriverRoundCtx,
@@ -17,11 +20,14 @@ use super::pool::{
     FetchRequestAction, PoolFetchTracker, ProposalResolutionError, resolve_selected_proposals,
 };
 use super::transport::{RoundTransportInbox, drain_transport_into_round, update_queue_peaks};
-use crate::{
-    AcsBackend, AcsEvent, AcsProtocol, DriverHostPhaseStats, DriverPhaseStats,
-    GENESIS_CHAIN_DIGEST, HbBatchDecryptor, HbPkePrivateKeyShare, HbPkePublicParams,
-    NodeRuntimeArgs, ProposalStore, decode_hb_tx_batch, merge_hb_tx_batches_bytes,
-    seal_hb_encrypted_batch,
+use crate::acs::proposal::ProposalStore;
+use crate::acs::protocol::AcsProtocol;
+use crate::acs::{AcsBackend, AcsEvent};
+use crate::codec::hex_encode;
+use honey_node::hb::{
+    BatchDecryptor as HbBatchDecryptor, HbPkePrivateKeyShare, HbPkePublicParams,
+    decode_tx_batch as decode_hb_tx_batch, merge_tx_batches_bytes as merge_hb_tx_batches_bytes,
+    seal_encrypted_batch as seal_hb_encrypted_batch,
 };
 use honey_node::transport::LocalTcpTransport;
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,7 +38,7 @@ pub(in crate::node_runtime) fn wait_until_start(start_at_ms: Option<u64>) -> Res
     let Some(start_at_ms) = start_at_ms else {
         return Ok(());
     };
-    let now_ms = crate::current_time_millis()?;
+    let now_ms = current_time_millis()?;
     if start_at_ms <= now_ms {
         return Ok(());
     }
@@ -692,13 +698,12 @@ pub(in crate::node_runtime) fn run_driver_rounds(
             .push(round_outcome.byzantine_share_broadcast_suppressed);
         byzantine_empty_proposal_used.push(round_outcome.byzantine_empty_proposal_used);
         per_round_selected_pids.push(round_outcome.selected_pids.clone());
-        let block_digest = crate::sha256_hex(&round_outcome.block_payload);
+        let block_digest = sha256_hex(&round_outcome.block_payload);
         let block_size = round_outcome.block_payload.len();
         per_round_block_digests.push(block_digest.clone());
         per_round_block_sizes.push(block_size);
-        chain_digest =
-            crate::compute_chain_digest(&chain_digest, round_id, &round_outcome.block_payload);
-        let chain_digest_hex = crate::hex_encode(&chain_digest);
+        chain_digest = compute_chain_digest(&chain_digest, round_id, &round_outcome.block_payload);
+        let chain_digest_hex = hex_encode(&chain_digest);
         per_round_chain_digests.push(chain_digest_hex.clone());
         origin_tx_latencies_by_round.push(if round_outcome.selected_pids.contains(&args.pid) {
             vec![round_outcome.wall_seconds; args.batch_size]
@@ -773,7 +778,7 @@ pub(in crate::node_runtime) fn run_driver_rounds(
             byzantine_share_broadcast_suppressed,
             byzantine_empty_proposal_used,
             byzantine_behavior: byzantine_node_config.behavior_label(),
-            chain_digest: crate::hex_encode(&chain_digest),
+            chain_digest: hex_encode(&chain_digest),
             per_round_selected_pids,
             per_round_block_digests,
             per_round_block_sizes,

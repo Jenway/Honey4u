@@ -1,7 +1,8 @@
 //! Rust-native HoneyBadger ACS host implementing BKR93 with RBC/PRBC + ABA.
 
+use crate::acs::proposal::AvailableProposal;
 use crate::acs::{AcsBackend, AcsBackendStats, AcsCryptoMaterial, AcsEvent};
-use crate::*;
+use crate::codec::hex_encode;
 use honey_crypto::bls::g1::G1;
 use honey_crypto::ecdsa;
 use honey_crypto::merkle::{self, MerkleProof};

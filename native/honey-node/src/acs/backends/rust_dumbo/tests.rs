@@ -1,5 +1,6 @@
 use super::*;
-use crate::acs::harness::run_acs_round;
+use crate::acs::harness::{run_acs_round, serialize_crypto_payloads};
+use crate::acs::protocol::AcsProtocol;
 
 fn build_hosts(nodes: usize, faulty: usize) -> Vec<RustDumboAcsBackend> {
     serialize_crypto_payloads(AcsProtocol::Dumbo, nodes, faulty)
