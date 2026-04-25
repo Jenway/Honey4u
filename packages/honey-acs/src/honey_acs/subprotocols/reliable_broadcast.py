@@ -4,18 +4,18 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-import honey_native
-
-from honey_acs.crypto.merkle import decode, encode
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import RbcEcho, RbcReady, RbcVal
 from honey_acs.params import CommonParams
+from honey_acs.runtime.crypto import MerkleRuntime
 from honey_acs.telemetry import METRICS, timed_metric
 
 
 @dataclass
 class BroadcastParams(CommonParams):
     """Parameters for RBC (reliable broadcast)"""
+
+    merkle: MerkleRuntime
 
     @property
     def K(self) -> int:
@@ -53,7 +53,7 @@ type RbcBroadcastFn = Callable[[RbcVal | RbcEcho | RbcReady], Awaitable[None]]
 
 
 async def reliablebroadcast(
-    params: CommonParams,
+    params: BroadcastParams,
     input_queue: asyncio.Queue,
     receive_queue: asyncio.Queue,
     send_queue: asyncio.Queue,
@@ -85,7 +85,7 @@ async def reliablebroadcast(
         if isinstance(m, str):
             m = m.encode()
         with timed_metric("rbc.encode.seconds", node=pid, leader=leader):
-            roothash, shards, proofs = encode(m, K, N)
+            roothash, shards, proofs = params.merkle.encode(m, K, N)
 
         for i in range(N):
             await send_queue.put(
@@ -93,7 +93,7 @@ async def reliablebroadcast(
                     i,
                     RbcVal(
                         roothash=roothash,
-                        proof=proofs[i].to_bytes(),
+                        proof=proofs[i],
                         stripe=shards[i],
                         stripe_index=i,
                     ),
@@ -102,33 +102,23 @@ async def reliablebroadcast(
 
     from_leader: bytes | None = None
     stripes: dict[bytes, dict[int, bytes]] = defaultdict(dict)
-    merkle_proofs: dict[bytes, dict[int, honey_native.MerkleProof]] = defaultdict(dict)
+    merkle_proofs: dict[bytes, dict[int, bytes]] = defaultdict(dict)
     echoCounter = defaultdict(lambda: 0)
     echo_senders: dict[bytes, set[int]] = defaultdict(set)
     ready = defaultdict(set)
     ready_root: bytes | None = None
 
     def decode_output(roothash: bytes) -> bytes:
-        available = []
-
-        for stripe_idx, stripe in stripes[roothash].items():
-            proof = merkle_proofs[roothash].get(stripe_idx)
-            if proof is not None:
-                available.append(honey_native.EncodedShard(stripe_idx, stripe, proof))
-        if len(available) < K:
-            raise ValueError(f"Not enough verified shards ({len(available)} < {K})")
-
-        return decode(available, roothash, K, N)
+        if len(stripes[roothash]) < K:
+            raise ValueError(f"Not enough verified shards ({len(stripes[roothash])} < {K})")
+        return params.merkle.decode(stripes[roothash], merkle_proofs[roothash], roothash, K, N)
 
     async def build_output(roothash: bytes) -> RbcOutput:
         with timed_metric("rbc.decode.seconds", node=pid, leader=leader):
             payload = decode_output(roothash)
 
         all_shards = tuple(stripes[roothash].get(i) for i in range(N))
-        all_proofs = tuple(
-            None if (proof := merkle_proofs[roothash].get(i)) is None else proof.to_bytes()
-            for i in range(N)
-        )
+        all_proofs = tuple(merkle_proofs[roothash].get(i) for i in range(N))
 
         logger.debug("Decoded RBC output (%s bytes)", len(payload), extra={"node": pid})
         METRICS.increment("rbc.output.completed", node=pid, leader=leader)
@@ -147,7 +137,6 @@ async def reliablebroadcast(
             proof_bytes = msg.proof
             stripe = msg.stripe
             stripe_index = msg.stripe_index
-            proof = honey_native.MerkleProof.from_bytes(proof_bytes)
             if sender != leader:
                 METRICS.increment("rbc.invalid.val_sender", node=pid, leader=leader)
                 logger.warning(
@@ -155,12 +144,12 @@ async def reliablebroadcast(
                     extra={"node": pid, "sender": sender},
                 )
                 continue
-            if stripe_index != pid or proof.leaf_index != stripe_index:
+            if stripe_index != pid:
                 METRICS.increment("rbc.invalid.val_index", node=pid, leader=leader)
                 logger.warning("Invalid VAL shard index", extra={"node": pid, "sender": sender})
                 continue
             try:
-                if not honey_native.merkle_verify(stripe, proof, roothash):
+                if not params.merkle.verify_indexed(stripe, proof_bytes, roothash, stripe_index):
                     raise ProtocolInvariantError("Merkle proof verification failed")
             except Exception as e:
                 logger.warning(f"Failed to validate VAL message: {e}", extra={"node": pid})
@@ -168,7 +157,7 @@ async def reliablebroadcast(
 
             from_leader = roothash
             stripes[roothash][stripe_index] = stripe
-            merkle_proofs[roothash][stripe_index] = proof
+            merkle_proofs[roothash][stripe_index] = proof_bytes
             await broadcast_message(
                 RbcEcho(
                     roothash=roothash,
@@ -183,23 +172,22 @@ async def reliablebroadcast(
             proof_bytes = msg.proof
             stripe = msg.stripe
             stripe_idx = msg.stripe_index
-            proof = honey_native.MerkleProof.from_bytes(proof_bytes)
             if sender in echo_senders[roothash]:
                 logger.warning("Redundant ECHO", extra={"node": pid})
                 continue
-            if stripe_idx != sender or proof.leaf_index != stripe_idx:
+            if stripe_idx != sender:
                 METRICS.increment("rbc.invalid.echo_index", node=pid, leader=leader)
                 logger.warning("Invalid ECHO shard index", extra={"node": pid, "sender": sender})
                 continue
             try:
-                if not honey_native.merkle_verify(stripe, proof, roothash):
+                if not params.merkle.verify_indexed(stripe, proof_bytes, roothash, stripe_idx):
                     raise ProtocolInvariantError("Merkle proof verification failed")
             except Exception as e:
                 logger.warning(f"Failed to validate ECHO message: {e}", extra={"node": pid})
                 continue
 
             stripes[roothash][stripe_idx] = stripe
-            merkle_proofs[roothash][stripe_idx] = proof
+            merkle_proofs[roothash][stripe_idx] = proof_bytes
             echo_senders[roothash].add(sender)
             echoCounter[roothash] += 1
 

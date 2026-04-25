@@ -7,11 +7,9 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-import honey_native
-
-from honey_acs.crypto import ecdsa, merkle
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.params import CommonParams
+from honey_acs.runtime.crypto import MerkleRuntime, PrbcCryptoRuntime
 from honey_acs.telemetry import METRICS
 
 type SendFn = Callable[[int, object], Awaitable[None]]
@@ -20,15 +18,13 @@ type BroadcastFn = Callable[[object], Awaitable[None]]
 
 @dataclass(slots=True)
 class PRBCParams(CommonParams):
-    ecdsa_pks: list[bytes]
-    ecdsa_sk: bytes
+    crypto: PrbcCryptoRuntime
+    merkle: MerkleRuntime
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if len(self.ecdsa_pks) != self.N:
-            raise ValueError(f"expected {self.N} ECDSA public keys, got {len(self.ecdsa_pks)}")
-        if not self.ecdsa_sk:
-            raise ValueError("ecdsa_sk must not be empty")
+        if self.crypto.players != self.N:
+            raise ValueError(f"expected {self.N} PRBC public keys, got {self.crypto.players}")
 
     @property
     def K(self) -> int:
@@ -132,7 +128,12 @@ def deserialize_prbc_proof(raw: bytes) -> PrbcProof:
     return PrbcProof(roothash=roothash, sigmas=tuple(sigmas))
 
 
-def compute_prbc_roothash(payload: bytes, num_nodes: int, faulty: int) -> bytes:
+def compute_prbc_roothash(
+    payload: bytes,
+    num_nodes: int,
+    faulty: int,
+    merkle: MerkleRuntime,
+) -> bytes:
     k = num_nodes - 2 * faulty
     roothash, _, _ = merkle.encode(payload, k, num_nodes)
     return roothash
@@ -142,15 +143,14 @@ def validate_prbc_proof(
     sid: str,
     num_nodes: int,
     faulty: int,
-    ecdsa_pks: list[bytes],
+    crypto: PrbcCryptoRuntime,
     proof: PrbcProof,
 ) -> bool:
-    threshold = num_nodes - faulty
-    if len(ecdsa_pks) != num_nodes:
+    if crypto.players != num_nodes:
         return False
-
+    threshold = num_nodes - faulty
     digest = _prbc_ready_digest(sid, proof.roothash)
-    return ecdsa.verify_threshold_sigs_strict(ecdsa_pks, digest, proof.sigmas, threshold)
+    return crypto.verify_ready_proof(digest, proof.sigmas, threshold)
 
 
 async def provable_reliable_broadcast(
@@ -182,21 +182,21 @@ async def provable_reliable_broadcast(
 
     if pid == leader:
         value = _coerce_bytes(await input_queue.get())
-        roothash, shards, merkle_proofs = merkle.encode(value, k, n)
+        roothash, shards, merkle_proofs = params.merkle.encode(value, k, n)
         for recipient in range(n):
             await send(
                 recipient,
                 PrbcVal(
                     leader=leader,
                     roothash=roothash,
-                    proof=merkle_proofs[recipient].to_bytes(),
+                    proof=merkle_proofs[recipient],
                     stripe=shards[recipient],
                     stripe_index=recipient,
                 ),
             )
 
     def decode_output(roothash: bytes) -> bytes:
-        return merkle.decode_from_dicts(stripes[roothash], proofs[roothash], roothash, k, n)
+        return params.merkle.decode(stripes[roothash], proofs[roothash], roothash, k, n)
 
     def ready_digest(roothash: bytes) -> bytes:
         digest = ready_digests.get(roothash)
@@ -219,7 +219,7 @@ async def provable_reliable_broadcast(
         if ready_sent:
             return
         ready_sent = True
-        signature = ecdsa.sign(params.ecdsa_sk, ready_digest(roothash))
+        signature = params.crypto.sign_ready(ready_digest(roothash))
         local_ready_signatures[roothash] = signature
         ready_senders[roothash].add(pid)
         ready_signatures[roothash][pid] = signature
@@ -240,10 +240,14 @@ async def provable_reliable_broadcast(
             if message.stripe_index != pid:
                 continue
             try:
-                proof = honey_native.MerkleProof.from_bytes(message.proof)
+                if not params.merkle.verify_indexed(
+                    message.stripe,
+                    message.proof,
+                    message.roothash,
+                    message.stripe_index,
+                ):
+                    continue
             except ValueError:
-                continue
-            if not honey_native.merkle_verify(message.stripe, proof, message.roothash):
                 continue
 
             leader_root = message.roothash
@@ -270,10 +274,14 @@ async def provable_reliable_broadcast(
             if message.stripe_index != sender:
                 continue
             try:
-                proof = honey_native.MerkleProof.from_bytes(message.proof)
+                if not params.merkle.verify_indexed(
+                    message.stripe,
+                    message.proof,
+                    message.roothash,
+                    message.stripe_index,
+                ):
+                    continue
             except ValueError:
-                continue
-            if not honey_native.merkle_verify(message.stripe, proof, message.roothash):
                 continue
 
             echo_senders[message.roothash].add(sender)
@@ -310,10 +318,10 @@ async def provable_reliable_broadcast(
                 local_signature = local_ready_signatures.get(message.roothash)
                 if local_signature is None or message.signature != local_signature:
                     continue
-            elif not ecdsa.verify(
-                params.ecdsa_pks[sender],
-                ready_digest(message.roothash),
+            elif not params.crypto.verify_ready_signature(
+                sender,
                 message.signature,
+                ready_digest(message.roothash),
             ):
                 continue
 

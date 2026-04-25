@@ -1,25 +1,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
-import honey_native
-
 from honey_acs.exceptions import SerializationError
-
-_MERGE_TX_BATCHES_BYTES = cast(
-    Callable[..., bytes], honey_native.__dict__["merge_tx_batches_bytes"]
-)
-
-
-def _native_call[T](func: Callable[..., T], message: str, *args: object) -> T:
-    try:
-        return func(*args)
-    except ValueError as exc:
-        raise SerializationError(message) from exc
+from honey_acs.runtime import codec
 
 
 class Channel(StrEnum):
@@ -88,27 +75,16 @@ class EncryptedBatch:
     ciphertext: bytes
 
     def to_bytes(self) -> bytes:
-        return _native_call(
-            honey_native.encode_encrypted_batch_py,
-            "Invalid encrypted batch payload",
-            self,
-        )
+        return codec.encode_encrypted_batch(self)
 
     @staticmethod
     def from_bytes(raw: bytes) -> EncryptedBatch:
-        return cast(
-            EncryptedBatch,
-            _native_call(
-                honey_native.decode_encrypted_batch_py, "Invalid encrypted batch payload", raw
-            ),
-        )
+        return cast(EncryptedBatch, codec.decode_encrypted_batch(raw))
 
 
 def encode_tx(tx: object) -> bytes:
     if isinstance(tx, str):
-        return _native_call(
-            honey_native.encode_json_string, "Transaction must be JSON serializable", tx
-        )
+        return codec.encode_json_string(tx)
     try:
         return json.dumps(tx, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
             "utf-8"
@@ -118,7 +94,7 @@ def encode_tx(tx: object) -> bytes:
 
 
 def decode_tx(raw: bytes) -> object:
-    return _native_call(honey_native.decode_tx_py, "Invalid transaction payload", raw)
+    return codec.decode_tx(raw)
 
 
 def tx_dedup_key(tx: object) -> str:
@@ -128,11 +104,11 @@ def tx_dedup_key(tx: object) -> str:
 
 
 def encode_tx_batch(items: list[bytes]) -> bytes:
-    return _native_call(honey_native.encode_tx_batch, "Invalid transaction batch payload", items)
+    return codec.encode_tx_batch(items)
 
 
 def decode_tx_batch(raw: bytes) -> list[bytes]:
-    return _native_call(honey_native.decode_tx_batch, "Invalid transaction batch payload", raw)
+    return codec.decode_tx_batch(raw)
 
 
 def decode_block(raw: bytes) -> list[object]:
@@ -140,11 +116,7 @@ def decode_block(raw: bytes) -> list[object]:
 
 
 def merge_tx_batches_bytes(blocks: tuple[bytes, ...] | list[bytes]) -> bytes:
-    return _native_call(
-        _MERGE_TX_BATCHES_BYTES,
-        "Invalid transaction batch payload",
-        list(blocks),
-    )
+    return codec.merge_tx_batches_bytes(blocks)
 
 
 def merge_tx_batches(blocks: tuple[bytes, ...] | list[bytes]) -> list[object]:
@@ -164,20 +136,11 @@ class ProtocolEnvelope:
     message: ProtocolMessage
 
     def to_bytes(self, sender: int) -> bytes:
-        return _native_call(
-            honey_native.encode_protocol_envelope_py,
-            "Invalid protocol envelope payload",
-            sender,
-            self,
-        )
+        return codec.encode_protocol_envelope(sender, self)
 
     @staticmethod
     def from_bytes(payload: bytes) -> tuple[int, ProtocolEnvelope]:
-        sender, envelope = _native_call(
-            honey_native.decode_protocol_envelope_py,
-            "Invalid protocol envelope payload",
-            payload,
-        )
+        sender, envelope = codec.decode_protocol_envelope(payload)
         return sender, cast(ProtocolEnvelope, envelope)
 
 

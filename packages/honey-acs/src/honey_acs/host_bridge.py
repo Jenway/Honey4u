@@ -14,11 +14,9 @@ from pathlib import Path
 from queue import Queue
 from typing import Any, cast
 
-import honey_native
-
-from honey_acs.host_crypto import build_crypto_params, build_crypto_params_from_json
 from honey_acs.messages import Channel, ProtocolEnvelope, ProtocolMessage
 from honey_acs.params import HBConfig
+from honey_acs.runtime.host import build_crypto_params, build_crypto_params_from_json
 from honey_acs.service import (
     AcsProtocol,
     AcsService,
@@ -302,9 +300,7 @@ class PersistentAcsHost:
 
     @staticmethod
     def _decode_protocol_wire(payload: bytes) -> tuple[int, int, str, int | None, object]:
-        sender, envelope = cast(
-            tuple[int, ProtocolEnvelope], honey_native.decode_protocol_envelope_py(payload)
-        )
+        sender, envelope = ProtocolEnvelope.from_bytes(payload)
         return (
             sender,
             envelope.round_id,
@@ -329,7 +325,7 @@ class PersistentAcsHost:
                 instance_id=cast(int | None, event.get("instance_id")),
                 message=cast(ProtocolMessage, event["message"]),
             )
-            payload = honey_native.encode_protocol_envelope_py(self._pid, envelope)
+            payload = envelope.to_bytes(self._pid)
             if kind == "send":
                 encoded.append(
                     {

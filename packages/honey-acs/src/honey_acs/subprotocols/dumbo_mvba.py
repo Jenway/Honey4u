@@ -7,12 +7,10 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-import honey_native
-
-from honey_acs.crypto import merkle, sig
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.messages import BaAux, BaConf, BaEst, CoinShareMessage
 from honey_acs.params import CommonParams
+from honey_acs.runtime.crypto import MerkleRuntime, ThresholdSignatureRuntime
 from honey_acs.subprotocols.binary_agreement import BAParams, binaryagreement
 from honey_acs.subprotocols.common_coin import CoinParams, SharedCoin
 from honey_acs.telemetry import METRICS
@@ -26,25 +24,22 @@ type ThresholdProofValidationKey = tuple[bytes, bytes]
 
 @dataclass(slots=True)
 class MVBAParams(CommonParams):
-    coin_pk: sig.PublicKey
-    coin_sk: sig.PrivateShare
-    proof_pk: sig.PublicKey
-    proof_sk: sig.PrivateShare
+    coin: ThresholdSignatureRuntime
+    proof: ThresholdSignatureRuntime
+    merkle: MerkleRuntime
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.coin_pk.threshold != self.f + 1:
+        if self.coin.threshold != self.f + 1:
+            raise ValueError(f"coin threshold={self.coin.threshold} must equal f+1={self.f + 1}")
+        if self.coin.players != self.N:
+            raise ValueError(f"coin players={self.coin.players} must equal N={self.N}")
+        if self.proof.threshold != self.N - self.f:
             raise ValueError(
-                f"coin_pk.threshold={self.coin_pk.threshold} must equal f+1={self.f + 1}"
+                f"proof threshold={self.proof.threshold} must equal N-f={self.N - self.f}"
             )
-        if self.coin_pk.players != self.N:
-            raise ValueError(f"coin_pk.players={self.coin_pk.players} must equal N={self.N}")
-        if self.proof_pk.threshold != self.N - self.f:
-            raise ValueError(
-                f"proof_pk.threshold={self.proof_pk.threshold} must equal N-f={self.N - self.f}"
-            )
-        if self.proof_pk.players != self.N:
-            raise ValueError(f"proof_pk.players={self.proof_pk.players} must equal N={self.N}")
+        if self.proof.players != self.N:
+            raise ValueError(f"proof players={self.proof.players} must equal N={self.N}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,33 +185,33 @@ def _locked_digest(pd_sid: str, roothash: bytes) -> bytes:
 
 
 def _build_threshold_proof(
-    pk: sig.PublicKey,
+    crypto: ThresholdSignatureRuntime,
     shares: dict[int, bytes],
     roothash: bytes,
     msg: bytes,
 ) -> ThresholdShareProof:
-    if len(shares) < pk.threshold:
+    if len(shares) < crypto.threshold:
         raise ProtocolInvariantError(
-            f"need at least {pk.threshold} shares to build threshold proof, got {len(shares)}"
+            f"need at least {crypto.threshold} shares to build threshold proof, got {len(shares)}"
         )
-    selected = dict(sorted(shares.items())[: pk.threshold])
+    selected = dict(sorted(shares.items())[: crypto.threshold])
     return ThresholdShareProof(
         roothash=roothash,
-        signature=sig.combine_trusted_shares(pk, selected, msg),
+        signature=crypto.combine_trusted_shares(selected, msg),
     )
 
 
 def _verify_threshold_proof(
-    pk: sig.PublicKey,
+    crypto: ThresholdSignatureRuntime,
     proof: ThresholdShareProof,
     msg: bytes,
 ) -> bool:
-    return sig.verify_combined(pk, proof.signature, msg)
+    return crypto.verify_combined(proof.signature, msg)
 
 
 def _verify_threshold_proof_cached(
     cache: dict[ThresholdProofValidationKey, bool],
-    pk: sig.PublicKey,
+    crypto: ThresholdSignatureRuntime,
     proof: ThresholdShareProof,
     msg: bytes,
 ) -> bool:
@@ -225,7 +220,7 @@ def _verify_threshold_proof_cached(
     if cached is not None:
         return cached
 
-    valid = _verify_threshold_proof(pk, proof, msg)
+    valid = _verify_threshold_proof(crypto, proof, msg)
     cache[key] = valid
     return valid
 
@@ -276,7 +271,7 @@ async def _provable_dispersal(
     local_done_proof: ThresholdShareProof | None = None
 
     if pid == leader and input_value is not None:
-        root, stripes, proofs = merkle.encode(input_value, k, n)
+        root, stripes, proofs = params.merkle.encode(input_value, k, n)
         leader_root = root
         for recipient in range(n):
             await send(
@@ -285,7 +280,7 @@ async def _provable_dispersal(
                     leader=leader,
                     roothash=root,
                     stripe=stripes[recipient],
-                    merkle_proof=proofs[recipient].to_bytes(),
+                    merkle_proof=proofs[recipient],
                 ),
             )
 
@@ -295,7 +290,7 @@ async def _provable_dispersal(
         if isinstance(message, PdStore):
             if sender != leader or message.leader != leader or local_store is not None:
                 continue
-            if not merkle.verify(message.stripe, message.merkle_proof, message.roothash):
+            if not params.merkle.verify(message.stripe, message.merkle_proof, message.roothash):
                 continue
             local_store = PdStoreRecord(
                 roothash=message.roothash,
@@ -304,7 +299,7 @@ async def _provable_dispersal(
                 merkle_proof=message.merkle_proof,
             )
             await event_queue.put(PdStoreEvent(leader=leader, store=local_store))
-            share = params.proof_sk.sign(_stored_digest(pd_sid, message.roothash))
+            share = params.proof.sign_share(_stored_digest(pd_sid, message.roothash))
             if pid == leader:
                 local_stored_shares[message.roothash] = share
             await send(leader, PdStored(leader=leader, roothash=message.roothash, share=share))
@@ -323,12 +318,12 @@ async def _provable_dispersal(
                 local_share = local_stored_shares.get(message.roothash)
                 if local_share is None or message.share != local_share:
                     continue
-            elif not sig.verify_share(params.proof_pk, message.share, sender, digest):
+            elif not params.proof.verify_share(sender, message.share, digest):
                 continue
             stored_shares[sender] = message.share
             if len(stored_shares) >= n - f and not lock_sent:
                 proof = _build_threshold_proof(
-                    params.proof_pk, stored_shares, message.roothash, digest
+                    params.proof, stored_shares, message.roothash, digest
                 )
                 lock_sent = True
                 if pid == leader:
@@ -343,12 +338,12 @@ async def _provable_dispersal(
                 if local_lock_proof is None or message.proof != local_lock_proof:
                     continue
             elif not _verify_threshold_proof_cached(
-                proof_validity_cache, params.proof_pk, message.proof, digest
+                proof_validity_cache, params.proof, message.proof, digest
             ):
                 continue
             local_lock = message.proof
             await event_queue.put(PdLockEvent(leader=leader, proof=message.proof))
-            share = params.proof_sk.sign(_locked_digest(pd_sid, message.proof.roothash))
+            share = params.proof.sign_share(_locked_digest(pd_sid, message.proof.roothash))
             if pid == leader:
                 local_locked_shares[message.proof.roothash] = share
             await send(
@@ -369,12 +364,12 @@ async def _provable_dispersal(
                 local_share = local_locked_shares.get(message.roothash)
                 if local_share is None or message.share != local_share:
                     continue
-            elif not sig.verify_share(params.proof_pk, message.share, sender, digest):
+            elif not params.proof.verify_share(sender, message.share, digest):
                 continue
             locked_shares[sender] = message.share
             if len(locked_shares) >= n - f and not done_sent:
                 proof = _build_threshold_proof(
-                    params.proof_pk, locked_shares, message.roothash, digest
+                    params.proof, locked_shares, message.roothash, digest
                 )
                 done_sent = True
                 if pid == leader:
@@ -389,7 +384,7 @@ async def _provable_dispersal(
                 if local_done_proof is None or message.proof != local_done_proof:
                     continue
             elif not _verify_threshold_proof_cached(
-                proof_validity_cache, params.proof_pk, message.proof, digest
+                proof_validity_cache, params.proof, message.proof, digest
             ):
                 continue
             local_done = message.proof
@@ -415,18 +410,15 @@ async def _recast_value(
     f = params.f
     k = n - 2 * f
     pd_sid = _pd_sid(sid, leader)
-    stripes_by_root: dict[bytes, dict[int, honey_native.EncodedShard]] = defaultdict(dict)
+    stripes_by_root: dict[bytes, dict[int, bytes]] = defaultdict(dict)
+    proofs_by_root: dict[bytes, dict[int, bytes]] = defaultdict(dict)
     selected_lock: ThresholdShareProof | None = None
     sent_lock = False
     sent_store = False
 
     if local_store is not None:
-        proof = honey_native.MerkleProof.from_bytes(local_store.merkle_proof)
-        stripes_by_root[local_store.roothash][local_store.stripe_owner] = honey_native.EncodedShard(
-            local_store.stripe_owner,
-            local_store.stripe,
-            proof,
-        )
+        stripes_by_root[local_store.roothash][local_store.stripe_owner] = local_store.stripe
+        proofs_by_root[local_store.roothash][local_store.stripe_owner] = local_store.merkle_proof
 
     while True:
         if lock_proof is not None and not sent_lock:
@@ -449,9 +441,10 @@ async def _recast_value(
         if selected_lock is not None:
             root = selected_lock.roothash
             if len(stripes_by_root[root]) >= k:
-                available = list(stripes_by_root[root].values())
-                value = merkle.decode(available, root, k, n)
-                check_root, _, _ = merkle.encode(value, k, n)
+                value = params.merkle.decode(
+                    stripes_by_root[root], proofs_by_root[root], root, k, n
+                )
+                check_root, _, _ = params.merkle.encode(value, k, n)
                 if check_root == root:
                     return value
 
@@ -464,21 +457,19 @@ async def _recast_value(
                 continue
             digest = _stored_digest(pd_sid, message.proof.roothash)
             if _verify_threshold_proof_cached(
-                proof_validity_cache, params.proof_pk, message.proof, digest
+                proof_validity_cache, params.proof, message.proof, digest
             ):
                 selected_lock = message.proof
         elif isinstance(message, MvbaRcStore):
             if message.leader != leader:
                 continue
             store = message.store
-            if not merkle.verify(store.stripe, store.merkle_proof, store.roothash):
+            if not params.merkle.verify_indexed(
+                store.stripe, store.merkle_proof, store.roothash, store.stripe_owner
+            ):
                 continue
-            proof = honey_native.MerkleProof.from_bytes(store.merkle_proof)
-            stripes_by_root[store.roothash][store.stripe_owner] = honey_native.EncodedShard(
-                store.stripe_owner,
-                store.stripe,
-                proof,
-            )
+            stripes_by_root[store.roothash][store.stripe_owner] = store.stripe
+            proofs_by_root[store.roothash][store.stripe_owner] = store.merkle_proof
 
 
 async def _recv_dispatcher(
@@ -583,7 +574,7 @@ async def _run_rc_prepare(
             return 1, local_lock
         digest = _stored_digest(_pd_sid(sid, leader), message.proof.roothash)
         if _verify_threshold_proof_cached(
-            proof_validity_cache, params.proof_pk, message.proof, digest
+            proof_validity_cache, params.proof, message.proof, digest
         ):
             return 1, message.proof
 
@@ -612,8 +603,7 @@ async def _run_mvba_aba_round(
             N=params.N,
             f=params.f,
             leader=params.leader,
-            PK=params.coin_pk,
-            SK=params.coin_sk,
+            crypto=params.coin,
         )
     )
     coin.start(task_group, aba_coin_recv_queue)
@@ -737,8 +727,7 @@ async def dumbo_mvba(
                 N=params.N,
                 f=params.f,
                 leader=params.leader,
-                PK=params.coin_pk,
-                SK=params.coin_sk,
+                crypto=params.coin,
             ),
             single_bit=False,
         )

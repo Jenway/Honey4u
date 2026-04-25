@@ -261,10 +261,6 @@ async def run_bkr93_acs_with_send(
         raise ProtocolInvariantError(
             f"unsupported HoneyBadger broadcast protocol: {broadcast_protocol}"
         )
-    if broadcast_protocol == "prbc" and (not crypto.ecdsa_pks or crypto.ecdsa_sk is None):
-        raise ProtocolInvariantError("HB PRBC requires ECDSA public keys and private key")
-    ecdsa_sk = cast(bytes, crypto.ecdsa_sk)
-
     aba_inputs: list[asyncio.Queue[int]] = [asyncio.Queue(1) for _ in range(n)]
     aba_outputs: list[asyncio.Queue[int]] = [asyncio.Queue(1) for _ in range(n)]
     rbc_outputs: list[asyncio.Queue[int]] = [asyncio.Queue(1) for _ in range(n)]
@@ -310,8 +306,7 @@ async def run_bkr93_acs_with_send(
                     N=n,
                     f=f,
                     leader=j,
-                    PK=crypto.sig_pk,
-                    SK=crypto.sig_sk,
+                    crypto=crypto.runtime.coin,
                 )
             )
             coins.append(coin)
@@ -346,8 +341,8 @@ async def run_bkr93_acs_with_send(
                             N=n,
                             f=f,
                             leader=j,
-                            ecdsa_pks=crypto.ecdsa_pks,
-                            ecdsa_sk=ecdsa_sk,
+                            crypto=crypto.runtime.prbc,
+                            merkle=crypto.runtime.merkle,
                         ),
                         rbc_input,
                         rbc_recvs[j],
@@ -367,7 +362,14 @@ async def run_bkr93_acs_with_send(
                 )
                 rbc_task = spawn(
                     reliablebroadcast(
-                        BroadcastParams(sid=f"{sid}RBC{j}", pid=pid, N=n, f=f, leader=j),
+                        BroadcastParams(
+                            sid=f"{sid}RBC{j}",
+                            pid=pid,
+                            N=n,
+                            f=f,
+                            leader=j,
+                            merkle=crypto.runtime.merkle,
+                        ),
                         rbc_input,
                         rbc_recvs[j],
                         rbc_send_queue,

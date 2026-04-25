@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from honey_acs.exceptions import ProtocolInvariantError
+from honey_acs.runtime.crypto import PrbcCryptoRuntime
 from honey_acs.subprotocols.dumbo_mvba import MVBAParams, dumbo_mvba
 from honey_acs.subprotocols.provable_reliable_broadcast import (
     PrbcEcho,
@@ -30,16 +31,13 @@ type PrbcProofValidationKey = tuple[int, bytes, tuple[tuple[int, bytes], ...]]
 
 @dataclass(slots=True)
 class DumboACSParams(MVBAParams):
-    ecdsa_pks: list[bytes]
-    ecdsa_sk: bytes
+    prbc: PrbcCryptoRuntime
     carryover_grace_ms: int = 0
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if len(self.ecdsa_pks) != self.N:
-            raise ValueError(f"expected {self.N} ECDSA public keys, got {len(self.ecdsa_pks)}")
-        if not self.ecdsa_sk:
-            raise ValueError("ecdsa_sk must not be empty")
+        if self.prbc.players != self.N:
+            raise ValueError(f"expected {self.N} PRBC public keys, got {self.prbc.players}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,8 +65,8 @@ def _prbc_params(params: DumboACSParams, leader: int) -> PRBCParams:
         N=params.N,
         f=params.f,
         leader=leader,
-        ecdsa_pks=params.ecdsa_pks,
-        ecdsa_sk=params.ecdsa_sk,
+        crypto=params.prbc,
+        merkle=params.merkle,
     )
 
 
@@ -145,7 +143,7 @@ def _build_mvba_predicate(
             _prbc_sid(params.sid, leader),
             params.N,
             params.f,
-            params.ecdsa_pks,
+            params.prbc,
             proof,
         )
         proof_validity_cache[key] = valid
@@ -194,7 +192,7 @@ async def dumbo_acs(
             _prbc_sid(params.sid, leader),
             params.N,
             params.f,
-            params.ecdsa_pks,
+            params.prbc,
             proof,
         )
         proof_validity_cache[key] = valid

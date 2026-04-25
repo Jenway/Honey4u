@@ -1,4 +1,3 @@
-from honey_acs.crypto import ecdsa, merkle, sig
 from honey_acs.dumbo.dumbo_acs import DumboACSParams, DumboProofDiffuse, dumbo_acs
 from honey_acs.exceptions import (
     ProtocolInvariantError,
@@ -8,10 +7,6 @@ from honey_acs.exceptions import (
 )
 from honey_acs.hb.bkr93 import CSParams, commonsubset, run_bkr93_acs_with_send
 from honey_acs.host_bridge import PersistentAcsHost, build_persistent_acs_host_from_json
-from honey_acs.host_crypto import (
-    build_crypto_params_from_json,
-    build_crypto_params_from_payload,
-)
 from honey_acs.messages import Channel, ProtocolEnvelope, ProtocolMessage
 from honey_acs.params import CommonParams, CryptoParams, HBConfig
 from honey_acs.pool_reuse import (
@@ -24,6 +19,10 @@ from honey_acs.pool_reuse import (
     encode_bundle_acs_payload,
     encode_inline_acs_payload,
     encode_reference_acs_payload,
+)
+from honey_acs.runtime.host import (
+    build_crypto_params_from_json,
+    build_crypto_params_from_payload,
 )
 
 __all__ = [
@@ -52,11 +51,8 @@ __all__ = [
     "commonsubset",
     "decode_acs_payload",
     "dumbo_acs",
-    "ecdsa",
     "encode_bundle_acs_payload",
     "encode_inline_acs_payload",
     "encode_reference_acs_payload",
-    "merkle",
     "run_bkr93_acs_with_send",
-    "sig",
 ]

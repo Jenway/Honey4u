@@ -5,9 +5,9 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-from honey_acs.crypto import sig
 from honey_acs.messages import CoinShareMessage
 from honey_acs.params import CommonParams
+from honey_acs.runtime.crypto import ThresholdSignatureRuntime
 from honey_acs.telemetry import METRICS
 
 
@@ -17,15 +17,14 @@ def sha256_hash(x: bytes) -> bytes:
 
 @dataclass
 class CoinParams(CommonParams):
-    PK: sig.PublicKey
-    SK: sig.PrivateShare
+    crypto: ThresholdSignatureRuntime
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.PK.threshold != self.f + 1:
-            raise ValueError(f"PK.threshold={self.PK.threshold} must equal f+1={self.f + 1}")
-        if self.PK.players != self.N:
-            raise ValueError(f"PK.players={self.PK.players} must equal N={self.N}")
+        if self.crypto.threshold != self.f + 1:
+            raise ValueError(f"coin threshold={self.crypto.threshold} must equal f+1={self.f + 1}")
+        if self.crypto.players != self.N:
+            raise ValueError(f"coin players={self.crypto.players} must equal N={self.N}")
 
 
 class SharedCoin:
@@ -34,8 +33,7 @@ class SharedCoin:
         self.pid = params.pid
         self.N = params.N
         self.f = params.f
-        self.PK = params.PK
-        self.SK = params.SK
+        self.crypto = params.crypto
         self.single_bit = single_bit
 
         self._received: dict[int, dict[int, bytes]] = {}
@@ -88,7 +86,7 @@ class SharedCoin:
 
                 if sender_id != self.pid:
                     try:
-                        if not self.PK.verify_share(sender_id, raw_sig, msg):
+                        if not self.crypto.verify_share(sender_id, raw_sig, msg):
                             self.logger.warning(
                                 f"Invalid sig from {sender_id} for round {round_id}"
                             )
@@ -110,8 +108,7 @@ class SharedCoin:
 
         msg = f"{self.sid}:{round_id}".encode()
         try:
-            sig_combined = sig.combine_trusted_shares(
-                self.PK,
+            sig_combined = self.crypto.combine_trusted_shares(
                 dict(list(self._received[round_id].items())[: self.f + 1]),
                 msg,
             )
@@ -126,7 +123,7 @@ class SharedCoin:
             raise ValueError(f"Round {round_id} has already been purged.")
 
         msg = f"{self.sid}:{round_id}".encode()
-        sig_share = self.SK.sign(msg)
+        sig_share = self.crypto.sign_share(msg)
         await broadcast_queue.put(CoinShareMessage(round_id=round_id, signature=sig_share))
 
         self._received.setdefault(round_id, {})[self.pid] = sig_share

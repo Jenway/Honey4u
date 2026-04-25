@@ -1,7 +1,12 @@
 """Parameter classes for HoneyBadgerBFT protocols"""
 
-from dataclasses import dataclass, field
-from typing import Any
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from honey_acs.runtime.crypto import AcsRuntimeCrypto
 
 
 @dataclass
@@ -28,33 +33,13 @@ class CommonParams:
 
 @dataclass
 class CryptoParams:
-    """Cryptographic key material for HoneyBadgerBFT."""
+    """Runtime cryptographic capabilities for ACS protocols."""
 
-    sig_pk: Any
-    sig_sk: Any
-    ecdsa_pks: list[bytes] = field(default_factory=list)
-    ecdsa_sk: bytes | None = None
-    proof_sig_pk: Any | None = None
-    proof_sig_sk: Any | None = None
+    runtime: AcsRuntimeCrypto
 
     def __post_init__(self) -> None:
-        """Validate crypto parameters."""
-        if self.sig_pk is None or self.sig_sk is None:
-            raise ValueError("Signature keys (sig_pk, sig_sk) must not be None")
-        if self.ecdsa_pks or self.ecdsa_sk is not None:
-            if not self.ecdsa_pks:
-                raise ValueError("ECDSA public keys must not be empty when ECDSA is configured")
-            if self.ecdsa_sk is None:
-                raise ValueError("ECDSA private key must not be None when ECDSA is configured")
-        if self.proof_sig_pk is not None or self.proof_sig_sk is not None:
-            if self.proof_sig_pk is None:
-                raise ValueError(
-                    "proof_sig_pk must not be None when proof signatures are configured"
-                )
-            if self.proof_sig_sk is None:
-                raise ValueError(
-                    "proof_sig_sk must not be None when proof signatures are configured"
-                )
+        if self.runtime is None:
+            raise ValueError("runtime crypto must not be None")
 
 
 @dataclass

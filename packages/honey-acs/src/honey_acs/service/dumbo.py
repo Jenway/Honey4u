@@ -4,7 +4,6 @@ import asyncio
 from collections.abc import Callable
 from typing import cast
 
-from honey_acs.crypto import sig
 from honey_acs.dumbo.dumbo_acs import (
     DumboACSDecision,
     DumboACSParams,
@@ -108,11 +107,9 @@ class DumboRoundSession(ManagedRoundSession):
         carryover_queue: asyncio.Queue[tuple[PrbcOutcome, ...]] | None = None
         if self.context.config.enable_broadcast_pool_reuse:
             carryover_queue = asyncio.Queue(1)
-        proof_pk = self.context.crypto.proof_sig_pk
-        proof_sk = self.context.crypto.proof_sig_sk
-        ecdsa_sk = self.context.crypto.ecdsa_sk
-        if proof_pk is None or proof_sk is None or ecdsa_sk is None:
-            raise ProtocolInvariantError("Dumbo ACS requires proof signature keys and ECDSA key")
+        runtime = self.context.crypto.runtime
+        if runtime.proof is None:
+            raise ProtocolInvariantError("Dumbo ACS requires proof signature runtime")
 
         async def send(recipient: int, message: object) -> None:
             self.context.emit_event(
@@ -168,12 +165,10 @@ class DumboRoundSession(ManagedRoundSession):
                     N=self.context.nodes,
                     f=self.context.faulty,
                     leader=self.context.pid,
-                    coin_pk=self.context.crypto.sig_pk,
-                    coin_sk=self.context.crypto.sig_sk,
-                    proof_pk=cast(sig.PublicKey, proof_pk),
-                    proof_sk=cast(sig.PrivateShare, proof_sk),
-                    ecdsa_pks=self.context.crypto.ecdsa_pks,
-                    ecdsa_sk=ecdsa_sk,
+                    coin=runtime.coin,
+                    proof=runtime.proof,
+                    merkle=runtime.merkle,
+                    prbc=runtime.prbc,
                     carryover_grace_ms=self.context.config.pool_grace_ms
                     if self.context.config.enable_broadcast_pool_reuse
                     else 0,
