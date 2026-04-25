@@ -4,7 +4,7 @@ import asyncio
 
 import honey_native
 import pytest
-from honey_acs.runtime.native import NativeMerkleRuntime, NativeThresholdSignatureRuntime
+from honey_acs.runtime.native import NativeMerkleRuntime
 from honey_acs.subprotocols.dumbo_mvba import (
     MVBAParams,
     PdDone,
@@ -20,10 +20,11 @@ from honey_acs.subprotocols.dumbo_mvba import (
 MERKLE = NativeMerkleRuntime()
 
 
-def _threshold_runtimes(players: int, threshold: int) -> list[NativeThresholdSignatureRuntime]:
-    pk, sks = honey_native.sig_generate(players, threshold)
-    pk_bytes = pk.to_bytes()
-    return [NativeThresholdSignatureRuntime.from_bytes(pk_bytes, sk.to_bytes()) for sk in sks]
+def _threshold_runtimes(
+    players: int, threshold: int
+) -> list[honey_native.ThresholdSignatureRuntime]:
+    pk_bytes, sk_bytes_list = honey_native.sig_generate(players, threshold)
+    return [honey_native.ThresholdSignatureRuntime.from_bytes(pk_bytes, sk) for sk in sk_bytes_list]
 
 
 def _network_sender(
@@ -156,7 +157,7 @@ async def test_provable_dispersal_skips_self_and_surplus_share_verification() ->
     locked_digest = _locked_digest(pd_sid, roothash)
 
     class CountingThresholdRuntime:
-        def __init__(self, inner: NativeThresholdSignatureRuntime) -> None:
+        def __init__(self, inner: honey_native.ThresholdSignatureRuntime) -> None:
             self.inner = inner
             self.verify_calls = 0
 

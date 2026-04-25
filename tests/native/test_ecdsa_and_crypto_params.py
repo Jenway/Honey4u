@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import honey_native
-from honey_acs.runtime.native import NativePrbcCryptoRuntime
 
 
 def test_ecdsa_api_round_trip_and_threshold_verify() -> None:
@@ -10,7 +9,7 @@ def test_ecdsa_api_round_trip_and_threshold_verify() -> None:
 
     sig0 = honey_native.ecdsa_sign(sks[0], msg)
     sig1 = honey_native.ecdsa_sign(sks[1], msg)
-    runtime = NativePrbcCryptoRuntime(pks)
+    runtime = honey_native.PrbcCryptoRuntime(pks)
 
     assert honey_native.ecdsa_public_key_from_private(sks[0]) == pks[0]
     assert honey_native.ecdsa_verify(pks[0], msg, sig0) is True

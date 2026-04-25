@@ -5,19 +5,16 @@ import asyncio
 import honey_native
 import pytest
 from honey_acs.dumbo.dumbo_acs import DumboACSParams, dumbo_acs
-from honey_acs.runtime.native import (
-    NativeMerkleRuntime,
-    NativePrbcCryptoRuntime,
-    NativeThresholdSignatureRuntime,
-)
+from honey_acs.runtime.native import NativeMerkleRuntime
 
 MERKLE = NativeMerkleRuntime()
 
 
-def _threshold_runtimes(players: int, threshold: int) -> list[NativeThresholdSignatureRuntime]:
-    pk, sks = honey_native.sig_generate(players, threshold)
-    pk_bytes = pk.to_bytes()
-    return [NativeThresholdSignatureRuntime.from_bytes(pk_bytes, sk.to_bytes()) for sk in sks]
+def _threshold_runtimes(
+    players: int, threshold: int
+) -> list[honey_native.ThresholdSignatureRuntime]:
+    pk_bytes, sk_bytes_list = honey_native.sig_generate(players, threshold)
+    return [honey_native.ThresholdSignatureRuntime.from_bytes(pk_bytes, sk) for sk in sk_bytes_list]
 
 
 def _network_sender(
@@ -61,7 +58,7 @@ async def test_dumbo_acs_agrees_on_prbc_selected_values() -> None:
                             coin=coin_runtimes[pid],
                             proof=proof_runtimes[pid],
                             merkle=MERKLE,
-                            prbc=NativePrbcCryptoRuntime(ecdsa_pks, ecdsa_sks[pid]),
+                            prbc=honey_native.PrbcCryptoRuntime(ecdsa_pks, ecdsa_sks[pid]),
                         ),
                         input_queues[pid],
                         decide_queues[pid],

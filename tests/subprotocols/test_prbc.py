@@ -4,7 +4,7 @@ import asyncio
 
 import honey_native
 import pytest
-from honey_acs.runtime.native import NativeMerkleRuntime, NativePrbcCryptoRuntime
+from honey_acs.runtime.native import NativeMerkleRuntime
 from honey_acs.subprotocols.provable_reliable_broadcast import (
     PrbcEcho,
     PRBCParams,
@@ -24,8 +24,8 @@ def _generate_ecdsa(players: int) -> tuple[list[bytes], list[bytes]]:
 
 def _prbc_crypto(
     public_keys: list[bytes], private_key: bytes | None = None
-) -> NativePrbcCryptoRuntime:
-    return NativePrbcCryptoRuntime(public_keys, private_key)
+) -> honey_native.PrbcCryptoRuntime:
+    return honey_native.PrbcCryptoRuntime(public_keys, private_key)
 
 
 def _sign(private_key: bytes, digest: bytes) -> bytes:

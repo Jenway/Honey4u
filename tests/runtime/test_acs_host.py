@@ -6,7 +6,6 @@ from typing import cast
 
 import honey_native
 from honey_acs.host_bridge import PersistentAcsHost, build_persistent_acs_host
-from honey_acs.runtime.native import NativePrbcCryptoRuntime
 from honey_acs.subprotocols.provable_reliable_broadcast import (
     deserialize_prbc_proof,
     validate_prbc_proof,
@@ -94,21 +93,23 @@ def _generate_crypto_payloads(
 ) -> list[dict]:
     """Generate per-node crypto material using honey_native primitives."""
     threshold = faulty + 1
-    sig_pk, sig_sks = honey_native.sig_generate(num_nodes, threshold)
+    sig_pk_bytes, sig_sk_bytes_list = honey_native.sig_generate(num_nodes, threshold)
     ecdsa_pks, ecdsa_sks = honey_native.ecdsa_generate_keys(num_nodes)
-    proof_sig_pk = None
-    proof_sig_sks: list = []
+    proof_sig_pk_bytes: bytes | None = None
+    proof_sig_sk_bytes_list: list[bytes] = []
     if protocol == "dumbo":
         # Dumbo MVBA proof requires threshold = N-f (not f+1 like the coin)
-        proof_sig_pk, proof_sig_sks = honey_native.sig_generate(num_nodes, num_nodes - faulty)
+        proof_sig_pk_bytes, proof_sig_sk_bytes_list = honey_native.sig_generate(
+            num_nodes, num_nodes - faulty
+        )
     return [
         {
-            "sig_pk": sig_pk.to_bytes(),
-            "sig_sk": sig_sks[pid].to_bytes(),
+            "sig_pk": sig_pk_bytes,
+            "sig_sk": sig_sk_bytes_list[pid],
             "ecdsa_pks": list(ecdsa_pks),
             "ecdsa_sk": ecdsa_sks[pid],
-            "proof_sig_pk": proof_sig_pk.to_bytes() if proof_sig_pk is not None else None,
-            "proof_sig_sk": proof_sig_sks[pid].to_bytes() if proof_sig_sks else None,
+            "proof_sig_pk": proof_sig_pk_bytes,
+            "proof_sig_sk": proof_sig_sk_bytes_list[pid] if proof_sig_sk_bytes_list else None,
         }
         for pid in range(num_nodes)
     ]
@@ -311,7 +312,7 @@ def test_persistent_hb_acs_host_supports_prbc_broadcast_mode() -> None:
                     f"{round_sid}CSRBC{proposer}",
                     num_nodes,
                     faulty,
-                    NativePrbcCryptoRuntime(ecdsa_pks),
+                    honey_native.PrbcCryptoRuntime(ecdsa_pks),
                     proof,
                 )
     finally:
