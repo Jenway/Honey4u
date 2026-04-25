@@ -1,5 +1,5 @@
 use super::super::args::NodeRuntimeArgs;
-use super::super::config::{BroadcastPoolBackend, BroadcastPoolConfig, ByzantineNodeConfig};
+use super::super::config::{BroadcastPoolConfig, ByzantineNodeConfig};
 use super::super::digest::{GENESIS_CHAIN_DIGEST, compute_chain_digest, sha256_hex};
 use super::super::io::current_time_millis;
 use super::super::phase_stats::{DriverHostPhaseStats, DriverPhaseStats, record_pull, record_push};
@@ -642,13 +642,10 @@ pub(in crate::node_runtime) fn run_driver_rounds(
     let mut per_round_block_sizes = Vec::with_capacity(args.rounds);
     let mut per_round_chain_digests = Vec::with_capacity(args.rounds);
     let mut round_details = Vec::with_capacity(args.rounds);
-    let mut rust_broadcast_mempool = match broadcast_pool_config.backend {
-        BroadcastPoolBackend::Rust => Some(BroadcastMempool::new(
-            broadcast_pool_config.max_size,
-            broadcast_pool_config.expire_rounds,
-        )),
-        BroadcastPoolBackend::None => None,
-    };
+    let mut rust_broadcast_mempool = Some(BroadcastMempool::new(
+        broadcast_pool_config.max_size,
+        broadcast_pool_config.expire_rounds,
+    ));
     let ctx = DriverRoundCtx {
         host,
         transport,
@@ -788,7 +785,6 @@ pub(in crate::node_runtime) fn run_driver_rounds(
                 .as_ref()
                 .map(BroadcastMempool::len)
                 .unwrap_or(0),
-            broadcast_pool_backend: broadcast_pool_config.backend,
         },
         queue_peaks,
     ))

@@ -57,7 +57,6 @@ pub(super) fn build_node_result_json(
     let byzantine_share_broadcast_suppressed = run_result.byzantine_share_broadcast_suppressed;
     let byzantine_empty_proposal_used = run_result.byzantine_empty_proposal_used;
     let rust_broadcast_mempool_size = run_result.rust_broadcast_mempool_size;
-    let broadcast_pool_backend = run_result.broadcast_pool_backend.as_str();
     let origin_tx_latencies = origin_tx_latencies_by_round
         .iter()
         .flat_map(|samples| samples.iter().copied())
@@ -113,7 +112,6 @@ pub(super) fn build_node_result_json(
         "origin_tx_latencies_by_round": origin_tx_latencies_by_round,
         "chain_digest": run_result.chain_digest,
         "ledger_path": Value::Null,
-        "broadcast_pool_backend": broadcast_pool_backend,
         "mempool_size": rust_broadcast_mempool_size,
         "subprotocol_timings": {
             "hb.round.seconds": timing_summary_json(&round_latencies),

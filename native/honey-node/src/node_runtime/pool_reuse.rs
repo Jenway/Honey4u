@@ -56,16 +56,6 @@ pub enum AcsPayload {
 
 // ─── Serialization ────────────────────────────────────────────────────────
 
-/// Encode a bare payload (no references) using the inline tag.
-#[allow(dead_code)]
-pub fn encode_inline_acs_payload(payload: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(1 + 4 + payload.len());
-    out.push(INLINE_TAG);
-    out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-    out.extend_from_slice(payload);
-    out
-}
-
 /// Encode a bundle proposal (inline payload + pool references).
 /// Corresponds to Python `encode_bundle_acs_payload`.
 pub fn encode_bundle_acs_payload(payload: &[u8], refs: &[PoolReference]) -> Vec<u8> {
@@ -288,16 +278,6 @@ impl BroadcastMempool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_inline_round_trip() {
-        let payload = b"hello world";
-        let encoded = encode_inline_acs_payload(payload);
-        match decode_acs_payload(&encoded).unwrap() {
-            AcsPayload::Inline(data) => assert_eq!(data, payload),
-            _ => panic!("expected Inline"),
-        }
-    }
 
     #[test]
     fn test_bundle_round_trip() {

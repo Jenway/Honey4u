@@ -1,4 +1,4 @@
-use super::config::{BroadcastPoolBackend, BroadcastPoolConfig, ByzantineNodeConfig};
+use super::config::{BroadcastPoolConfig, ByzantineNodeConfig};
 use super::phase_stats::DriverPhaseStats;
 use crate::acs::AcsBackend;
 use crate::node_runtime::args::NodeRuntimeArgs;
@@ -139,5 +139,4 @@ pub(super) struct DriverNodeResult {
     pub(super) per_round_chain_digests: Vec<String>,
     pub(super) round_details: Vec<DriverNodeRoundTelemetry>,
     pub(super) rust_broadcast_mempool_size: usize,
-    pub(super) broadcast_pool_backend: BroadcastPoolBackend,
 }
