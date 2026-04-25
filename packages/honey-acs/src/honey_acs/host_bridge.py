@@ -14,7 +14,6 @@ from pathlib import Path
 from queue import Queue
 from typing import Any, cast
 
-from honey_acs.messages import Channel, ProtocolEnvelope, ProtocolMessage
 from honey_acs.params import HBConfig
 from honey_acs.runtime.host import build_crypto_params, build_crypto_params_from_json
 from honey_acs.service import (
@@ -55,7 +54,7 @@ class PersistentAcsHost:
         self._processed_commands = 0
         self._command_counts: dict[str, int] = {
             "start_round": 0,
-            "push_inbound_wire_batch": 0,
+            "push_inbound_wire_batch": 0,  # key kept for Rust stats() compat
             "pull_outbound_wire_batch": 0,
             "abort_round": 0,
             "stats": 0,
@@ -161,15 +160,14 @@ class PersistentAcsHost:
                 proposal_input=proposal_input,
             )
             return None
-        if command.kind == "push_inbound_wire_batch":
-            payloads = cast(list[bytes], command.payload)
-            items = [self._decode_protocol_wire(payload) for payload in payloads]
+        if command.kind == "push_inbound_decoded_batch":
+            items = cast(list[tuple], command.payload)
             return await self._service.deliver_batch_decoded(items)
         if command.kind == "abort_round":
             await self._service.abort_round(cast(int, command.payload))
             return None
         if command.kind == "pull_outbound_wire_batch":
-            return self._encode_wire_events(self._drain_service_events(cast(int, command.payload)))
+            return self._drain_service_events(cast(int, command.payload))
         if command.kind == "stats":
             return self._service.stats()
         if command.kind == "shutdown":
@@ -298,55 +296,6 @@ class PersistentAcsHost:
             encoding="utf-8",
         )
 
-    @staticmethod
-    def _decode_protocol_wire(payload: bytes) -> tuple[int, int, str, int | None, object]:
-        sender, envelope = ProtocolEnvelope.from_bytes(payload)
-        return (
-            sender,
-            envelope.round_id,
-            str(envelope.channel),
-            envelope.instance_id,
-            envelope.message,
-        )
-
-    def _encode_wire_events(self, events: list[dict[str, object]]) -> list[dict[str, object]]:
-        encoded: list[dict[str, object]] = []
-        for event in events:
-            kind = str(event.get("kind"))
-            if kind not in {"send", "broadcast"}:
-                encoded.append(event)
-                continue
-
-            round_id = cast(int, event["round_id"])
-            channel = Channel(str(event["channel"]))
-            envelope = ProtocolEnvelope(
-                round_id=round_id,
-                channel=channel,
-                instance_id=cast(int | None, event.get("instance_id")),
-                message=cast(ProtocolMessage, event["message"]),
-            )
-            payload = envelope.to_bytes(self._pid)
-            if kind == "send":
-                encoded.append(
-                    {
-                        "kind": "send",
-                        "round_id": round_id,
-                        "recipient": cast(int, event["recipient"]),
-                        "payload": payload,
-                    }
-                )
-                continue
-
-            encoded.append(
-                {
-                    "kind": "broadcast",
-                    "round_id": round_id,
-                    "include_self": bool(event.get("include_self", True)),
-                    "payload": payload,
-                }
-            )
-        return encoded
-
     def start_round(self, *, round_id: int, sid: str, proposal_input: bytes | str) -> None:
         self._command_counts["start_round"] += 1
         payload = (
@@ -354,12 +303,17 @@ class PersistentAcsHost:
         )
         self._submit_command("start_round", (round_id, sid, payload))
 
-    def push_inbound_wire_batch(self, items: list[bytes]) -> int:
-        self._command_counts["push_inbound_wire_batch"] += 1
+    def push_inbound_decoded_batch(self, items: list[tuple]) -> int:
+        """Accept pre-decoded (sender, round_id, channel, instance_id, message) tuples.
+
+        The wire-format decoding is now done on the Rust side before this
+        method is called, so no codec call is needed here.
+        """
+        self._command_counts["push_inbound_wire_batch"] += 1  # key kept for Rust stats()
         self._batch_item_counts["push_inbound_wire_batch_items"] += len(items)
         if not items:
             return 0
-        self._submit_command("push_inbound_wire_batch", items, wait=False)
+        self._submit_command("push_inbound_decoded_batch", items, wait=False)
         return len(items)
 
     def abort_round(self, round_id: int) -> None:
@@ -372,7 +326,11 @@ class PersistentAcsHost:
             raise RuntimeError("pull_outbound_wire_batch is already pending")
         self._pending_pull = self._submit_async_command("pull_outbound_wire_batch", limit)
 
-    def finish_pull_outbound_wire_batch(self) -> list[dict[str, object]]:
+    def finish_pull_outbound_decoded_batch(self) -> list[dict[str, object]]:
+        """Return service events with Python message objects (no wire encoding).
+
+        Wire encoding is now performed on the Rust side after this call returns.
+        """
         if self._pending_pull is None:
             raise RuntimeError("pull_outbound_wire_batch was not started")
         pending_pull = self._pending_pull

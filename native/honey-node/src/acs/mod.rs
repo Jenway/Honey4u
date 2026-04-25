@@ -134,7 +134,7 @@ fn parse_acs_backend_kind(config_json: &str) -> Result<AcsBackendKind, String> {
     match value
         .get("acs_host_backend")
         .and_then(Value::as_str)
-        .unwrap_or("python")
+        .ok_or_else(|| String::from("acs_host_backend is required in config_json"))?
     {
         "python" => Ok(AcsBackendKind::Python),
         "rust" | "rust_fin" => Ok(AcsBackendKind::RustFin),

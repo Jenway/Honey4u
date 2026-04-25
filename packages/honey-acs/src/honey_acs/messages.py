@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import cast
-
-from honey_acs.exceptions import SerializationError
-from honey_acs.runtime import codec
 
 
 class Channel(StrEnum):
@@ -74,83 +69,7 @@ class EncryptedBatch:
     encrypted_key: bytes
     ciphertext: bytes
 
-    def to_bytes(self) -> bytes:
-        return codec.encode_encrypted_batch(self)
-
-    @staticmethod
-    def from_bytes(raw: bytes) -> EncryptedBatch:
-        return cast(EncryptedBatch, codec.decode_encrypted_batch(raw))
-
-
-def encode_tx(tx: object) -> bytes:
-    if isinstance(tx, str):
-        return codec.encode_json_string(tx)
-    try:
-        return json.dumps(tx, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-            "utf-8"
-        )
-    except (TypeError, ValueError) as exc:
-        raise SerializationError("Transaction must be JSON serializable") from exc
-
-
-def decode_tx(raw: bytes) -> object:
-    return codec.decode_tx(raw)
-
-
-def tx_dedup_key(tx: object) -> str:
-    if isinstance(tx, str):
-        return f"s:{tx}"
-    return encode_tx(tx).decode("utf-8")
-
-
-def encode_tx_batch(items: list[bytes]) -> bytes:
-    return codec.encode_tx_batch(items)
-
-
-def decode_tx_batch(raw: bytes) -> list[bytes]:
-    return codec.decode_tx_batch(raw)
-
-
-def decode_block(raw: bytes) -> list[object]:
-    return [decode_tx(item) for item in decode_tx_batch(raw)]
-
-
-def merge_tx_batches_bytes(blocks: tuple[bytes, ...] | list[bytes]) -> bytes:
-    return codec.merge_tx_batches_bytes(blocks)
-
-
-def merge_tx_batches(blocks: tuple[bytes, ...] | list[bytes]) -> list[object]:
-    return decode_block(merge_tx_batches_bytes(blocks))
-
 
 ProtocolMessage = (
     RbcVal | RbcEcho | RbcReady | BaEst | BaAux | BaConf | CoinShareMessage | RawPayload
 )
-
-
-@dataclass(frozen=True, slots=True)
-class ProtocolEnvelope:
-    round_id: int
-    channel: Channel
-    instance_id: int | None
-    message: ProtocolMessage
-
-    def to_bytes(self, sender: int) -> bytes:
-        return codec.encode_protocol_envelope(sender, self)
-
-    @staticmethod
-    def from_bytes(payload: bytes) -> tuple[int, ProtocolEnvelope]:
-        sender, envelope = codec.decode_protocol_envelope(payload)
-        return sender, cast(ProtocolEnvelope, envelope)
-
-
-@dataclass(frozen=True, slots=True)
-class OutboundEnvelope:
-    recipient: int
-    envelope: ProtocolEnvelope
-
-
-@dataclass(frozen=True, slots=True)
-class InboundEnvelope:
-    sender: int
-    envelope: ProtocolEnvelope

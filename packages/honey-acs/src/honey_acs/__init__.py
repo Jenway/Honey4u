@@ -7,7 +7,7 @@ from honey_acs.exceptions import (
 )
 from honey_acs.hb.bkr93 import CSParams, commonsubset, run_bkr93_acs_with_send
 from honey_acs.host_bridge import PersistentAcsHost, build_persistent_acs_host_from_json
-from honey_acs.messages import Channel, ProtocolEnvelope, ProtocolMessage
+from honey_acs.messages import Channel, ProtocolMessage
 from honey_acs.params import CommonParams, CryptoParams, HBConfig
 from honey_acs.pool_reuse import (
     DecodedAcsPayload,
@@ -39,7 +39,6 @@ __all__ = [
     "PoolFetchRequest",
     "PoolFetchResponse",
     "PoolReference",
-    "ProtocolEnvelope",
     "ProtocolInvariantError",
     "ProtocolMessage",
     "RoutingError",

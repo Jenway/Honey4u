@@ -6,7 +6,6 @@ from typing import cast
 
 import honey_native
 from honey_acs.host_bridge import PersistentAcsHost, build_persistent_acs_host
-from honey_acs.messages import ProtocolEnvelope
 from honey_acs.runtime.native import NativePrbcCryptoRuntime
 from honey_acs.subprotocols.provable_reliable_broadcast import (
     deserialize_prbc_proof,
@@ -29,31 +28,30 @@ def _drain_until_round_complete(
         progressed = False
         for pid, host in enumerate(hosts):
             host.begin_pull_outbound_wire_batch(512)
-            for event in host.finish_pull_outbound_wire_batch():
+            for event in host.finish_pull_outbound_decoded_batch():
                 progressed = True
                 kind = str(event["kind"])
                 if kind in {"send", "broadcast"}:
-                    sender, envelope = cast(
-                        tuple[int, ProtocolEnvelope],
-                        honey_native.decode_protocol_envelope_py(cast(bytes, event["payload"])),
+                    assert cast(int, event["round_id"]) == round_id
+                    decoded_item = (
+                        pid,
+                        cast(int, event["round_id"]),
+                        cast(str, event["channel"]),
+                        cast(int | None, event.get("instance_id")),
+                        event["message"],
                     )
-                    assert sender == pid
-                    assert envelope.round_id == round_id
-                    payload = cast(bytes, event["payload"])
                     if kind == "send":
                         recipient = cast(int, event["recipient"])
-                        hosts[recipient].push_inbound_wire_batch([payload])
+                        hosts[recipient].push_inbound_decoded_batch([decoded_item])
                     else:
                         include_self = bool(event.get("include_self", True))
                         recipients = (
                             range(len(hosts))
                             if include_self
-                            else (
-                                recipient for recipient in range(len(hosts)) if recipient != sender
-                            )
+                            else (r for r in range(len(hosts)) if r != pid)
                         )
                         for recipient in recipients:
-                            hosts[recipient].push_inbound_wire_batch([payload])
+                            hosts[recipient].push_inbound_decoded_batch([decoded_item])
                     continue
                 if kind == "proposal_ready":
                     proposal_id = cast(str, event["proposal_id"])
@@ -89,6 +87,59 @@ def _selected_proposers(
     )
 
 
+def _generate_crypto_payloads(
+    protocol: str,
+    num_nodes: int,
+    faulty: int,
+) -> list[dict]:
+    """Generate per-node crypto material using honey_native primitives."""
+    threshold = faulty + 1
+    sig_pk, sig_sks = honey_native.sig_generate(num_nodes, threshold)
+    ecdsa_pks, ecdsa_sks = honey_native.ecdsa_generate_keys(num_nodes)
+    proof_sig_pk = None
+    proof_sig_sks: list = []
+    if protocol == "dumbo":
+        # Dumbo MVBA proof requires threshold = N-f (not f+1 like the coin)
+        proof_sig_pk, proof_sig_sks = honey_native.sig_generate(num_nodes, num_nodes - faulty)
+    return [
+        {
+            "sig_pk": sig_pk.to_bytes(),
+            "sig_sk": sig_sks[pid].to_bytes(),
+            "ecdsa_pks": list(ecdsa_pks),
+            "ecdsa_sk": ecdsa_sks[pid],
+            "proof_sig_pk": proof_sig_pk.to_bytes() if proof_sig_pk is not None else None,
+            "proof_sig_sk": proof_sig_sks[pid].to_bytes() if proof_sig_sks else None,
+        }
+        for pid in range(num_nodes)
+    ]
+
+
+def _build_hosts_from_crypto(
+    protocol: str,
+    crypto_list: list[dict],
+    *,
+    num_nodes: int,
+    faulty: int,
+    config: dict[str, object] | None = None,
+) -> list[PersistentAcsHost]:
+    return [
+        build_persistent_acs_host(
+            protocol=protocol,
+            pid=pid,
+            nodes=num_nodes,
+            faulty=faulty,
+            sig_pk=crypto["sig_pk"],
+            sig_sk=crypto["sig_sk"],
+            ecdsa_pks=crypto["ecdsa_pks"],
+            ecdsa_sk=crypto["ecdsa_sk"],
+            proof_sig_pk=crypto.get("proof_sig_pk"),
+            proof_sig_sk=crypto.get("proof_sig_sk"),
+            config_json=json.dumps(config) if config is not None else None,
+        )
+        for pid, crypto in enumerate(crypto_list)
+    ]
+
+
 def _build_hosts(
     protocol: str,
     num_nodes: int,
@@ -96,55 +147,13 @@ def _build_hosts(
     *,
     config: dict[str, object] | None = None,
 ) -> list[PersistentAcsHost]:
-    payloads = (
-        honey_native.generate_dumbo_crypto_payloads_json(num_nodes, faulty)
-        if protocol == "dumbo"
-        else honey_native.generate_hb_crypto_payloads_json(num_nodes, faulty)
-    )
-    return _build_hosts_from_payloads(
+    return _build_hosts_from_crypto(
         protocol,
-        payloads,
+        _generate_crypto_payloads(protocol, num_nodes, faulty),
         num_nodes=num_nodes,
         faulty=faulty,
         config=config,
     )
-
-
-def _build_hosts_from_payloads(
-    protocol: str,
-    payloads: list[str],
-    *,
-    num_nodes: int,
-    faulty: int,
-    config: dict[str, object] | None = None,
-) -> list[PersistentAcsHost]:
-    hosts: list[PersistentAcsHost] = []
-    for pid, payload in enumerate(payloads):
-        decoded = cast(dict[str, object], json.loads(payload))
-        hosts.append(
-            build_persistent_acs_host(
-                protocol=cast(str, protocol),
-                pid=pid,
-                nodes=num_nodes,
-                faulty=faulty,
-                sig_pk=bytes.fromhex(cast(str, decoded["sig_pk"])),
-                sig_sk=bytes.fromhex(cast(str, decoded["sig_sk"])),
-                ecdsa_pks=[bytes.fromhex(value) for value in cast(list[str], decoded["ecdsa_pks"])],
-                ecdsa_sk=bytes.fromhex(cast(str, decoded["ecdsa_sk"])),
-                proof_sig_pk=(
-                    bytes.fromhex(cast(str, decoded["proof_sig_pk"]))
-                    if protocol == "dumbo"
-                    else None
-                ),
-                proof_sig_sk=(
-                    bytes.fromhex(cast(str, decoded["proof_sig_sk"]))
-                    if protocol == "dumbo"
-                    else None
-                ),
-                config_json=json.dumps(config) if config is not None else None,
-            )
-        )
-    return hosts
 
 
 def test_persistent_hb_acs_host_reuses_worker_threads_across_rounds() -> None:
@@ -263,14 +272,11 @@ def test_persistent_hb_acs_host_supports_prbc_broadcast_mode() -> None:
     num_nodes = 4
     faulty = 1
     round_sid = "test:acs-host:hb:prbc:"
-    payloads = honey_native.generate_hb_crypto_payloads_json(num_nodes, faulty)
-    decoded_payloads = [cast(dict[str, object], json.loads(payload)) for payload in payloads]
-    ecdsa_pks = [
-        bytes.fromhex(value) for value in cast(list[str], decoded_payloads[0]["ecdsa_pks"])
-    ]
-    hosts = _build_hosts_from_payloads(
+    crypto_list = _generate_crypto_payloads("hb", num_nodes, faulty)
+    ecdsa_pks = crypto_list[0]["ecdsa_pks"]
+    hosts = _build_hosts_from_crypto(
         "hb",
-        payloads,
+        crypto_list,
         num_nodes=num_nodes,
         faulty=faulty,
         config={"hb_broadcast_protocol": "prbc"},
