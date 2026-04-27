@@ -11,6 +11,8 @@
 
 当前仓库已经具备受控网络扰动实验与最小拜占庭节点注入能力，且已有正式归档结果；因此本文档不再把这些能力视为待实现目标，而是把它们作为已完成背景，服务于论文收尾与结果解释。
 
+当前仓库结构重构也已完成：核心 Rust crate 已展平到仓库根目录的 `honey-crypto/`、`honey-wire/`、`honey-acs/`、`honey-node/`，Python ACS 包已迁入 `honey-acs/packages/honey-acs/`，PyO3 扩展已迁入 `honey-acs/honey-native/`，旧的根目录 `packages/` 和 `native/` 前缀不再作为源码位置使用。
+
 ## 当前现状
 
 - 一句话判断：
@@ -189,7 +191,7 @@
 
 ### A. 网络扰动能力
 
-优先在 `native/honey-node/src/transport/local_tcp.rs` 的发送路径加入受控扰动，而不是单独再起一个 TCP 代理程序。
+优先在 `honey-node/src/transport/local_tcp.rs` 的发送路径加入受控扰动，而不是单独再起一个 TCP 代理程序。
 
 原因：
 
@@ -200,7 +202,7 @@
 
 ### B. 拜占庭节点注入能力
 
-优先在 `network_driver` 的外层 driver/transport 边界注入恶意行为，而不是修改 Python/Rust ACS host 内核。
+优先在 `rust-driver` / `honey-node/src/node_runtime/` 的外层 driver/transport 边界注入恶意行为，而不是修改 Python/Rust ACS host 内核。
 
 原因：
 
@@ -280,8 +282,8 @@ behavior = "invalid_fetch_response"
 
 文件：
 
-- `native/honey-node/src/network_driver/config.rs`
-- `native/honey-node/src/cli.rs`
+- `honey-node/src/node_runtime/config.rs`
+- `honey-node/src/cli.rs`
 
 任务：
 
@@ -295,8 +297,8 @@ behavior = "invalid_fetch_response"
 
 文件：
 
-- `native/honey-node/src/transport/local_tcp.rs`
-- `native/honey-node/src/network_driver.rs`
+- `honey-node/src/transport/local_tcp.rs`
+- `honey-node/src/node_runtime/mod.rs`
 
 任务：
 
@@ -312,9 +314,9 @@ behavior = "invalid_fetch_response"
 
 文件：
 
-- `native/honey-node/src/network_driver/round.rs`
-- `native/honey-node/src/network_driver/types.rs`
-- `native/honey-node/src/network_driver/result.rs`
+- `honey-node/src/node_runtime/round/driver.rs`
+- `honey-node/src/node_runtime/types.rs`
+- `honey-node/src/node_runtime/result.rs`
 
 任务：
 
@@ -329,7 +331,7 @@ behavior = "invalid_fetch_response"
 
 - `benchmarks/support/runners/_core.py`
 - `benchmarks/cli/tps.py`
-- `benchmarks/cli/dumbo_paper_suite.py`
+- `benchmarks/honey-bench/src/suite.rs`
 
 任务：
 
@@ -420,7 +422,7 @@ behavior = "invalid_fetch_response"
 
 任务：
 
-- 扩展 `dumbo_paper_suite.py` 的维度定义
+- 扩展 `honey-bench suite` 的维度定义
 - 新增网络扰动实验配置文件
 - 输出单独的 summary/delta 表
 
@@ -443,7 +445,7 @@ behavior = "invalid_fetch_response"
 
 当前进展：
 
-- `dumbo_paper_suite.py` 已支持 `network_faults` 维度展开和可读标签分组
+- `honey-bench suite` 已支持 `network_faults` 维度展开和可读标签分组
 - `benchmarks/configs/paper/dumbo_smoke.toml` 与 `benchmarks/configs/paper/dumbo_comprehensive.toml` 已补入固定延迟、抖动、慢诚实节点实验条目
 - 已形成正式网络结果目录：
   - `paper-final-network-jitter-20260422T000021Z`
@@ -585,7 +587,7 @@ behavior = "invalid_fetch_response"
 - `tests/benchmarks/test_tps_cli.py`
   - 新字段解析
   - 新 summary 输出
-- `native/honey-node` Rust tests
+- `honey-node` Rust tests
   - 网络扰动配置解析
   - 慢诚实节点延迟注入
   - 恶意 fetch response 被拒绝

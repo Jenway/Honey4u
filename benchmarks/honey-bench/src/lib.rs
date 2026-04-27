@@ -1,6 +1,6 @@
-use honey_node::host_crypto::{
-    generate_dumbo_crypto_payloads_json, generate_hb_crypto_payloads_json,
-};
+#![recursion_limit = "256"]
+
+use honey_node::keygen::{generate_dumbo_crypto_payloads_json, generate_hb_crypto_payloads_json};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs::{self, File};
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod drive_dumbo;
 mod drive_hb;
+pub mod suite;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Protocol {

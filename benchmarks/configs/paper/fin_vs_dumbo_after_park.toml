@@ -1,0 +1,21 @@
+[suite]
+name = "fin_vs_dumbo_after_park"
+
+[defaults]
+rounds = 3
+repeats = 1
+global_timeout = 90.0
+pool_grace_ms = 100
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 5
+pool_mempool_max = 512
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "three_backends"
+description = "Compare python / rust_dumbo / rust_fin after park/unpark fix, reuse off and on."
+backend = ["python", "rust_dumbo", "rust_fin"]
+reuse_enabled = [false, true]
+nodes = [4, 8]
+batch_size = [8, 16]

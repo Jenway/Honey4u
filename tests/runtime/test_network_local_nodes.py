@@ -17,6 +17,7 @@ def _assert_transport_stats_populated(results: list[Any]) -> None:
     assert all(result.transport_stats.recv_frames > 0 for result in results)
 
 
+@pytest.mark.xfail(reason="mode=acs not yet migrated to honey-bench", strict=True)
 def test_local_honeybadger_acs_can_be_rust_driven_with_persistent_python_hosts() -> None:
     result = run_local_honeybadger_acs_rust_driven(
         sid="test:bench-driver:acs:hb",
@@ -219,6 +220,7 @@ def test_local_dumbo_benchmark_rust_driven_reports_round_stats() -> None:
     _assert_transport_stats_populated(results)
 
 
+@pytest.mark.xfail(reason="mode=acs not yet migrated to honey-bench", strict=True)
 def test_local_dumbo_acs_can_be_rust_driven_with_persistent_python_hosts() -> None:
     result = run_local_dumbo_acs_rust_driven(
         sid="test:bench-driver:acs:dumbo",

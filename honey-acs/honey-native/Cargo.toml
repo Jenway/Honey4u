@@ -1,0 +1,30 @@
+[package]
+name = "honey-native"
+version = "0.1.1"
+edition = "2024"
+
+[lib]
+name = "honey_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+honey-crypto = { path = "../../honey-crypto" }
+honey-node = { path = "../../honey-node" }
+honey-wire = { path = "../../honey-wire" }
+k256 = "0.13.4"
+sha2 = "0.11.0"
+pyo3 = { version = "0.28.2", features = ["extension-module", "abi3-py38"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+
+[lints.clippy]
+clone_on_copy = "allow"
+empty_line_after_doc_comments = "allow"
+enum_variant_names = "allow"
+manual_div_ceil = "allow"
+needless_borrow = "allow"
+needless_borrows_for_generic_args = "allow"
+needless_range_loop = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+wrong_self_convention = "allow"

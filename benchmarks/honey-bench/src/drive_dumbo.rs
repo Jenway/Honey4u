@@ -6,7 +6,7 @@ use super::*;
 /// connections. TPKE partial-decryption shares are exchanged directly between
 /// sibling subprocesses over real TCP using the `HbShareBundle` wire frame,
 /// matching the distributed `bench-driver` execution model.
-fn run_drive_dumbo_multiprocess(
+pub(crate) fn run_drive_dumbo_multiprocess(
     args: &BenchDumboArgs,
     node_binary: &Path,
 ) -> Result<String, String> {

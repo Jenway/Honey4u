@@ -1,7 +1,7 @@
 target-version = "py314"
 line-length = 100
 
-exclude = [".venv", "native/honey-native", "**/__pycache__"]
+exclude = [".venv", "honey-acs/honey-native", "**/__pycache__"]
 
 [lint]
 select = ["E", "F", "W", "I", "B", "UP"]

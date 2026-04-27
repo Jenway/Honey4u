@@ -526,6 +526,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "honey-acs"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "crossbeam-channel",
+ "honey-crypto",
+ "honey-wire",
+ "k256",
+ "pyo3",
+ "pyo3-build-config",
+ "rand",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "honey-bench"
 version = "0.1.0"
 dependencies = [
@@ -555,6 +573,7 @@ version = "0.1.1"
 dependencies = [
  "honey-crypto",
  "honey-node",
+ "honey-wire",
  "k256",
  "pyo3",
  "serde",
@@ -569,7 +588,9 @@ dependencies = [
  "bincode",
  "crossbeam-channel",
  "hex",
+ "honey-acs",
  "honey-crypto",
+ "honey-wire",
  "k256",
  "pyo3",
  "pyo3-build-config",
@@ -580,6 +601,15 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "toml",
+]
+
+[[package]]
+name = "honey-wire"
+version = "0.1.0"
+dependencies = [
+ "honey-crypto",
+ "rkyv",
+ "serde_json",
 ]
 
 [[package]]
