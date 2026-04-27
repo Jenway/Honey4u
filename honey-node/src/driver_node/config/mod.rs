@@ -1,3 +1,4 @@
+use super::error::{DriverError, DriverResult};
 use honey_node::transport::NetworkFaultConfig;
 use serde_json::Value;
 
@@ -24,11 +25,13 @@ impl ByzantineBehavior {
         }
     }
 
-    fn parse(value: &str) -> Result<Self, String> {
+    fn parse(value: &str) -> DriverResult<Self> {
         match value {
             "silent" => Ok(Self::Silent),
             "invalid_fetch_response" => Ok(Self::InvalidFetchResponse),
-            other => Err(format!("unsupported byzantine behavior: {other}")),
+            other => Err(DriverError::config(format!(
+                "unsupported byzantine behavior: {other}"
+            ))),
         }
     }
 }
@@ -54,10 +57,9 @@ impl ByzantineNodeConfig {
     }
 }
 
-pub(super) fn parse_broadcast_pool_config(
-    config_json: &str,
-) -> Result<BroadcastPoolConfig, String> {
-    let value: Value = serde_json::from_str(config_json).map_err(|err| err.to_string())?;
+pub(super) fn parse_broadcast_pool_config(config_json: &str) -> DriverResult<BroadcastPoolConfig> {
+    let value: Value =
+        serde_json::from_str(config_json).map_err(|err| DriverError::config(err.to_string()))?;
     let max_size = value
         .get("pool_mempool_max")
         .and_then(Value::as_u64)
@@ -95,14 +97,15 @@ pub(super) fn parse_broadcast_pool_config(
 pub(super) fn parse_network_fault_config(
     config_json: &str,
     pid: usize,
-) -> Result<NetworkFaultConfig, String> {
-    let value: Value = serde_json::from_str(config_json).map_err(|err| err.to_string())?;
+) -> DriverResult<NetworkFaultConfig> {
+    let value: Value =
+        serde_json::from_str(config_json).map_err(|err| DriverError::config(err.to_string()))?;
     let Some(network_value) = value.get("network_faults") else {
         return Ok(NetworkFaultConfig::default());
     };
     let network = network_value
         .as_object()
-        .ok_or_else(|| String::from("network_faults must be a JSON object"))?;
+        .ok_or_else(|| DriverError::config("network_faults must be a JSON object"))?;
 
     let enabled = network
         .get("enabled")
@@ -135,37 +138,36 @@ pub(super) fn parse_network_fault_config(
 pub(super) fn parse_byzantine_node_config(
     config_json: &str,
     pid: usize,
-) -> Result<ByzantineNodeConfig, String> {
-    let value: Value = serde_json::from_str(config_json).map_err(|err| err.to_string())?;
+) -> DriverResult<ByzantineNodeConfig> {
+    let value: Value =
+        serde_json::from_str(config_json).map_err(|err| DriverError::config(err.to_string()))?;
     let Some(nodes_value) = value.get("byzantine_nodes") else {
         return Ok(ByzantineNodeConfig::default());
     };
     let nodes = nodes_value
         .as_array()
-        .ok_or_else(|| String::from("byzantine_nodes must be a JSON array"))?;
+        .ok_or_else(|| DriverError::config("byzantine_nodes must be a JSON array"))?;
     let mut matched_behavior = None;
     for entry_value in nodes {
         let entry = entry_value
             .as_object()
-            .ok_or_else(|| String::from("byzantine_nodes entries must be JSON objects"))?;
+            .ok_or_else(|| DriverError::config("byzantine_nodes entries must be JSON objects"))?;
         let entry_pid = entry
             .get("pid")
             .and_then(Value::as_u64)
-            .ok_or_else(|| String::from("byzantine_nodes[].pid must be an integer"))?
+            .ok_or_else(|| DriverError::config("byzantine_nodes[].pid must be an integer"))?
             as usize;
-        let behavior = ByzantineBehavior::parse(
-            entry
-                .get("behavior")
-                .and_then(Value::as_str)
-                .ok_or_else(|| String::from("byzantine_nodes[].behavior must be a string"))?,
-        )?;
+        let behavior =
+            ByzantineBehavior::parse(entry.get("behavior").and_then(Value::as_str).ok_or_else(
+                || DriverError::config("byzantine_nodes[].behavior must be a string"),
+            )?)?;
         if entry_pid != pid {
             continue;
         }
         if matched_behavior.replace(behavior).is_some() {
-            return Err(format!(
+            return Err(DriverError::config(format!(
                 "duplicate byzantine_nodes entry configured for pid {pid}"
-            ));
+            )));
         }
     }
     Ok(ByzantineNodeConfig {
@@ -173,13 +175,13 @@ pub(super) fn parse_byzantine_node_config(
     })
 }
 
-fn parse_slow_honest_extra_delay_ms(network_faults: &Value, pid: usize) -> Result<u64, String> {
+fn parse_slow_honest_extra_delay_ms(network_faults: &Value, pid: usize) -> DriverResult<u64> {
     let Some(slow_honest_value) = network_faults.get("slow_honest") else {
         return Ok(0);
     };
     let slow_honest = slow_honest_value
         .as_object()
-        .ok_or_else(|| String::from("network_faults.slow_honest must be a JSON object"))?;
+        .ok_or_else(|| DriverError::config("network_faults.slow_honest must be a JSON object"))?;
     let extra_delay_ms = slow_honest
         .get("extra_delay_ms")
         .and_then(Value::as_u64)
@@ -189,7 +191,7 @@ fn parse_slow_honest_extra_delay_ms(network_faults: &Value, pid: usize) -> Resul
     };
     let pids = pids_value
         .as_array()
-        .ok_or_else(|| String::from("network_faults.slow_honest.pids must be an array"))?;
+        .ok_or_else(|| DriverError::config("network_faults.slow_honest.pids must be an array"))?;
     let pid_matches = pids.iter().any(|value| value.as_u64() == Some(pid as u64));
     Ok(if pid_matches { extra_delay_ms } else { 0 })
 }
@@ -275,6 +277,10 @@ mod tests {
         )
         .expect_err("duplicate pid entries should fail");
 
-        assert!(error.contains("duplicate byzantine_nodes entry"));
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate byzantine_nodes entry")
+        );
     }
 }

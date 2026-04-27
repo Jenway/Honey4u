@@ -194,14 +194,14 @@
 
 ```bash
 uv sync --dev --locked
-cargo build --manifest-path native/Cargo.toml --release --bin honey-node
+cargo build --release -p honey-node -p honey-bench
 typst compile paper/main-codex-refer.typ /tmp/honey4u-paper-check.pdf
 ```
 
 建议在正式跑实验前，再执行一次轻量 dry-run：
 
 ```bash
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
   --list-experiments
 ```
@@ -223,10 +223,9 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
   --experiments highload_n12 \
-  --binary native/target/release/honey-node \
   --output-dir benchmarks/results/paper-final-highload-${RUN_TAG}
 ```
 
@@ -249,10 +248,8 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_grace_python_micro.toml \
-  --all \
-  --binary native/target/release/honey-node \
   --output-dir benchmarks/results/paper-final-grace-python-${RUN_TAG}
 ```
 
@@ -267,10 +264,9 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
   --experiments slow_honest_n12 \
-  --binary native/target/release/honey-node \
   --output-dir benchmarks/results/paper-final-slow-honest-${RUN_TAG}
 ```
 
@@ -296,7 +292,6 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
 uv run python benchmarks/cli/dumbo_reuse_sweep.py \
-  --binary native/target/release/honey-node \
   --nodes 4,8,12,16 \
   --batches 1,2,4,8,16,32 \
   --rounds 4 \
@@ -318,8 +313,7 @@ uv run python benchmarks/cli/dumbo_reuse_sweep.py \
 
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-uv run python benchmarks/cli/dumbo_backend_reuse_compare.py \
-  --binary native/target/release/honey-node \
+uv run python benchmarks/cli/tps.py \
   --backends python,rust_fin \
   --nodes 4,8,12 \
   --batch-size 32 \
@@ -339,10 +333,9 @@ uv run python benchmarks/cli/dumbo_backend_reuse_compare.py \
 
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
   --experiments network_jitter_n12 \
-  --binary native/target/release/honey-node \
   --output-dir benchmarks/results/paper-final-network-jitter-${RUN_TAG}
 ```
 
@@ -360,10 +353,9 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
   --experiments network_fixed_delay_n12 \
-  --binary native/target/release/honey-node \
   --output-dir benchmarks/results/paper-final-network-fixed-delay-${RUN_TAG}
 ```
 
@@ -378,10 +370,9 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
   --experiments byzantine_silent_n12,byzantine_invalid_fetch_response_n12 \
-  --binary native/target/release/honey-node \
   --output-dir benchmarks/results/paper-final-boundary-${RUN_TAG}
 ```
 
@@ -396,7 +387,6 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 
 - `byzantine_invalid_fetch_responses_sent_total`
 - `byzantine_fetch_requests_ignored_total`
-- `byzantine_batch_broadcast_suppressed_total`
 - `byzantine_share_broadcast_suppressed_total`
 - `byzantine_empty_proposal_rounds_total`
 
@@ -410,9 +400,8 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 先 dry-run：
 
 ```bash
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
-  --all \
   --dry-run
 ```
 
@@ -420,10 +409,9 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
   --experiments reuse_scale,highload_n12,backend_compare \
-  --binary native/target/release/honey-node \
   --output-dir benchmarks/results/paper-final-core-suite-${RUN_TAG}
 ```
 
@@ -431,10 +419,9 @@ Rust 敏感性相关实验应在 fetch 相关叙事收口后单独执行：
 
 ```bash
 RUN_TAG=$(date -u +%Y%m%dT%H%M%SZ)
-uv run python benchmarks/cli/dumbo_paper_suite.py \
+target/release/honey-bench suite \
   --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
   --experiments sensitivity_grace_n12,sensitivity_reuse_limit_n12,sensitivity_expire_n12,sensitivity_mempool_n12 \
-  --binary native/target/release/honey-node \
   --output-dir benchmarks/results/paper-final-rust-sensitivity-${RUN_TAG}
 ```
 
@@ -507,22 +494,22 @@ uv run python benchmarks/cli/dumbo_paper_suite.py \
 
 建议提交内容：
 
-- `native/honey-node/src/transport/`
-- `native/honey-node/src/network_driver/`
-- `native/honey-node/src/drive_dumbo.rs`
+- `honey-node/src/transport/`
+- `honey-node/src/driver_node/`
+- `benchmarks/honey-bench/src/drive_dumbo.rs`
 - `tests/runtime/test_network_local_nodes.py`
 
 按当前工作树，可直接归入这一提交的文件包括：
 
-- `native/honey-node/src/drive_dumbo.rs`
-- `native/honey-node/src/network_driver.rs`
-- `native/honey-node/src/network_driver/config.rs`
-- `native/honey-node/src/network_driver/result.rs`
-- `native/honey-node/src/network_driver/round.rs`
-- `native/honey-node/src/network_driver/types.rs`
-- `native/honey-node/src/pool_wire.rs`
-- `native/honey-node/src/transport/local_tcp.rs`
-- `native/honey-node/src/transport/mod.rs`
+- `benchmarks/honey-bench/src/drive_dumbo.rs`
+- `honey-node/src/driver_node/mod.rs`
+- `honey-node/src/driver_node/config/mod.rs`
+- `honey-node/src/driver_node/output.rs`
+- `honey-node/src/driver_node/round/loop.rs`
+- `honey-node/src/driver_node/round/state.rs`
+- `honey-node/src/driver_node/wire/fetch.rs`
+- `honey-node/src/transport/local_tcp.rs`
+- `honey-node/src/transport/mod.rs`
 - `tests/runtime/test_network_local_nodes.py`
 
 建议提交说明：
@@ -536,18 +523,18 @@ feat(runtime): add controlled network fault injection and transport telemetry
 建议提交内容：
 
 - `benchmarks/cli/tps.py`
-- `benchmarks/cli/dumbo_paper_suite.py`
+- `benchmarks/honey-bench`
 - `benchmarks/configs/paper/`
 - `benchmarks/support/runners/`
 - `tests/benchmarks/test_tps_cli.py`
-- `tests/benchmarks/test_dumbo_paper_suite.py`
+- `tests/benchmarks/test_tps_cli.py`
 
 按当前工作树，可直接归入这一提交的文件包括：
 
 - `benchmarks/cli/__init__.py`
-- `benchmarks/cli/dumbo_backend_reuse_compare.py`
+- `benchmarks/cli/tps.py`
 - `benchmarks/cli/dumbo_reuse_sweep.py`
-- `benchmarks/cli/dumbo_paper_suite.py`
+- `benchmarks/honey-bench`
 - `benchmarks/cli/tps.py`
 - `benchmarks/configs/paper/dumbo_comprehensive.toml`
 - `benchmarks/configs/paper/dumbo_grace_python_micro.toml`
@@ -557,7 +544,7 @@ feat(runtime): add controlled network fault injection and transport telemetry
 - `benchmarks/support/runners/_core.py`
 - `benchmarks/support/runners/results.py`
 - `tests/benchmarks/test_tps_cli.py`
-- `tests/benchmarks/test_dumbo_paper_suite.py`
+- `tests/benchmarks/test_tps_cli.py`
 
 建议提交说明：
 

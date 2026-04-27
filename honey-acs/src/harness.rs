@@ -10,7 +10,7 @@ const ACS_PULL_BATCH_LIMIT: usize = 512;
 const ACS_IDLE_BACKOFF: Duration = Duration::from_micros(50);
 
 // ---------------------------------------------------------------------------
-// Phase stats — inlined from honey-node's node_runtime::phase_stats
+// Phase stats — shared with honey-node's driver_node::telemetry
 // (harness.rs is a #[cfg(test)] module so this is test-only code)
 // ---------------------------------------------------------------------------
 

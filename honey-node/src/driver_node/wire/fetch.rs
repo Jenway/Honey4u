@@ -1,3 +1,4 @@
+use super::super::error::{DriverError, DriverResult};
 use honey_wire::api::decode_result;
 use honey_wire::format::{ChannelWire, MessageWire, ProtocolEnvelopeWire};
 
@@ -19,7 +20,7 @@ pub enum PoolFetchWire {
 }
 
 /// Decode a `DUMBO_POOL` message from a raw protocol-envelope wire payload.
-pub fn decode_pool_fetch_from_wire(bytes: &[u8]) -> Result<Option<PoolFetchWire>, String> {
+pub fn decode_pool_fetch_from_wire(bytes: &[u8]) -> DriverResult<Option<PoolFetchWire>> {
     let Ok(wire) = decode_result::<ProtocolEnvelopeWire>(bytes) else {
         return Ok(None);
     };
@@ -45,7 +46,7 @@ pub fn decode_pool_fetch_from_wire(bytes: &[u8]) -> Result<Option<PoolFetchWire>
             item_id,
             payload,
         })),
-        _ => Err(String::from(
+        _ => Err(DriverError::wire(
             "unexpected message type in DUMBO_POOL envelope",
         )),
     }
@@ -58,7 +59,7 @@ pub fn encode_pool_fetch_request_wire(
     origin_round: u32,
     origin_sender: u32,
     roothash: &[u8],
-) -> Result<Vec<u8>, String> {
+) -> DriverResult<Vec<u8>> {
     honey_wire::api::encode_result(&ProtocolEnvelopeWire {
         sender,
         round_id,
@@ -71,6 +72,7 @@ pub fn encode_pool_fetch_request_wire(
             roothash: roothash.to_vec(),
         },
     })
+    .map_err(DriverError::wire)
 }
 
 pub fn encode_pool_fetch_response_wire(
@@ -78,7 +80,7 @@ pub fn encode_pool_fetch_response_wire(
     round_id: u32,
     item_id: &str,
     payload: &[u8],
-) -> Result<Vec<u8>, String> {
+) -> DriverResult<Vec<u8>> {
     honey_wire::api::encode_result(&ProtocolEnvelopeWire {
         sender,
         round_id,
@@ -89,6 +91,7 @@ pub fn encode_pool_fetch_response_wire(
             payload: payload.to_vec(),
         },
     })
+    .map_err(DriverError::wire)
 }
 
 #[cfg(test)]

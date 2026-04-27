@@ -1,21 +1,16 @@
 use rand::RngExt;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::thread;
 
+use super::super::error::{DriverError, DriverResult};
 use honey_crypto::aes;
 use honey_crypto::threshold;
 use honey_crypto::threshold::keygen::{
     Ciphertext, PartialDecryptionShare, PkePrivateKeyShare, PkePublicParams,
 };
 use honey_wire::api::{decode_result, encode_result};
-use honey_wire::crypto_wire::{
-    CiphertextWire, PartialDecryptionShareWire, PkePrivateKeyShareWire, PkePublicParamsWire,
-};
-use honey_wire::format::{EncryptedBatchWire, TxBatchWire};
-
-pub use honey_crypto::threshold::keygen::{
-    PkePrivateKeyShare as HbPkePrivateKeyShare, PkePublicParams as HbPkePublicParams,
-};
+use honey_wire::crypto_wire::{CiphertextWire, PartialDecryptionShareWire};
+use honey_wire::format::EncryptedBatchWire;
 
 struct BatchDecryptState {
     encrypted_key: Ciphertext,
@@ -30,93 +25,58 @@ pub struct BatchDecryptor {
     states: Vec<BatchDecryptState>,
 }
 
-fn encode_ciphertext(value: &Ciphertext) -> Result<Vec<u8>, String> {
-    encode_result(&CiphertextWire::from_runtime(value))
+fn encode_ciphertext(value: &Ciphertext) -> DriverResult<Vec<u8>> {
+    encode_result(&CiphertextWire::from_runtime(value)).map_err(DriverError::serialization)
 }
 
-fn decode_ciphertext(payload: &[u8]) -> Result<Ciphertext, String> {
-    let wire: CiphertextWire = decode_result(payload)?;
+fn decode_ciphertext(payload: &[u8]) -> DriverResult<Ciphertext> {
+    let wire: CiphertextWire = decode_result(payload).map_err(DriverError::serialization)?;
     wire.into_runtime()
+        .map_err(DriverError::honey_badger_crypto)
 }
 
-fn encode_share(value: &PartialDecryptionShare) -> Result<Vec<u8>, String> {
+fn encode_share(value: &PartialDecryptionShare) -> DriverResult<Vec<u8>> {
     encode_result(&PartialDecryptionShareWire::from_runtime(value))
+        .map_err(DriverError::serialization)
 }
 
-fn decode_share(payload: &[u8]) -> Result<PartialDecryptionShare, String> {
-    let wire: PartialDecryptionShareWire = decode_result(payload)?;
+fn decode_share(payload: &[u8]) -> DriverResult<PartialDecryptionShare> {
+    let wire: PartialDecryptionShareWire =
+        decode_result(payload).map_err(DriverError::serialization)?;
     wire.into_runtime()
+        .map_err(DriverError::honey_badger_crypto)
 }
 
-fn decode_encrypted_batch(payload: &[u8]) -> Result<(Ciphertext, Vec<u8>), String> {
-    let wire: EncryptedBatchWire = decode_result(payload)?;
+fn decode_encrypted_batch(payload: &[u8]) -> DriverResult<(Ciphertext, Vec<u8>)> {
+    let wire: EncryptedBatchWire = decode_result(payload).map_err(DriverError::serialization)?;
     Ok((decode_ciphertext(&wire.encrypted_key)?, wire.ciphertext))
 }
 
-pub fn encode_json_string(value: &str) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(value).map_err(|err| err.to_string())
-}
-
-pub fn encode_tx_batch(items: Vec<Vec<u8>>) -> Result<Vec<u8>, String> {
-    encode_result(&TxBatchWire { items })
-}
-
-pub fn decode_tx_batch(payload: &[u8]) -> Result<Vec<Vec<u8>>, String> {
-    let wire: TxBatchWire = decode_result(payload)?;
-    Ok(wire.items)
-}
-
-pub fn merge_tx_batches_bytes(blocks: Vec<Vec<u8>>) -> Result<Vec<u8>, String> {
-    let mut ordered_results = Vec::new();
-    let mut seen = HashSet::new();
-
-    for payload in blocks {
-        let wire: TxBatchWire = decode_result(&payload)?;
-        for raw_tx in wire.items {
-            if seen.insert(raw_tx.clone()) {
-                ordered_results.push(raw_tx);
-            }
-        }
-    }
-
-    encode_result(&TxBatchWire {
-        items: ordered_results,
-    })
-}
-
-pub fn decode_pke_public_params(payload: &[u8]) -> Result<PkePublicParams, String> {
-    let wire: PkePublicParamsWire = decode_result(payload)?;
-    wire.into_runtime()
-}
-
-pub fn decode_pke_private_share(payload: &[u8]) -> Result<PkePrivateKeyShare, String> {
-    let wire: PkePrivateKeyShareWire = decode_result(payload)?;
-    wire.into_runtime()
-}
-
-pub fn seal_encrypted_batch(
+pub(crate) fn seal_encrypted_batch(
     public_params: &PkePublicParams,
     payload: &[u8],
-) -> Result<Vec<u8>, String> {
+) -> DriverResult<Vec<u8>> {
     let mut key = [0u8; 32];
     let mut rng = rand::rng();
     rng.fill(&mut key);
-    let ciphertext = aes::encrypt(&key, payload).map_err(|err| err.to_string())?;
+    let ciphertext = aes::encrypt(&key, payload)
+        .map_err(|err| DriverError::honey_badger_crypto(err.to_string()))?;
     let encrypted_key =
         encode_ciphertext(&threshold::pke::seal(&public_params.master_public_key, key))?;
     encode_result(&EncryptedBatchWire {
         encrypted_key,
         ciphertext,
     })
+    .map_err(DriverError::serialization)
 }
 
 impl BatchDecryptor {
-    pub fn new(public_params: PkePublicParams, batches: Vec<Vec<u8>>) -> Result<Self, String> {
+    pub fn new(public_params: PkePublicParams, batches: Vec<Vec<u8>>) -> DriverResult<Self> {
         let mut states = Vec::with_capacity(batches.len());
         for batch in batches {
             let (encrypted_key, ciphertext) = decode_encrypted_batch(&batch)?;
             threshold::pke::verify_ciphertext(&public_params, &encrypted_key)
-                .map_err(|err| err.to_string())?;
+                .map_err(|err| DriverError::honey_badger_crypto(err.to_string()))?;
             states.push(BatchDecryptState {
                 encrypted_key,
                 ciphertext,
@@ -137,7 +97,7 @@ impl BatchDecryptor {
         self.states.len()
     }
 
-    pub fn local_shares(&self, share: &PkePrivateKeyShare) -> Result<Vec<Vec<u8>>, String> {
+    pub fn local_shares(&self, share: &PkePrivateKeyShare) -> DriverResult<Vec<Vec<u8>>> {
         self.local_runtime_shares(share)?
             .into_iter()
             .map(|share| encode_share(&share))
@@ -147,7 +107,7 @@ impl BatchDecryptor {
     pub fn local_runtime_shares(
         &self,
         share: &PkePrivateKeyShare,
-    ) -> Result<Vec<PartialDecryptionShare>, String> {
+    ) -> DriverResult<Vec<PartialDecryptionShare>> {
         let mut shares = Vec::with_capacity(self.states.len());
         for state in &self.states {
             let share = threshold::pke::partial_open_trusted(share, &state.encrypted_key);
@@ -160,7 +120,7 @@ impl BatchDecryptor {
     pub fn local_runtime_share_bundles(
         &self,
         private_shares: &[(usize, PkePrivateKeyShare)],
-    ) -> Result<Vec<(usize, Vec<Option<PartialDecryptionShare>>)>, String> {
+    ) -> DriverResult<Vec<(usize, Vec<Option<PartialDecryptionShare>>)>> {
         if private_shares.len() <= 1 {
             return private_shares
                 .iter()
@@ -176,12 +136,12 @@ impl BatchDecryptor {
                 .collect();
         }
 
-        thread::scope(|scope| -> Result<Vec<_>, String> {
+        thread::scope(|scope| -> DriverResult<Vec<_>> {
             let handles = private_shares
                 .iter()
                 .map(|(pid, private_share)| {
                     scope.spawn(move || {
-                        Ok::<_, String>((
+                        Ok::<_, DriverError>((
                             *pid,
                             self.local_runtime_shares(private_share)?
                                 .into_iter()
@@ -194,9 +154,9 @@ impl BatchDecryptor {
             handles
                 .into_iter()
                 .map(|handle| {
-                    handle
-                        .join()
-                        .map_err(|_| String::from("HB runtime share worker panicked"))?
+                    handle.join().map_err(|_| {
+                        DriverError::honey_badger_crypto("HB runtime share worker panicked")
+                    })?
                 })
                 .collect()
         })
@@ -206,9 +166,9 @@ impl BatchDecryptor {
         &mut self,
         sender_id: usize,
         shares: Vec<Option<Vec<u8>>>,
-    ) -> Result<Vec<usize>, String> {
+    ) -> DriverResult<Vec<usize>> {
         if shares.len() != self.states.len() {
-            return Err(String::from(
+            return Err(DriverError::invariant(
                 "share bundle length does not match batch count",
             ));
         }
@@ -227,9 +187,9 @@ impl BatchDecryptor {
         &mut self,
         sender_id: usize,
         shares: Vec<Option<PartialDecryptionShare>>,
-    ) -> Result<Vec<usize>, String> {
+    ) -> DriverResult<Vec<usize>> {
         if shares.len() != self.states.len() {
-            return Err(String::from(
+            return Err(DriverError::invariant(
                 "share bundle length does not match batch count",
             ));
         }
@@ -289,9 +249,9 @@ impl BatchDecryptor {
         &mut self,
         sender_id: usize,
         shares: Vec<Option<PartialDecryptionShare>>,
-    ) -> Result<Vec<usize>, String> {
+    ) -> DriverResult<Vec<usize>> {
         if shares.len() != self.states.len() {
-            return Err(String::from(
+            return Err(DriverError::invariant(
                 "share bundle length does not match batch count",
             ));
         }
@@ -358,6 +318,9 @@ impl BatchDecryptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver_node::hb_shell::{
+        decode_tx_batch, encode_json_string, encode_tx_batch, merge_tx_batches_bytes,
+    };
     use honey_crypto::threshold::keygen::generate_pke_keys;
 
     #[test]

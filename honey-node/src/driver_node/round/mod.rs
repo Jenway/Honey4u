@@ -1,21 +1,25 @@
-mod batch;
-mod driver;
-mod pool;
-mod transport;
+mod acs_io;
+mod inbox;
+mod r#loop;
+mod metrics;
+mod results;
+pub(in crate::driver_node) mod state;
+mod tpke;
 
-pub(super) use driver::{run_driver_rounds, wait_until_start};
+pub(super) use r#loop::run_driver_rounds;
 
 #[cfg(test)]
 mod tests {
     use super::super::config::ByzantineNodeConfig;
-    use super::super::driver_wire::{DriverWireFrame, decode_driver_frame};
-    use super::super::pool_reuse::{BroadcastMempool, PoolReference, encode_bundle_acs_payload};
-    use super::super::pool_wire::{PoolFetchWire, decode_pool_fetch_from_wire};
-    use super::batch::encode_batch_ref;
-    use super::pool::{
+    use super::super::reuse::fetch::{
         FetchRequestAction, PoolFetchTracker, ProposalResolutionError, ResolvedSelectedProposals,
         resolve_selected_proposals,
     };
+    use super::super::reuse::mempool::{
+        BroadcastMempool, PoolReference, encode_bundle_acs_payload,
+    };
+    use super::super::wire::fetch::{PoolFetchWire, decode_pool_fetch_from_wire};
+    use super::super::wire::frame::{DriverWireFrame, decode_driver_frame};
     use honey_acs::proposal::AvailableProposal;
     use honey_crypto::merkle;
     use honey_node::transport::LocalTcpTransport;
@@ -54,8 +58,54 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_selected_proposals_skips_consumed_nested_reference() {
+        let root_a = vec![1; 32];
+        let payload_a = encode_bundle_acs_payload(b"sealed-batch-a", &[]);
+        let item_id_a = BroadcastMempool::compute_item_id(0, 0, &root_a);
+        let reference_a = PoolReference {
+            item_id: item_id_a.clone(),
+            origin_round: 0,
+            origin_sender: 0,
+            roothash: root_a.clone(),
+            proof_payload: vec![10; 8],
+        };
+
+        let root_b = vec![2; 32];
+        let payload_b =
+            encode_bundle_acs_payload(b"sealed-batch-b", std::slice::from_ref(&reference_a));
+        let item_id_b = BroadcastMempool::compute_item_id(1, 1, &root_b);
+        let reference_b = PoolReference {
+            item_id: item_id_b,
+            origin_round: 1,
+            origin_sender: 1,
+            roothash: root_b.clone(),
+            proof_payload: vec![11; 8],
+        };
+
+        let mut pool = BroadcastMempool::new(8, 4);
+        pool.add_reusable(payload_a, root_a.clone(), vec![10; 8], 0, 0);
+        pool.mark_consumed(&item_id_a, 1);
+        pool.add_reusable(payload_b, root_b.clone(), vec![11; 8], 1, 1);
+
+        let proposal = AvailableProposal {
+            proposal_id: String::from("2:2:root-b"),
+            proposer: 2,
+            payload: encode_bundle_acs_payload(b"", std::slice::from_ref(&reference_b)),
+            digest: vec![3; 32],
+            availability_proof: vec![12; 8],
+        };
+
+        let resolved = resolve_selected_proposals(&[&proposal], &mut pool, true)
+            .expect("nested consumed reference should be skipped");
+
+        assert_eq!(resolved.sealed_batches, vec![b"sealed-batch-b".to_vec()]);
+        assert_eq!(resolved.selected_digests, vec![root_b]);
+        assert_eq!(resolved.consumed_reference_ids, vec![reference_b.item_id]);
+    }
+
+    #[test]
     fn test_pool_fetch_tracker_accepts_valid_response() {
-        let payload = encode_bundle_acs_payload(&encode_batch_ref(3, 1), &[]);
+        let payload = encode_bundle_acs_payload(b"sealed-batch-3-1", &[]);
         let encoded = merkle::encode(&payload, 2, 4).expect("payload should encode");
         let reference = PoolReference {
             item_id: BroadcastMempool::compute_item_id(2, 1, &encoded.root),
@@ -114,7 +164,7 @@ mod tests {
         let mut requester_transport = LocalTcpTransport::new(1, addresses, Default::default())
             .expect("transport 1 should bind");
 
-        let payload = encode_bundle_acs_payload(&encode_batch_ref(3, 1), &[]);
+        let payload = encode_bundle_acs_payload(b"sealed-batch-3-1", &[]);
         let encoded = merkle::encode(&payload, 2, 4).expect("payload should encode");
         let reference = PoolReference {
             item_id: BroadcastMempool::compute_item_id(2, 0, &encoded.root),
@@ -199,7 +249,7 @@ mod tests {
         let mut requester_transport = LocalTcpTransport::new(1, addresses, Default::default())
             .expect("transport 1 should bind");
 
-        let payload = encode_bundle_acs_payload(&encode_batch_ref(3, 1), &[]);
+        let payload = encode_bundle_acs_payload(b"sealed-batch-3-1", &[]);
         let encoded = merkle::encode(&payload, 2, 4).expect("payload should encode");
         let reference = PoolReference {
             item_id: BroadcastMempool::compute_item_id(2, 0, &encoded.root),

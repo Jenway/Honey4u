@@ -1,13 +1,15 @@
 use super::super::DRIVER_NETWORK_BATCH_LIMIT;
-use super::super::driver_wire::{DriverWireFrame, decode_driver_frame};
-use super::super::pool_wire::{PoolFetchWire, decode_pool_fetch_from_wire};
-use super::super::types::{BatchArchive, DriverCarryovers, InboundShareBundle, QueuePeaksSnapshot};
-use super::batch::remember_archived_batch;
-use super::pool::PendingPoolFetchRequest;
+use super::super::error::DriverResult;
+use super::super::reuse::fetch::PendingPoolFetchRequest;
+use super::super::wire::fetch::{PoolFetchWire, decode_pool_fetch_from_wire};
+use super::super::wire::frame::{DriverWireFrame, decode_driver_frame};
+use super::state::{DriverCarryovers, InboundShareBundle, QueuePeaksSnapshot};
 use honey_node::transport::LocalTcpTransport;
-use std::collections::BTreeMap;
 
-pub(super) fn update_queue_peaks(transport: &LocalTcpTransport, peaks: &mut QueuePeaksSnapshot) {
+pub(in crate::driver_node) fn update_queue_peaks(
+    transport: &LocalTcpTransport,
+    peaks: &mut QueuePeaksSnapshot,
+) {
     let pending_inbound = transport.pending_inbound();
     let pending_outbound = transport.pending_outbound();
     peaks.raw_inbound_messages = peaks.raw_inbound_messages.max(pending_inbound);
@@ -16,26 +18,21 @@ pub(super) fn update_queue_peaks(transport: &LocalTcpTransport, peaks: &mut Queu
     peaks.transport_outbound = peaks.transport_outbound.max(pending_outbound);
 }
 
-pub(super) struct RoundTransportInbox<'a> {
-    pub(super) inbound_acs_wire: &'a mut Vec<Vec<u8>>,
-    pub(super) pending_pool_fetch_requests: &'a mut Vec<PendingPoolFetchRequest>,
-    pub(super) pending_pool_fetch_responses: &'a mut Vec<PoolFetchWire>,
-    pub(super) received_batches: &'a mut BTreeMap<usize, Vec<u8>>,
-    pub(super) pending_share_bundles: &'a mut Vec<InboundShareBundle>,
+pub(in crate::driver_node) struct RoundTransportInbox<'a> {
+    pub(in crate::driver_node) inbound_acs_wire: &'a mut Vec<Vec<u8>>,
+    pub(in crate::driver_node) pending_pool_fetch_requests: &'a mut Vec<PendingPoolFetchRequest>,
+    pub(in crate::driver_node) pending_pool_fetch_responses: &'a mut Vec<PoolFetchWire>,
+    pub(in crate::driver_node) pending_share_bundles: &'a mut Vec<InboundShareBundle>,
 }
 
-pub(super) fn drain_transport_into_round(
+pub(in crate::driver_node) fn drain_transport_into_round(
     transport: &LocalTcpTransport,
     round_id: usize,
     carryovers: &mut DriverCarryovers,
-    batch_archive: &mut BatchArchive,
     inbox: &mut RoundTransportInbox<'_>,
-) -> Result<usize, String> {
+) -> DriverResult<usize> {
     let mut frame_count = 0usize;
-    for payload in transport
-        .recv_batch(DRIVER_NETWORK_BATCH_LIMIT)
-        .map_err(|err| err.to_string())?
-    {
+    for payload in transport.recv_batch(DRIVER_NETWORK_BATCH_LIMIT)? {
         frame_count += 1;
         match decode_driver_frame(&payload)? {
             DriverWireFrame::AcsEnvelope {
@@ -74,32 +71,17 @@ pub(super) fn drain_transport_into_round(
                         .push(payload);
                 }
             }
-            DriverWireFrame::HbBatch {
-                sender,
-                round_id: frame_round_id,
-                sealed_batch,
-            } => {
-                remember_archived_batch(batch_archive, frame_round_id, sender, &sealed_batch);
-                if frame_round_id == round_id {
-                    inbox.received_batches.entry(sender).or_insert(sealed_batch);
-                } else if frame_round_id > round_id {
-                    carryovers
-                        .sealed_batches
-                        .entry(frame_round_id)
-                        .or_default()
-                        .entry(sender)
-                        .or_insert(sealed_batch);
-                }
-            }
             DriverWireFrame::HbShareBundle {
                 sender,
                 round_id: frame_round_id,
-                selected_batch_refs,
+                selected_proposal_ids,
+                selected_digests,
                 shares,
             } => {
                 let bundle = InboundShareBundle {
                     sender,
-                    selected_batch_refs,
+                    selected_proposal_ids,
+                    selected_digests,
                     shares,
                 };
                 if frame_round_id == round_id {

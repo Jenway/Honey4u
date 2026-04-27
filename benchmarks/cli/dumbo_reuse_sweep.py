@@ -12,6 +12,9 @@ from statistics import fmean
 from typing import Any
 from xml.sax.saxutils import escape
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from benchmarks.support.runners import run_local_dumbo_new_driver
 
 MODE_ORDER = ("reuse_off", "reuse_on")

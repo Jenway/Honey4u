@@ -1,7 +1,7 @@
 """Tests for the Rust-native bench-driver Dumbo mode with pool reuse support.
 
 These tests exercise the `run_local_dumbo_new_driver` function which wraps the
-`bench-driver --config <path.toml>` honey-node command path. The command manages
+`honey-bench run --config <path.toml>` path. The spawned honey-node workers manage
 BroadcastMempool, PoolReference building, and proposal reuse entirely in Rust.
 """
 

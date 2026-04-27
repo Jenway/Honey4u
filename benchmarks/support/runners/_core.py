@@ -62,7 +62,6 @@ class MultiprocessDriverStats:
     fetched_reference_count: int = 0
     byzantine_invalid_fetch_responses_sent: int = 0
     byzantine_fetch_requests_ignored: int = 0
-    byzantine_batch_broadcast_suppressed: int = 0
     byzantine_share_broadcast_suppressed: int = 0
     byzantine_empty_proposal_rounds: int = 0
 
@@ -92,7 +91,6 @@ class MultiprocessRoundDetail:
     fetched_reference_count: int = 0
     byzantine_invalid_fetch_responses_sent: int = 0
     byzantine_fetch_requests_ignored: int = 0
-    byzantine_batch_broadcast_suppressed: int = 0
     byzantine_share_broadcast_suppressed: int = 0
     byzantine_empty_proposal_used: bool = False
     driver_phase_stats: RustDrivenDriverPhaseStats | None = None
@@ -169,30 +167,12 @@ class RustDrivenDriverPhaseStats:
     total_pull_seconds: float = 0.0
     send_events: int = 0
     send_payload_bytes: int = 0
-    proposal_ready_events: int = 0
-    proposal_ready_payload_bytes: int = 0
-    proposal_ready_certificate_bytes: int = 0
+    proposal_available_events: int = 0
+    proposal_available_payload_bytes: int = 0
+    proposal_available_proof_bytes: int = 0
     decision_events: int = 0
     failure_events: int = 0
     host_stats: tuple[RustDrivenHostPhaseStats, ...] = ()
-
-
-@dataclass(frozen=True)
-class RustDrivenAcsRoundResult:
-    round_id: int
-    selected_count: int
-    send_events: int
-    selected_pids: tuple[int, ...] = ()
-    drive_stats: RustDrivenDriverPhaseStats = field(default_factory=RustDrivenDriverPhaseStats)
-    settle_stats: RustDrivenDriverPhaseStats = field(default_factory=RustDrivenDriverPhaseStats)
-
-
-@dataclass(frozen=True)
-class RustDrivenAcsRunResult:
-    protocol: str
-    sid: str
-    nodes: tuple[RustDrivenAcsNodeResult, ...]
-    rounds: tuple[RustDrivenAcsRoundResult, ...]
 
 
 @dataclass(frozen=True)
@@ -388,9 +368,9 @@ def _decode_rust_driven_driver_phase_stats(
         total_pull_seconds=float(value.get("total_pull_seconds", 0.0)),
         send_events=int(value.get("send_events", 0)),
         send_payload_bytes=int(value.get("send_payload_bytes", 0)),
-        proposal_ready_events=int(value.get("proposal_ready_events", 0)),
-        proposal_ready_payload_bytes=int(value.get("proposal_ready_payload_bytes", 0)),
-        proposal_ready_certificate_bytes=int(value.get("proposal_ready_certificate_bytes", 0)),
+        proposal_available_events=int(value.get("proposal_available_events", 0)),
+        proposal_available_payload_bytes=int(value.get("proposal_available_payload_bytes", 0)),
+        proposal_available_proof_bytes=int(value.get("proposal_available_proof_bytes", 0)),
         decision_events=int(value.get("decision_events", 0)),
         failure_events=int(value.get("failure_events", 0)),
         host_stats=tuple(
@@ -417,9 +397,6 @@ def _decode_multiprocess_driver_stats(value: dict[str, Any]) -> MultiprocessDriv
             value.get("byzantine_invalid_fetch_responses_sent", 0)
         ),
         byzantine_fetch_requests_ignored=int(value.get("byzantine_fetch_requests_ignored", 0)),
-        byzantine_batch_broadcast_suppressed=int(
-            value.get("byzantine_batch_broadcast_suppressed", 0)
-        ),
         byzantine_share_broadcast_suppressed=int(
             value.get("byzantine_share_broadcast_suppressed", 0)
         ),
@@ -460,9 +437,6 @@ def _decode_multiprocess_round_detail(value: dict[str, Any]) -> MultiprocessRoun
             value.get("byzantine_invalid_fetch_responses_sent", 0)
         ),
         byzantine_fetch_requests_ignored=int(value.get("byzantine_fetch_requests_ignored", 0)),
-        byzantine_batch_broadcast_suppressed=int(
-            value.get("byzantine_batch_broadcast_suppressed", 0)
-        ),
         byzantine_share_broadcast_suppressed=int(
             value.get("byzantine_share_broadcast_suppressed", 0)
         ),
@@ -473,69 +447,6 @@ def _decode_multiprocess_round_detail(value: dict[str, Any]) -> MultiprocessRoun
             )
             if value.get("driver_phase_stats") is not None
             else None
-        ),
-    )
-
-
-def _decode_rust_driven_acs_payload(value: dict[str, Any]) -> RustDrivenAcsRunResult:
-    return RustDrivenAcsRunResult(
-        protocol=str(value["protocol"]),
-        sid=str(value["sid"]),
-        nodes=tuple(
-            RustDrivenAcsNodeResult(
-                pid=int(node["pid"]),
-                worker_ident=int(node["worker_ident"]),
-                rounds_started=int(node["rounds_started"]),
-                rounds_finished=int(node["rounds_finished"]),
-                processed_commands=int(node.get("processed_commands", 0)),
-                start_round_calls=int(node.get("start_round_calls", 0)),
-                push_inbound_wire_batch_calls=int(
-                    node.get(
-                        "push_inbound_wire_batch_calls",
-                        node.get("push_inbound_batch_calls", 0),
-                    )
-                ),
-                push_inbound_wire_batch_items=int(
-                    node.get(
-                        "push_inbound_wire_batch_items",
-                        node.get("push_inbound_batch_items", 0),
-                    )
-                ),
-                pull_outbound_wire_batch_calls=int(
-                    node.get(
-                        "pull_outbound_wire_batch_calls",
-                        node.get("pull_outbound_batch_calls", 0),
-                    )
-                ),
-                pull_outbound_wire_batch_items=int(
-                    node.get(
-                        "pull_outbound_wire_batch_items",
-                        node.get("pull_outbound_batch_items", 0),
-                    )
-                ),
-                stats_calls=int(node.get("stats_calls", 0)),
-                bridge_queue_size=int(node.get("bridge_queue_size", 0)),
-                worker_running=bool(node.get("worker_running", False)),
-                worker_error=(
-                    str(node["worker_error"]) if node.get("worker_error") is not None else None
-                ),
-            )
-            for node in value.get("nodes", ())
-        ),
-        rounds=tuple(
-            RustDrivenAcsRoundResult(
-                round_id=int(round_data["round_id"]),
-                selected_count=int(round_data["selected_count"]),
-                selected_pids=tuple(int(pid) for pid in round_data.get("selected_pids", ())),
-                send_events=int(round_data["send_events"]),
-                drive_stats=_decode_rust_driven_driver_phase_stats(
-                    cast(dict[str, Any], round_data.get("drive_stats", {}))
-                ),
-                settle_stats=_decode_rust_driven_driver_phase_stats(
-                    cast(dict[str, Any], round_data.get("settle_stats", {}))
-                ),
-            )
-            for round_data in value.get("rounds", ())
         ),
     )
 
@@ -556,30 +467,10 @@ def _decode_rust_driven_honeybadger_payload(
                 rounds_finished=int(node["rounds_finished"]),
                 processed_commands=int(node.get("processed_commands", 0)),
                 start_round_calls=int(node.get("start_round_calls", 0)),
-                push_inbound_wire_batch_calls=int(
-                    node.get(
-                        "push_inbound_wire_batch_calls",
-                        node.get("push_inbound_batch_calls", 0),
-                    )
-                ),
-                push_inbound_wire_batch_items=int(
-                    node.get(
-                        "push_inbound_wire_batch_items",
-                        node.get("push_inbound_batch_items", 0),
-                    )
-                ),
-                pull_outbound_wire_batch_calls=int(
-                    node.get(
-                        "pull_outbound_wire_batch_calls",
-                        node.get("pull_outbound_batch_calls", 0),
-                    )
-                ),
-                pull_outbound_wire_batch_items=int(
-                    node.get(
-                        "pull_outbound_wire_batch_items",
-                        node.get("pull_outbound_batch_items", 0),
-                    )
-                ),
+                push_inbound_wire_batch_calls=int(node.get("push_inbound_wire_batch_calls", 0)),
+                push_inbound_wire_batch_items=int(node.get("push_inbound_wire_batch_items", 0)),
+                pull_outbound_wire_batch_calls=int(node.get("pull_outbound_wire_batch_calls", 0)),
+                pull_outbound_wire_batch_items=int(node.get("pull_outbound_wire_batch_items", 0)),
                 stats_calls=int(node.get("stats_calls", 0)),
                 bridge_queue_size=int(node.get("bridge_queue_size", 0)),
                 worker_running=bool(node.get("worker_running", False)),
@@ -639,7 +530,7 @@ def _build_honey_bench_binary() -> Path:
             _HONEY_BENCH_BINARY = override_path
             return _HONEY_BENCH_BINARY
     use_release = os.environ.get("HONEY_NODE_RELEASE", "").lower() in ("1", "true", "yes")
-    build_args = ["cargo", "build", "-p", "honey-bench"]
+    build_args = ["cargo", "build", "-p", "honey-bench", "-p", "honey-node"]
     if use_release:
         build_args.append("--release")
     subprocess.run(build_args, check=True)
@@ -770,38 +661,6 @@ def _benchmark_rust_driver_nodes(
     return [_decode_result_payload(pid, value) for pid, value in enumerate(decoded)]
 
 
-def _run_rust_driven_acs(
-    *,
-    protocol: str,
-    sid: str,
-    num_nodes: int,
-    faulty: int,
-    max_rounds: int,
-    global_timeout: float,
-    config_payload: dict[str, Any] | None = None,
-) -> RustDrivenAcsRunResult:
-    completed = _run_bench_driver(
-        config_text=_render_bench_driver_config(
-            mode="acs",
-            sid=sid,
-            protocol=protocol,
-            num_nodes=num_nodes,
-            faulty=faulty,
-            max_rounds=max_rounds,
-            global_timeout=global_timeout,
-            config_payload=config_payload or {},
-        )
-    )
-    if completed.returncode != 0:
-        error_text = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
-        raise RuntimeError(f"Rust-driven ACS run failed: {error_text}")
-
-    payload = completed.stdout.strip()
-    if not payload:
-        raise RuntimeError("Rust-driven ACS run produced no output")
-    return _decode_rust_driven_acs_payload(cast(dict[str, Any], json.loads(payload)))
-
-
 def _run_rust_driven_honeybadger(
     *,
     sid: str,
@@ -852,30 +711,10 @@ def _decode_rust_driven_dumbo_payload(value: dict[str, Any]) -> RustDrivenDumboR
                 rounds_finished=int(node["rounds_finished"]),
                 processed_commands=int(node.get("processed_commands", 0)),
                 start_round_calls=int(node.get("start_round_calls", 0)),
-                push_inbound_wire_batch_calls=int(
-                    node.get(
-                        "push_inbound_wire_batch_calls",
-                        node.get("push_inbound_batch_calls", 0),
-                    )
-                ),
-                push_inbound_wire_batch_items=int(
-                    node.get(
-                        "push_inbound_wire_batch_items",
-                        node.get("push_inbound_batch_items", 0),
-                    )
-                ),
-                pull_outbound_wire_batch_calls=int(
-                    node.get(
-                        "pull_outbound_wire_batch_calls",
-                        node.get("pull_outbound_batch_calls", 0),
-                    )
-                ),
-                pull_outbound_wire_batch_items=int(
-                    node.get(
-                        "pull_outbound_wire_batch_items",
-                        node.get("pull_outbound_batch_items", 0),
-                    )
-                ),
+                push_inbound_wire_batch_calls=int(node.get("push_inbound_wire_batch_calls", 0)),
+                push_inbound_wire_batch_items=int(node.get("push_inbound_wire_batch_items", 0)),
+                pull_outbound_wire_batch_calls=int(node.get("pull_outbound_wire_batch_calls", 0)),
+                pull_outbound_wire_batch_items=int(node.get("pull_outbound_wire_batch_items", 0)),
                 stats_calls=int(node.get("stats_calls", 0)),
                 bridge_queue_size=int(node.get("bridge_queue_size", 0)),
                 worker_running=bool(node.get("worker_running", False)),
@@ -1175,38 +1014,6 @@ def benchmark_local_dumbo_nodes_rust_driven(
     )
 
 
-def run_local_honeybadger_acs_rust_driven(
-    sid: str,
-    num_nodes: int,
-    faulty: int,
-    max_rounds: int = 1,
-    global_timeout: float = 30.0,
-    hb_broadcast_protocol: str = "rbc",
-    broadcast_mempool_backend: BroadcastPoolBackend = "rust",
-    pool_mempool_max: int = 1000,
-    network_faults: dict[str, Any] | None = None,
-    byzantine_nodes: list[dict[str, Any]] | None = None,
-) -> RustDrivenAcsRunResult:
-    return _run_rust_driven_acs(
-        protocol="hb",
-        sid=sid,
-        num_nodes=num_nodes,
-        faulty=faulty,
-        max_rounds=max_rounds,
-        global_timeout=global_timeout,
-        config_payload=_inject_runtime_faults(
-            {
-                "acs_host_backend": "python",
-                "hb_broadcast_protocol": hb_broadcast_protocol,
-                "broadcast_mempool_backend": broadcast_mempool_backend,
-                "pool_mempool_max": pool_mempool_max,
-            },
-            network_faults,
-            byzantine_nodes,
-        ),
-    )
-
-
 def run_local_honeybadger_rust_driven(
     sid: str,
     num_nodes: int,
@@ -1277,33 +1084,6 @@ def run_local_dumbo_rust_driven(
             network_faults,
             byzantine_nodes,
         ),
-    )
-
-
-def run_local_dumbo_acs_rust_driven(
-    sid: str,
-    num_nodes: int,
-    faulty: int,
-    max_rounds: int = 1,
-    global_timeout: float = 30.0,
-    enable_broadcast_pool_reuse: bool = False,
-    pool_grace_ms: int = 200,
-    network_faults: dict[str, Any] | None = None,
-    byzantine_nodes: list[dict[str, Any]] | None = None,
-) -> RustDrivenAcsRunResult:
-    config_payload: dict[str, Any] = {
-        "acs_host_backend": "python",
-        "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
-        "pool_grace_ms": pool_grace_ms,
-    }
-    return _run_rust_driven_acs(
-        protocol="dumbo",
-        sid=sid,
-        num_nodes=num_nodes,
-        faulty=faulty,
-        max_rounds=max_rounds,
-        global_timeout=global_timeout,
-        config_payload=_inject_runtime_faults(config_payload, network_faults, byzantine_nodes),
     )
 
 

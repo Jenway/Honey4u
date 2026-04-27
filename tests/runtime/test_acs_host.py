@@ -209,27 +209,6 @@ def test_persistent_dumbo_acs_host_reaches_consistent_decision() -> None:
             host.shutdown()
 
 
-def test_persistent_hb_acs_host_ignores_legacy_output_mode_in_config_json() -> None:
-    num_nodes = 4
-    faulty = 1
-    hosts = _build_hosts("hb", num_nodes, faulty, config={"output_mode": "payloads"})
-
-    try:
-        for pid, host in enumerate(hosts):
-            host.start_round(
-                round_id=0,
-                sid="test:acs-host:hb:legacy-output-mode:",
-                proposal_input=f"hb-round-0-node-{pid}".encode(),
-            )
-
-        decisions, proposals_by_host = _drain_until_round_complete(hosts, round_id=0)
-        assert len(set(decisions)) == 1
-        assert _selected_proposers(decisions[0], proposals_by_host[0]) == tuple(range(num_nodes))
-    finally:
-        for host in hosts:
-            host.shutdown()
-
-
 def test_persistent_hb_acs_host_emits_proposal_ready_events_on_main_event_stream() -> None:
     num_nodes = 4
     faulty = 1

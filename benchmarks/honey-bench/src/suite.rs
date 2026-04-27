@@ -1,7 +1,7 @@
 //! Suite runner: parses suite TOML, expands Cartesian product, runs each case,
 //! aggregates results, and writes JSON + CSV output.
 //!
-//! Equivalent to benchmarks/cli/dumbo_paper_suite.py, but implemented in Rust
+//! Config-file driven benchmark suite runner for paper experiments
 //! and calling `drive_dumbo::run_drive_dumbo_multiprocess` directly (no subprocess).
 
 use crate::BenchDumboArgs;
@@ -200,9 +200,9 @@ struct RunRecord {
     // ACS driver stats (summed over rounds)
     send_events_total: usize,
     send_payload_bytes_total: usize,
-    proposal_ready_events_total: usize,
-    proposal_ready_payload_bytes_total: usize,
-    proposal_ready_certificate_bytes_total: usize,
+    proposal_available_events_total: usize,
+    proposal_available_payload_bytes_total: usize,
+    proposal_available_proof_bytes_total: usize,
     tracked_driver_bytes_total: usize,
     tracked_driver_bytes_per_delivered_tx: f64,
     // Pool reuse stats
@@ -226,7 +226,6 @@ struct RunRecord {
     // Byzantine stats
     byzantine_invalid_fetch_responses_sent_total: usize,
     byzantine_fetch_requests_ignored_total: usize,
-    byzantine_batch_broadcast_suppressed_total: usize,
     byzantine_share_broadcast_suppressed_total: usize,
     byzantine_empty_proposal_rounds_total: usize,
     chain_digest: Option<String>,
@@ -291,9 +290,9 @@ struct Summary {
     tps_acs_mean: f64,
     send_events_total_mean: f64,
     send_payload_bytes_total_mean: f64,
-    proposal_ready_events_total_mean: f64,
-    proposal_ready_payload_bytes_total_mean: f64,
-    proposal_ready_certificate_bytes_total_mean: f64,
+    proposal_available_events_total_mean: f64,
+    proposal_available_payload_bytes_total_mean: f64,
+    proposal_available_proof_bytes_total_mean: f64,
     tracked_driver_bytes_total_mean: f64,
     tracked_driver_bytes_per_delivered_tx_mean: f64,
     reused_reference_total_mean: f64,
@@ -313,7 +312,6 @@ struct Summary {
     transport_max_injected_delay_ms_per_node_mean: f64,
     byzantine_invalid_fetch_responses_sent_total_mean: f64,
     byzantine_fetch_requests_ignored_total_mean: f64,
-    byzantine_batch_broadcast_suppressed_total_mean: f64,
     byzantine_share_broadcast_suppressed_total_mean: f64,
     byzantine_empty_proposal_rounds_total_mean: f64,
 }
@@ -921,9 +919,9 @@ fn extract_run_record(
     let mut acs_total_seconds = 0.0f64;
     let mut send_events_total = 0usize;
     let mut send_payload_bytes_total = 0usize;
-    let mut proposal_ready_events_total = 0usize;
-    let mut proposal_ready_payload_bytes_total = 0usize;
-    let mut proposal_ready_certificate_bytes_total = 0usize;
+    let mut proposal_available_events_total = 0usize;
+    let mut proposal_available_payload_bytes_total = 0usize;
+    let mut proposal_available_proof_bytes_total = 0usize;
     let mut reused_reference_total = 0usize;
     let mut fetch_requests_sent_total = 0usize;
     let mut fetch_responses_served_total = 0usize;
@@ -945,20 +943,22 @@ fn extract_run_record(
         let stats = &round["acs_drive_stats"];
         send_events_total += stats["send_events"].as_u64().unwrap_or(0) as usize;
         let spb = stats["send_payload_bytes"].as_u64().unwrap_or(0) as usize;
-        let prpb = stats["proposal_ready_payload_bytes"].as_u64().unwrap_or(0) as usize;
-        let prcb = stats["proposal_ready_certificate_bytes"]
+        let prpb = stats["proposal_available_payload_bytes"]
+            .as_u64()
+            .unwrap_or(0) as usize;
+        let prcb = stats["proposal_available_proof_bytes"]
             .as_u64()
             .unwrap_or(0) as usize;
         send_payload_bytes_total += spb;
-        proposal_ready_events_total +=
-            stats["proposal_ready_events"].as_u64().unwrap_or(0) as usize;
-        proposal_ready_payload_bytes_total += prpb;
-        proposal_ready_certificate_bytes_total += prcb;
+        proposal_available_events_total +=
+            stats["proposal_available_events"].as_u64().unwrap_or(0) as usize;
+        proposal_available_payload_bytes_total += prpb;
+        proposal_available_proof_bytes_total += prcb;
     }
 
     let tracked_driver_bytes_total = send_payload_bytes_total
-        + proposal_ready_payload_bytes_total
-        + proposal_ready_certificate_bytes_total;
+        + proposal_available_payload_bytes_total
+        + proposal_available_proof_bytes_total;
 
     // Aggregate per-node transport metrics
     let mut transport_sent_frames_total = 0usize;
@@ -970,7 +970,6 @@ fn extract_run_record(
     let mut transport_max_injected_delay_ms_per_node = 0usize;
     let mut byzantine_invalid_fetch_responses_sent_total = 0usize;
     let mut byzantine_fetch_requests_ignored_total = 0usize;
-    let mut byzantine_batch_broadcast_suppressed_total = 0usize;
     let mut byzantine_share_broadcast_suppressed_total = 0usize;
     let mut byzantine_empty_proposal_rounds_total = 0usize;
 
@@ -994,9 +993,6 @@ fn extract_run_record(
                 .as_u64()
                 .unwrap_or(0) as usize;
         byzantine_fetch_requests_ignored_total += node["byzantine_fetch_requests_ignored"]
-            .as_u64()
-            .unwrap_or(0) as usize;
-        byzantine_batch_broadcast_suppressed_total += node["byzantine_batch_broadcast_suppressed"]
             .as_u64()
             .unwrap_or(0) as usize;
         byzantine_share_broadcast_suppressed_total += node["byzantine_share_broadcast_suppressed"]
@@ -1054,9 +1050,9 @@ fn extract_run_record(
         tps_acs,
         send_events_total,
         send_payload_bytes_total,
-        proposal_ready_events_total,
-        proposal_ready_payload_bytes_total,
-        proposal_ready_certificate_bytes_total,
+        proposal_available_events_total,
+        proposal_available_payload_bytes_total,
+        proposal_available_proof_bytes_total,
         tracked_driver_bytes_total,
         tracked_driver_bytes_per_delivered_tx: div(tracked_driver_bytes_total),
         reused_reference_total,
@@ -1076,7 +1072,6 @@ fn extract_run_record(
         transport_max_injected_delay_ms_per_node,
         byzantine_invalid_fetch_responses_sent_total,
         byzantine_fetch_requests_ignored_total,
-        byzantine_batch_broadcast_suppressed_total,
         byzantine_share_broadcast_suppressed_total,
         byzantine_empty_proposal_rounds_total,
         chain_digest,
@@ -1116,12 +1111,12 @@ fn aggregate_records(records: &[RunRecord]) -> Vec<Summary> {
                 tps_acs_mean: mean_f!(tps_acs),
                 send_events_total_mean: mean_u!(send_events_total),
                 send_payload_bytes_total_mean: mean_u!(send_payload_bytes_total),
-                proposal_ready_events_total_mean: mean_u!(proposal_ready_events_total),
-                proposal_ready_payload_bytes_total_mean: mean_u!(
-                    proposal_ready_payload_bytes_total
+                proposal_available_events_total_mean: mean_u!(proposal_available_events_total),
+                proposal_available_payload_bytes_total_mean: mean_u!(
+                    proposal_available_payload_bytes_total
                 ),
-                proposal_ready_certificate_bytes_total_mean: mean_u!(
-                    proposal_ready_certificate_bytes_total
+                proposal_available_proof_bytes_total_mean: mean_u!(
+                    proposal_available_proof_bytes_total
                 ),
                 tracked_driver_bytes_total_mean: mean_u!(tracked_driver_bytes_total),
                 tracked_driver_bytes_per_delivered_tx_mean: mean_f!(
@@ -1155,9 +1150,6 @@ fn aggregate_records(records: &[RunRecord]) -> Vec<Summary> {
                 ),
                 byzantine_fetch_requests_ignored_total_mean: mean_u!(
                     byzantine_fetch_requests_ignored_total
-                ),
-                byzantine_batch_broadcast_suppressed_total_mean: mean_u!(
-                    byzantine_batch_broadcast_suppressed_total
                 ),
                 byzantine_share_broadcast_suppressed_total_mean: mean_u!(
                     byzantine_share_broadcast_suppressed_total
@@ -1384,9 +1376,9 @@ fn summary_to_json(s: &Summary) -> Value {
         "tps_acs_mean": s.tps_acs_mean,
         "send_events_total_mean": s.send_events_total_mean,
         "send_payload_bytes_total_mean": s.send_payload_bytes_total_mean,
-        "proposal_ready_events_total_mean": s.proposal_ready_events_total_mean,
-        "proposal_ready_payload_bytes_total_mean": s.proposal_ready_payload_bytes_total_mean,
-        "proposal_ready_certificate_bytes_total_mean": s.proposal_ready_certificate_bytes_total_mean,
+        "proposal_available_events_total_mean": s.proposal_available_events_total_mean,
+        "proposal_available_payload_bytes_total_mean": s.proposal_available_payload_bytes_total_mean,
+        "proposal_available_proof_bytes_total_mean": s.proposal_available_proof_bytes_total_mean,
         "tracked_driver_bytes_total_mean": s.tracked_driver_bytes_total_mean,
         "tracked_driver_bytes_per_delivered_tx_mean": s.tracked_driver_bytes_per_delivered_tx_mean,
         "reused_reference_total_mean": s.reused_reference_total_mean,
@@ -1406,7 +1398,6 @@ fn summary_to_json(s: &Summary) -> Value {
         "transport_max_injected_delay_ms_per_node_mean": s.transport_max_injected_delay_ms_per_node_mean,
         "byzantine_invalid_fetch_responses_sent_total_mean": s.byzantine_invalid_fetch_responses_sent_total_mean,
         "byzantine_fetch_requests_ignored_total_mean": s.byzantine_fetch_requests_ignored_total_mean,
-        "byzantine_batch_broadcast_suppressed_total_mean": s.byzantine_batch_broadcast_suppressed_total_mean,
         "byzantine_share_broadcast_suppressed_total_mean": s.byzantine_share_broadcast_suppressed_total_mean,
         "byzantine_empty_proposal_rounds_total_mean": s.byzantine_empty_proposal_rounds_total_mean,
     })

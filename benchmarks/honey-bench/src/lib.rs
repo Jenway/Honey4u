@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 use honey_node::keygen::{generate_dumbo_crypto_payloads_json, generate_hb_crypto_payloads_json};
+use honey_wire::phase_stats::{DriverPhaseStats, driver_phase_stats_json};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs::{self, File};
@@ -40,7 +41,6 @@ impl Protocol {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BenchDriverMode {
     Benchmark,
-    Acs,
     HoneyBadger,
     Dumbo,
 }
@@ -49,7 +49,6 @@ impl BenchDriverMode {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
             "benchmark" => Ok(Self::Benchmark),
-            "acs" => Ok(Self::Acs),
             "hb" | "honeybadger" => Ok(Self::HoneyBadger),
             "dumbo" => Ok(Self::Dumbo),
             _ => Err(format!("unsupported bench-driver mode: {value}")),
@@ -123,45 +122,6 @@ struct SpawnedNode {
     stderr_path: PathBuf,
 }
 
-#[derive(Clone, Default)]
-struct DriverHostPhaseStats {
-    pid: usize,
-    push_calls: usize,
-    push_items: usize,
-    max_push_batch: usize,
-    push_seconds: f64,
-    pull_calls: usize,
-    empty_pull_calls: usize,
-    pulled_events: usize,
-    max_pull_batch: usize,
-    pull_limit_hits: usize,
-    pull_seconds: f64,
-}
-
-#[derive(Clone, Default)]
-struct DriverPhaseStats {
-    sweep_count: usize,
-    active_sweeps: usize,
-    idle_sweeps: usize,
-    idle_backoff_count: usize,
-    total_pending_deliveries: usize,
-    max_pending_deliveries: usize,
-    total_pushed_items: usize,
-    total_pulled_events: usize,
-    max_pull_batch: usize,
-    pull_limit_hits: usize,
-    total_push_seconds: f64,
-    total_pull_seconds: f64,
-    send_events: usize,
-    send_payload_bytes: usize,
-    proposal_ready_events: usize,
-    proposal_ready_payload_bytes: usize,
-    proposal_ready_certificate_bytes: usize,
-    decision_events: usize,
-    failure_events: usize,
-    host_stats: Vec<DriverHostPhaseStats>,
-}
-
 pub fn run_config_path(config_path: &Path, node_binary: &Path) -> Result<(), String> {
     let args = load_bench_driver_args(config_path)?;
     run_with_args(args, node_binary)
@@ -170,9 +130,6 @@ pub fn run_config_path(config_path: &Path, node_binary: &Path) -> Result<(), Str
 pub fn run_with_args(args: BenchDriverArgs, node_binary: &Path) -> Result<(), String> {
     match args.mode {
         BenchDriverMode::Benchmark => run_bench_rust_driver(args, node_binary),
-        BenchDriverMode::Acs => Err(String::from(
-            "mode=acs has not been migrated to honey-bench yet; use benchmark/hb/dumbo modes",
-        )),
         BenchDriverMode::HoneyBadger => drive_hb::run_drive_honeybadger(
             BenchHoneyBadgerArgs {
                 sid: args.sid,
@@ -244,7 +201,7 @@ fn build_args(file_config: BenchDriverConfigFile) -> Result<BenchDriverArgs, Str
     if rounds == 0 {
         return Err(String::from("--rounds must be > 0"));
     }
-    if !matches!(mode, BenchDriverMode::Acs) && batch_size == 0 {
+    if batch_size == 0 {
         return Err(String::from("--batch-size must be > 0"));
     }
     if global_timeout <= 0.0 {
@@ -344,7 +301,6 @@ fn run_bench_rust_driver(args: BenchDriverArgs, node_binary: &Path) -> Result<()
         let stderr_handle = File::create(&stderr_path).map_err(|err| err.to_string())?;
 
         let child = Command::new(node_binary)
-            .arg("run-driver-node")
             .arg("--pid")
             .arg(pid.to_string())
             .arg("--sid")
@@ -543,43 +499,4 @@ fn debug_acs_driver(message: &str) {
     if std::env::var_os("HONEY_DEBUG_ACS").is_some() {
         eprintln!("[honey-bench] {message}");
     }
-}
-
-fn driver_phase_stats_json(stats: &DriverPhaseStats) -> Value {
-    json!({
-        "sweep_count": stats.sweep_count,
-        "active_sweeps": stats.active_sweeps,
-        "idle_sweeps": stats.idle_sweeps,
-        "idle_backoff_count": stats.idle_backoff_count,
-        "total_pending_deliveries": stats.total_pending_deliveries,
-        "max_pending_deliveries": stats.max_pending_deliveries,
-        "total_pushed_items": stats.total_pushed_items,
-        "total_pulled_events": stats.total_pulled_events,
-        "max_pull_batch": stats.max_pull_batch,
-        "pull_limit_hits": stats.pull_limit_hits,
-        "total_push_seconds": stats.total_push_seconds,
-        "total_pull_seconds": stats.total_pull_seconds,
-        "send_events": stats.send_events,
-        "send_payload_bytes": stats.send_payload_bytes,
-        "proposal_ready_events": stats.proposal_ready_events,
-        "proposal_ready_payload_bytes": stats.proposal_ready_payload_bytes,
-        "proposal_ready_certificate_bytes": stats.proposal_ready_certificate_bytes,
-        "decision_events": stats.decision_events,
-        "failure_events": stats.failure_events,
-        "host_stats": stats.host_stats.iter().map(|host| {
-            json!({
-                "pid": host.pid,
-                "push_calls": host.push_calls,
-                "push_items": host.push_items,
-                "max_push_batch": host.max_push_batch,
-                "push_seconds": host.push_seconds,
-                "pull_calls": host.pull_calls,
-                "empty_pull_calls": host.empty_pull_calls,
-                "pulled_events": host.pulled_events,
-                "max_pull_batch": host.max_pull_batch,
-                "pull_limit_hits": host.pull_limit_hits,
-                "pull_seconds": host.pull_seconds,
-            })
-        }).collect::<Vec<_>>(),
-    })
 }

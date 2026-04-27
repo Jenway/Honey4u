@@ -9,7 +9,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 honey-crypto = { path = "../../honey-crypto" }
-honey-node = { path = "../../honey-node" }
 honey-wire = { path = "../../honey-wire" }
 k256 = "0.13.4"
 sha2 = "0.11.0"

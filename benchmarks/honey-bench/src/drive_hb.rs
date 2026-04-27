@@ -1,4 +1,5 @@
 use super::*;
+use honey_wire::phase_stats::{aggregate_driver_phase_stats, driver_phase_stats_from_value};
 
 fn json_array_field<'a>(value: &'a Value, key: &str) -> Result<&'a [Value], String> {
     value
@@ -41,131 +42,6 @@ fn json_string_owned_field(value: &Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing string field: {key}"))
 }
 
-fn driver_host_phase_stats_from_value(value: &Value) -> Result<DriverHostPhaseStats, String> {
-    Ok(DriverHostPhaseStats {
-        pid: json_usize_field(value, "pid")?,
-        push_calls: json_usize_field(value, "push_calls")?,
-        push_items: json_usize_field(value, "push_items")?,
-        max_push_batch: json_usize_field(value, "max_push_batch")?,
-        push_seconds: json_f64_field(value, "push_seconds")?,
-        pull_calls: json_usize_field(value, "pull_calls")?,
-        empty_pull_calls: json_usize_field(value, "empty_pull_calls")?,
-        pulled_events: json_usize_field(value, "pulled_events")?,
-        max_pull_batch: json_usize_field(value, "max_pull_batch")?,
-        pull_limit_hits: json_usize_field(value, "pull_limit_hits")?,
-        pull_seconds: json_f64_field(value, "pull_seconds")?,
-    })
-}
-
-fn driver_phase_stats_from_value(value: &Value) -> Result<DriverPhaseStats, String> {
-    let host_stats = json_array_field(value, "host_stats")?
-        .iter()
-        .map(driver_host_phase_stats_from_value)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(DriverPhaseStats {
-        sweep_count: json_usize_field(value, "sweep_count")?,
-        active_sweeps: json_usize_field(value, "active_sweeps")?,
-        idle_sweeps: json_usize_field(value, "idle_sweeps")?,
-        idle_backoff_count: json_usize_field(value, "idle_backoff_count")?,
-        total_pending_deliveries: json_usize_field(value, "total_pending_deliveries")?,
-        max_pending_deliveries: json_usize_field(value, "max_pending_deliveries")?,
-        total_pushed_items: json_usize_field(value, "total_pushed_items")?,
-        total_pulled_events: json_usize_field(value, "total_pulled_events")?,
-        max_pull_batch: json_usize_field(value, "max_pull_batch")?,
-        pull_limit_hits: json_usize_field(value, "pull_limit_hits")?,
-        total_push_seconds: json_f64_field(value, "total_push_seconds")?,
-        total_pull_seconds: json_f64_field(value, "total_pull_seconds")?,
-        send_events: value
-            .get("send_events")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
-        send_payload_bytes: value
-            .get("send_payload_bytes")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
-        proposal_ready_events: value
-            .get("proposal_ready_events")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
-        proposal_ready_payload_bytes: value
-            .get("proposal_ready_payload_bytes")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
-        proposal_ready_certificate_bytes: value
-            .get("proposal_ready_certificate_bytes")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
-        decision_events: value
-            .get("decision_events")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
-        failure_events: value
-            .get("failure_events")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
-        host_stats,
-    })
-}
-
-fn aggregate_driver_phase_stats(
-    stats_by_node: &[DriverPhaseStats],
-    host_count: usize,
-) -> DriverPhaseStats {
-    let mut aggregated = DriverPhaseStats {
-        host_stats: (0..host_count)
-            .map(|pid| DriverHostPhaseStats {
-                pid,
-                ..DriverHostPhaseStats::default()
-            })
-            .collect(),
-        ..DriverPhaseStats::default()
-    };
-
-    for stats in stats_by_node {
-        aggregated.sweep_count += stats.sweep_count;
-        aggregated.active_sweeps += stats.active_sweeps;
-        aggregated.idle_sweeps += stats.idle_sweeps;
-        aggregated.idle_backoff_count += stats.idle_backoff_count;
-        aggregated.total_pending_deliveries += stats.total_pending_deliveries;
-        aggregated.max_pending_deliveries = aggregated
-            .max_pending_deliveries
-            .max(stats.max_pending_deliveries);
-        aggregated.total_pushed_items += stats.total_pushed_items;
-        aggregated.total_pulled_events += stats.total_pulled_events;
-        aggregated.max_pull_batch = aggregated.max_pull_batch.max(stats.max_pull_batch);
-        aggregated.pull_limit_hits += stats.pull_limit_hits;
-        aggregated.total_push_seconds += stats.total_push_seconds;
-        aggregated.total_pull_seconds += stats.total_pull_seconds;
-        aggregated.send_events += stats.send_events;
-        aggregated.send_payload_bytes += stats.send_payload_bytes;
-        aggregated.proposal_ready_events += stats.proposal_ready_events;
-        aggregated.proposal_ready_payload_bytes += stats.proposal_ready_payload_bytes;
-        aggregated.proposal_ready_certificate_bytes += stats.proposal_ready_certificate_bytes;
-        aggregated.decision_events += stats.decision_events;
-        aggregated.failure_events += stats.failure_events;
-
-        for (index, host_stats) in stats.host_stats.iter().enumerate() {
-            let aggregated_host = &mut aggregated.host_stats[index];
-            aggregated_host.push_calls += host_stats.push_calls;
-            aggregated_host.push_items += host_stats.push_items;
-            aggregated_host.max_push_batch = aggregated_host
-                .max_push_batch
-                .max(host_stats.max_push_batch);
-            aggregated_host.push_seconds += host_stats.push_seconds;
-            aggregated_host.pull_calls += host_stats.pull_calls;
-            aggregated_host.empty_pull_calls += host_stats.empty_pull_calls;
-            aggregated_host.pulled_events += host_stats.pulled_events;
-            aggregated_host.max_pull_batch = aggregated_host
-                .max_pull_batch
-                .max(host_stats.max_pull_batch);
-            aggregated_host.pull_limit_hits += host_stats.pull_limit_hits;
-            aggregated_host.pull_seconds += host_stats.pull_seconds;
-        }
-    }
-
-    aggregated
-}
-
 fn run_drive_honeybadger_multiprocess(
     args: &BenchHoneyBadgerArgs,
     node_binary: &Path,
@@ -202,7 +78,6 @@ fn run_drive_honeybadger_multiprocess(
             .map_err(|err| format!("bench-driver:hb pid={pid}: stderr log: {err}"))?;
 
         let child = Command::new(binary)
-            .arg("run-driver-node")
             .arg("--pid")
             .arg(pid.to_string())
             .arg("--sid")

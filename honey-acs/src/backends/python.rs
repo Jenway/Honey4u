@@ -39,8 +39,8 @@ fn venv_site_packages_candidates() -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Wire format helpers (ported from honey-native/src/bindings/codec.rs)
-// These are internal Rust functions — not exposed to Python.
+// Wire format helpers for the internal Python backend bridge.
+// These are internal Rust functions, not exposed to Python.
 // ---------------------------------------------------------------------------
 
 fn to_u32(value: usize, name: &str) -> PyResult<u32> {

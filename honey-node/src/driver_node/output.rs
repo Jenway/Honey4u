@@ -1,8 +1,10 @@
-use super::phase_stats::driver_phase_stats_json;
-use super::types::{DriverNodeResult, QueuePeaksSnapshot};
+use super::error::{DriverError, DriverResult};
+use super::round::state::{DriverNodeResult, QueuePeaksSnapshot};
+use super::telemetry::driver_phase_stats_json;
 use honey_acs::AcsBackendStats;
 use honey_node::transport::LocalTcpTransport;
 use serde_json::{Value, json};
+use std::fs;
 
 fn timing_summary_json(samples: &[f64]) -> Value {
     if samples.is_empty() {
@@ -21,14 +23,14 @@ fn timing_summary_json(samples: &[f64]) -> Value {
     })
 }
 
-pub(super) fn build_node_result_json(
+pub(in crate::driver_node) fn build_node_result_json(
     pid: usize,
     batch_size: usize,
     run_result: DriverNodeResult,
     host_stats: AcsBackendStats,
     transport: &LocalTcpTransport,
     queue_peaks: &QueuePeaksSnapshot,
-) -> Result<String, String> {
+) -> DriverResult<String> {
     let round_proposed_counts = run_result.round_proposed_counts;
     let round_build_latencies = run_result.round_build_latencies;
     let acs_latencies = run_result.acs_latencies;
@@ -53,7 +55,6 @@ pub(super) fn build_node_result_json(
     let fetched_reference_count = run_result.fetched_reference_count;
     let byzantine_invalid_fetch_responses_sent = run_result.byzantine_invalid_fetch_responses_sent;
     let byzantine_fetch_requests_ignored = run_result.byzantine_fetch_requests_ignored;
-    let byzantine_batch_broadcast_suppressed = run_result.byzantine_batch_broadcast_suppressed;
     let byzantine_share_broadcast_suppressed = run_result.byzantine_share_broadcast_suppressed;
     let byzantine_empty_proposal_used = run_result.byzantine_empty_proposal_used;
     let rust_broadcast_mempool_size = run_result.rust_broadcast_mempool_size;
@@ -91,7 +92,6 @@ pub(super) fn build_node_result_json(
                 "fetched_reference_count": round.fetched_reference_count,
                 "byzantine_invalid_fetch_responses_sent": round.byzantine_invalid_fetch_responses_sent,
                 "byzantine_fetch_requests_ignored": round.byzantine_fetch_requests_ignored,
-                "byzantine_batch_broadcast_suppressed": round.byzantine_batch_broadcast_suppressed,
                 "byzantine_share_broadcast_suppressed": round.byzantine_share_broadcast_suppressed,
                 "byzantine_empty_proposal_used": round.byzantine_empty_proposal_used,
                 "driver_phase_stats": driver_phase_stats_json(&round.driver_phase_stats),
@@ -160,7 +160,6 @@ pub(super) fn build_node_result_json(
             "fetched_reference_count": fetched_reference_count.iter().sum::<usize>(),
             "byzantine_invalid_fetch_responses_sent": byzantine_invalid_fetch_responses_sent.iter().sum::<usize>(),
             "byzantine_fetch_requests_ignored": byzantine_fetch_requests_ignored.iter().sum::<usize>(),
-            "byzantine_batch_broadcast_suppressed": byzantine_batch_broadcast_suppressed.iter().sum::<usize>(),
             "byzantine_share_broadcast_suppressed": byzantine_share_broadcast_suppressed.iter().sum::<usize>(),
             "byzantine_empty_proposal_rounds": byzantine_empty_proposal_used
                 .iter()
@@ -193,7 +192,6 @@ pub(super) fn build_node_result_json(
         "byzantine_stats": {
             "invalid_fetch_responses_sent": byzantine_invalid_fetch_responses_sent.iter().sum::<usize>(),
             "fetch_requests_ignored": byzantine_fetch_requests_ignored.iter().sum::<usize>(),
-            "batch_broadcast_suppressed": byzantine_batch_broadcast_suppressed.iter().sum::<usize>(),
             "share_broadcast_suppressed": byzantine_share_broadcast_suppressed.iter().sum::<usize>(),
             "empty_proposal_rounds": byzantine_empty_proposal_used
                 .iter()
@@ -202,5 +200,17 @@ pub(super) fn build_node_result_json(
                 .count(),
         },
     }))
-    .map_err(|err| err.to_string())
+    .map_err(|err| DriverError::output(err.to_string()))
+}
+
+pub(in crate::driver_node) fn write_output(
+    result_path: Option<&str>,
+    rendered: &str,
+) -> DriverResult<()> {
+    if let Some(result_path) = result_path {
+        fs::write(result_path, rendered).map_err(|err| DriverError::output(err.to_string()))?;
+    } else {
+        println!("{rendered}");
+    }
+    Ok(())
 }

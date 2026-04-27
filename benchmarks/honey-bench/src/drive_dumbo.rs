@@ -1,6 +1,6 @@
 use super::*;
 
-/// Drive Dumbo BFT by spawning N independent `run-driver-node` OS subprocesses.
+/// Drive Dumbo BFT by spawning N independent `honey-node` OS subprocesses.
 ///
 /// Each subprocess manages its own Python ACS host, TPKE key share, and TCP
 /// connections. TPKE partial-decryption shares are exchanged directly between
@@ -51,7 +51,6 @@ pub(crate) fn run_drive_dumbo_multiprocess(
             .map_err(|e| format!("bench-driver:dumbo pid={pid}: stderr log: {e}"))?;
 
         let child = Command::new(binary)
-            .arg("run-driver-node")
             .arg("--pid")
             .arg(pid.to_string())
             .arg("--sid")
@@ -363,7 +362,6 @@ pub(crate) fn run_drive_dumbo_multiprocess(
                 "byzantine_behavior": node_json["byzantine_behavior"].as_str().unwrap_or("none"),
                 "byzantine_invalid_fetch_responses_sent": byzantine_stats["invalid_fetch_responses_sent"].as_u64().unwrap_or(0),
                 "byzantine_fetch_requests_ignored": byzantine_stats["fetch_requests_ignored"].as_u64().unwrap_or(0),
-                "byzantine_batch_broadcast_suppressed": byzantine_stats["batch_broadcast_suppressed"].as_u64().unwrap_or(0),
                 "byzantine_share_broadcast_suppressed": byzantine_stats["share_broadcast_suppressed"].as_u64().unwrap_or(0),
                 "byzantine_empty_proposal_rounds": byzantine_stats["empty_proposal_rounds"].as_u64().unwrap_or(0),
                 "transport_sent_frames": transport_stats["sent_frames"].as_u64().unwrap_or(0),

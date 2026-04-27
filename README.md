@@ -30,15 +30,15 @@ The core workspace crates are:
 
 - `honey-crypto`: BLS/threshold cryptography, ECDSA helpers, AES-GCM, Merkle utilities, and shared
   crypto error types. This crate should not depend on protocol runtime layers.
-- `honey-wire`: wire-format and codec layer. It contains API/wire types, `rkyv` codec helpers, and
-  crypto-wire serialization helpers. It may depend on `honey-crypto`, but must not depend on
-  `honey-node` or `node_runtime`.
+- `honey-wire`: wire-format and codec layer. It contains API/wire types, `rkyv` codec helpers,
+  phase-stat DTOs, and crypto-wire serialization helpers. It may depend on `honey-crypto`, but
+  must not depend on `honey-node` or driver-node runtime code.
 - `honey-acs`: ACS protocol layer. It owns the Python-hosted backend adapter plus Rust-native ACS
   backends under `honey-acs/src/backends/rust_fin/`, `rust_dumbo/`, and `rust_hb/`. It also owns
   the co-located Python package and `honey-native` extension source tree.
 - `honey-node`: pure driver/runtime layer. It owns CLI parsing, local TCP transport, ledger/keygen
-  helpers exposed to bindings, HoneyBadger batch orchestration, mempool reuse, fetch fallback, and
-  the per-round driver loop under `honey-node/src/node_runtime/`.
+  helpers exposed to bindings, HoneyBadger TPKE batch sealing/opening, mempool reuse, fetch
+  fallback, and the per-round driver loop under `honey-node/src/driver_node/`.
 
 Additional workspace members:
 
@@ -65,7 +65,7 @@ Arrows point from a crate/package to the crate/package it depends on.
 honey-wire -----------> honey-crypto
 honey-acs ------------> honey-wire, honey-crypto
 honey-node -----------> honey-acs, honey-wire, honey-crypto
-honey-native ---------> honey-node, honey-wire, honey-crypto
+honey-native ---------> honey-wire, honey-crypto
 Python honey_acs -----> honey-native
 benchmarks/honey-bench -> honey-node
 ```
@@ -77,15 +77,20 @@ Practical reading:
 - `honey-node` depends on `honey-acs`, `honey-wire`, and `honey-crypto`, and remains the
   driver/runtime boundary.
 - Python `honey_acs` depends on the `honey_native` extension.
-- `honey-native` bridges Python to selected Rust helpers from `honey-crypto`, `honey-wire`, and
-  `honey-node`.
+- `honey-native` bridges Python to selected Rust helpers from `honey-crypto` and `honey-wire`.
 
 ## Current Runtime
 
 - The main benchmark/runtime mode is `rust-driver`.
 - `honey-node` runs each logical node as a separate local TCP process.
 - ACS backends can be Python-hosted or Rust-native, selected through TOML benchmark config.
-- `honey-node bench-driver` is config-file driven through `--config <path>`.
+- Current-round sealed transaction batches are embedded in the ACS proposal payload. The driver
+  does not provide a separate reliable-broadcast path for those batches; availability is supplied
+  by the selected ACS backend's RBC/PRBC/ACS machinery.
+- The driver only forwards ACS wire events, resolves already-available proposal payloads, fetches
+  reusable cross-round proposal artifacts when configured, and exchanges TPKE share bundles bound
+  to the selected proposal ids and digests.
+- `honey-bench run` is config-file driven through `--config <path>` and spawns `honey-node`.
 - Thesis-oriented benchmark batches are driven by `honey-bench suite --suite-config <path>`.
 
 ## Current Thesis Status

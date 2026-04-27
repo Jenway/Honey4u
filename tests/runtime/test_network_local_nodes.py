@@ -5,9 +5,7 @@ import pytest
 from benchmarks.support.runners import (
     benchmark_local_dumbo_nodes_rust_driven,
     benchmark_local_honeybadger_nodes_rust_driven,
-    run_local_dumbo_acs_rust_driven,
     run_local_dumbo_rust_driven,
-    run_local_honeybadger_acs_rust_driven,
     run_local_honeybadger_rust_driven,
 )
 
@@ -15,34 +13,6 @@ from benchmarks.support.runners import (
 def _assert_transport_stats_populated(results: list[Any]) -> None:
     assert all(result.transport_stats.sent_frames > 0 for result in results)
     assert all(result.transport_stats.recv_frames > 0 for result in results)
-
-
-@pytest.mark.xfail(reason="mode=acs not yet migrated to honey-bench", strict=True)
-def test_local_honeybadger_acs_can_be_rust_driven_with_persistent_python_hosts() -> None:
-    result = run_local_honeybadger_acs_rust_driven(
-        sid="test:bench-driver:acs:hb",
-        num_nodes=4,
-        faulty=1,
-        max_rounds=2,
-        global_timeout=10.0,
-    )
-
-    assert result.protocol == "hb"
-    assert len(result.nodes) == 4
-    assert len(result.rounds) == 2
-    assert len({node.worker_ident for node in result.nodes}) == 4
-    assert all(node.worker_running is True for node in result.nodes)
-    assert all(node.worker_error is None for node in result.nodes)
-    assert all(node.rounds_started == 2 for node in result.nodes)
-    assert all(node.rounds_finished == 2 for node in result.nodes)
-    assert all(node.processed_commands > 0 for node in result.nodes)
-    assert all(node.bridge_queue_size == 0 for node in result.nodes)
-    assert [round_data.selected_count for round_data in result.rounds] == [4, 4]
-    assert all(round_data.selected_pids == (0, 1, 2, 3) for round_data in result.rounds)
-    assert all(round_data.send_events > 0 for round_data in result.rounds)
-    assert all(round_data.drive_stats.sweep_count > 0 for round_data in result.rounds)
-    assert all(len(round_data.drive_stats.host_stats) == 4 for round_data in result.rounds)
-    assert all(round_data.drive_stats.total_pulled_events > 0 for round_data in result.rounds)
 
 
 def test_local_honeybadger_outer_can_be_rust_driven_with_persistent_python_hosts() -> None:
@@ -220,30 +190,6 @@ def test_local_dumbo_benchmark_rust_driven_reports_round_stats() -> None:
     _assert_transport_stats_populated(results)
 
 
-@pytest.mark.xfail(reason="mode=acs not yet migrated to honey-bench", strict=True)
-def test_local_dumbo_acs_can_be_rust_driven_with_persistent_python_hosts() -> None:
-    result = run_local_dumbo_acs_rust_driven(
-        sid="test:bench-driver:acs:dumbo",
-        num_nodes=4,
-        faulty=1,
-        max_rounds=1,
-        global_timeout=10.0,
-    )
-
-    assert result.protocol == "dumbo"
-    assert len(result.nodes) == 4
-    assert len(result.rounds) == 1
-    assert len({node.worker_ident for node in result.nodes}) == 4
-    assert all(node.worker_running is True for node in result.nodes)
-    assert all(node.worker_error is None for node in result.nodes)
-    assert all(node.rounds_started == 1 for node in result.nodes)
-    assert all(node.rounds_finished == 1 for node in result.nodes)
-    assert all(node.processed_commands > 0 for node in result.nodes)
-    assert all(node.bridge_queue_size == 0 for node in result.nodes)
-    assert result.rounds[0].selected_count >= 3
-    assert result.rounds[0].send_events > 0
-
-
 def test_local_dumbo_benchmark_reports_fixed_network_delay_stats() -> None:
     results = benchmark_local_dumbo_nodes_rust_driven(
         sid="test:bench-driver:dumbo:network-delay",
@@ -330,6 +276,5 @@ def test_local_dumbo_benchmark_supports_silent_byzantine_node() -> None:
     honest_results = [result for result in results if result.pid != 3]
     assert silent_result.byzantine_behavior == "silent"
     assert silent_result.driver_stats.byzantine_empty_proposal_rounds == 1
-    assert silent_result.driver_stats.byzantine_batch_broadcast_suppressed == 1
     assert silent_result.driver_stats.byzantine_share_broadcast_suppressed == 1
     assert all(result.byzantine_behavior in {None, "none"} for result in honest_results)

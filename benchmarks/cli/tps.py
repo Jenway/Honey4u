@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from statistics import fmean
 from typing import Any
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from benchmarks.support.runners import (
     benchmark_local_dumbo_nodes_rust_driven,
@@ -44,9 +48,9 @@ class PeakStats:
 class CommunicationStats:
     send_events: int
     send_payload_bytes: int
-    proposal_ready_events: int
-    proposal_ready_payload_bytes: int
-    proposal_ready_certificate_bytes: int
+    proposal_available_events: int
+    proposal_available_payload_bytes: int
+    proposal_available_proof_bytes: int
     total_tracked_bytes: int
     bytes_per_delivered_transaction: float
 
@@ -84,7 +88,6 @@ class TransportSummary:
 class ByzantineStats:
     invalid_fetch_responses_sent: int = 0
     fetch_requests_ignored: int = 0
-    batch_broadcast_suppressed: int = 0
     share_broadcast_suppressed: int = 0
     empty_proposal_rounds: int = 0
 
@@ -428,9 +431,9 @@ def _build_communication_stats(
 ) -> CommunicationStats:
     send_events = 0
     send_payload_bytes = 0
-    proposal_ready_events = 0
-    proposal_ready_payload_bytes = 0
-    proposal_ready_certificate_bytes = 0
+    proposal_available_events = 0
+    proposal_available_payload_bytes = 0
+    proposal_available_proof_bytes = 0
 
     for round_detail in rounds:
         stats = getattr(round_detail, "driver_phase_stats", None)
@@ -438,19 +441,19 @@ def _build_communication_stats(
             continue
         send_events += stats.send_events
         send_payload_bytes += stats.send_payload_bytes
-        proposal_ready_events += stats.proposal_ready_events
-        proposal_ready_payload_bytes += stats.proposal_ready_payload_bytes
-        proposal_ready_certificate_bytes += stats.proposal_ready_certificate_bytes
+        proposal_available_events += stats.proposal_available_events
+        proposal_available_payload_bytes += stats.proposal_available_payload_bytes
+        proposal_available_proof_bytes += stats.proposal_available_proof_bytes
 
     total_tracked_bytes = (
-        send_payload_bytes + proposal_ready_payload_bytes + proposal_ready_certificate_bytes
+        send_payload_bytes + proposal_available_payload_bytes + proposal_available_proof_bytes
     )
     return CommunicationStats(
         send_events=send_events,
         send_payload_bytes=send_payload_bytes,
-        proposal_ready_events=proposal_ready_events,
-        proposal_ready_payload_bytes=proposal_ready_payload_bytes,
-        proposal_ready_certificate_bytes=proposal_ready_certificate_bytes,
+        proposal_available_events=proposal_available_events,
+        proposal_available_payload_bytes=proposal_available_payload_bytes,
+        proposal_available_proof_bytes=proposal_available_proof_bytes,
         total_tracked_bytes=total_tracked_bytes,
         bytes_per_delivered_transaction=(
             total_tracked_bytes / delivered_transactions if delivered_transactions else 0.0
@@ -744,9 +747,6 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
         ),
         fetch_requests_ignored=sum(
             result.driver_stats.byzantine_fetch_requests_ignored for result in results
-        ),
-        batch_broadcast_suppressed=sum(
-            result.driver_stats.byzantine_batch_broadcast_suppressed for result in results
         ),
         share_broadcast_suppressed=sum(
             result.driver_stats.byzantine_share_broadcast_suppressed for result in results
@@ -1055,7 +1055,6 @@ def _run_single_mode(args: argparse.Namespace) -> dict[str, Any]:
             f"invalid_fetch_responses={summary.byzantine.invalid_fetch_responses_sent} "
             f"ignored_fetch_requests={summary.byzantine.fetch_requests_ignored} "
             f"empty_proposals={summary.byzantine.empty_proposal_rounds} "
-            f"suppressed_batch={summary.byzantine.batch_broadcast_suppressed} "
             f"suppressed_share={summary.byzantine.share_broadcast_suppressed}"
         )
     print(

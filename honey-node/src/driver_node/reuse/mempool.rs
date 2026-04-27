@@ -12,6 +12,7 @@
 //!   [2B roothash_len BE][roothash][4B proof_len BE][proof_bytes]
 //! ```
 
+use super::super::error::{DriverError, DriverResult};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
@@ -81,9 +82,9 @@ pub fn encode_bundle_acs_payload(payload: &[u8], refs: &[PoolReference]) -> Vec<
 /// Decode an ACS payload produced by either `encode_inline_acs_payload` or
 /// `encode_bundle_acs_payload`.  Corresponds to Python `decode_acs_payload`.
 #[allow(unused_assignments)] // `pos` is advanced inside macros; the final increment is spuriously flagged
-pub fn decode_acs_payload(bytes: &[u8]) -> Result<AcsPayload, String> {
+pub fn decode_acs_payload(bytes: &[u8]) -> DriverResult<AcsPayload> {
     if bytes.is_empty() {
-        return Err("empty ACS payload".into());
+        return Err(DriverError::serialization("empty ACS payload"));
     }
     let tag = bytes[0];
     let mut pos = 1usize;
@@ -91,7 +92,7 @@ pub fn decode_acs_payload(bytes: &[u8]) -> Result<AcsPayload, String> {
     macro_rules! read_u16 {
         () => {{
             if pos + 2 > bytes.len() {
-                return Err("truncated ACS payload (u16)".into());
+                return Err(DriverError::serialization("truncated ACS payload (u16)"));
             }
             let v = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
             pos += 2;
@@ -101,7 +102,7 @@ pub fn decode_acs_payload(bytes: &[u8]) -> Result<AcsPayload, String> {
     macro_rules! read_u32 {
         () => {{
             if pos + 4 > bytes.len() {
-                return Err("truncated ACS payload (u32)".into());
+                return Err(DriverError::serialization("truncated ACS payload (u32)"));
             }
             let v =
                 u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
@@ -113,7 +114,7 @@ pub fn decode_acs_payload(bytes: &[u8]) -> Result<AcsPayload, String> {
         ($len:expr) => {{
             let len = $len;
             if pos + len > bytes.len() {
-                return Err("truncated ACS payload (slice)".into());
+                return Err(DriverError::serialization("truncated ACS payload (slice)"));
             }
             let s = &bytes[pos..pos + len];
             pos += len;
@@ -135,7 +136,8 @@ pub fn decode_acs_payload(bytes: &[u8]) -> Result<AcsPayload, String> {
         for _ in 0..ref_count {
             let id_len = read_u16!();
             let id_bytes = read_slice!(id_len);
-            let item_id = String::from_utf8(id_bytes.to_vec()).map_err(|e| e.to_string())?;
+            let item_id = String::from_utf8(id_bytes.to_vec())
+                .map_err(|err| DriverError::serialization(err.to_string()))?;
             let origin_round = read_u32!();
             let origin_sender = read_u16!() as u32;
             let roothash_len = read_u16!();
@@ -156,7 +158,9 @@ pub fn decode_acs_payload(bytes: &[u8]) -> Result<AcsPayload, String> {
         });
     }
 
-    Err(format!("unknown ACS payload tag: {tag}"))
+    Err(DriverError::serialization(format!(
+        "unknown ACS payload tag: {tag}"
+    )))
 }
 
 // ─── BroadcastMempool ─────────────────────────────────────────────────────

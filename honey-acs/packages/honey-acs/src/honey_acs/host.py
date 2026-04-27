@@ -52,7 +52,7 @@ class PersistentAcsHost:
         self._processed_commands = 0
         self._command_counts: dict[str, int] = {
             "start_round": 0,
-            "push_inbound_wire_batch": 0,  # key kept for Rust stats() compat
+            "push_inbound_wire_batch": 0,
             "pull_outbound_wire_batch": 0,
             "abort_round": 0,
             "stats": 0,
@@ -307,7 +307,7 @@ class PersistentAcsHost:
         The wire-format decoding is now done on the Rust side before this
         method is called, so no codec call is needed here.
         """
-        self._command_counts["push_inbound_wire_batch"] += 1  # key kept for Rust stats()
+        self._command_counts["push_inbound_wire_batch"] += 1
         self._batch_item_counts["push_inbound_wire_batch_items"] += len(items)
         if not items:
             return 0
@@ -456,10 +456,6 @@ def _build_persistent_acs_host(
 
 def _config_kwargs_from_json(config_json: str | None) -> dict[str, Any]:
     config_payload = cast(dict[str, object], json.loads(config_json)) if config_json else {}
-    # Ignore legacy config_json["output_mode"]; ACS host events no longer expose
-    # protocol-specific decision shapes across the Rust/Python boundary.
-    if "output_mode" in config_payload:
-        config_payload.pop("output_mode")
     # Strip any keys that HBConfig doesn't recognise before forwarding to Python.
     valid_hbconfig_fields = {f.name for f in dataclass_fields(HBConfig)}
     config_payload = {k: v for k, v in config_payload.items() if k in valid_hbconfig_fields}

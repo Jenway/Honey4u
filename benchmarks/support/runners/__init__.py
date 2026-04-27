@@ -10,8 +10,6 @@ from benchmarks.support.runners.results import (
     MultiprocessRoundDetail,
     NodeQueuePeaks,
     RustDrivenAcsNodeResult,
-    RustDrivenAcsRoundResult,
-    RustDrivenAcsRunResult,
     RustDrivenDriverPhaseStats,
     RustDrivenDumboNodeResult,
     RustDrivenDumboRoundResult,
@@ -24,10 +22,8 @@ from benchmarks.support.runners.results import (
 from benchmarks.support.runners.rust_driver import (
     benchmark_local_dumbo_nodes_rust_driven,
     benchmark_local_honeybadger_nodes_rust_driven,
-    run_local_dumbo_acs_rust_driven,
     run_local_dumbo_new_driver,
     run_local_dumbo_rust_driven,
-    run_local_honeybadger_acs_rust_driven,
     run_local_honeybadger_rust_driven,
 )
 
@@ -38,8 +34,6 @@ __all__ = [
     "MultiprocessRoundDetail",
     "NodeQueuePeaks",
     "RustDrivenAcsNodeResult",
-    "RustDrivenAcsRoundResult",
-    "RustDrivenAcsRunResult",
     "RustDrivenDriverPhaseStats",
     "RustDrivenDumboNodeResult",
     "RustDrivenDumboRoundResult",
@@ -51,9 +45,7 @@ __all__ = [
     "_build_honey_bench_binary",
     "benchmark_local_dumbo_nodes_rust_driven",
     "benchmark_local_honeybadger_nodes_rust_driven",
-    "run_local_dumbo_acs_rust_driven",
     "run_local_dumbo_new_driver",
     "run_local_dumbo_rust_driven",
-    "run_local_honeybadger_acs_rust_driven",
     "run_local_honeybadger_rust_driven",
 ]

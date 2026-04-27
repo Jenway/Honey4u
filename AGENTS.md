@@ -10,7 +10,7 @@
 - The active benchmark and test runner mode is `rust-driver`: `honey-node` spawns N subprocesses, each running the full protocol over local TCP.
 - ACS execution under `rust-driver` is no longer Python-only. The driver can run the Python ACS host through PyO3 or one of the Rust-native ACS hosts selected by `config_json`.
 - `benchmarks/cli/tps.py` accepts `--node-runtime rust-driver` only; other runtime labels have been removed from the CLI.
-- `honey-node bench-driver` now takes benchmark configuration from a TOML file via `--config <path>`. Benchmark helper scripts generate or point to TOML configs instead of assembling long CLI flag lists.
+- `honey-bench run` now takes benchmark configuration from a TOML file via `--config <path>` and spawns `honey-node` subprocesses. Benchmark helper scripts generate or point to TOML configs instead of assembling long CLI flag lists.
 - Current benchmark work is centered on two CLI entrypoints: `benchmarks/cli/tps.py` for general TPS/latency runs and `benchmarks/cli/dumbo_reuse_sweep.py` for reuse on/off sweeps. Thesis-oriented experiment batches are driven by TOML configs under `benchmarks/configs/paper/` via `honey-bench suite`.
 - Checked-in benchmark evidence currently covers large Dumbo reuse sweeps and a backend comparison between `python` and `rust_fin`. In the current workspace, archived local formal reruns now exist under `benchmarks/results/paper-final-highload-20260421T182250Z/`, `benchmarks/results/paper-final-grace-python-20260421T191900Z/`, `benchmarks/results/paper-final-boundary-20260421T180132Z/`, `benchmarks/results/paper-final-network-jitter-20260422T000021Z/`, and `benchmarks/results/paper-final-network-fixed-delay-20260422T020028Z/`; there is still no archived `rust_dumbo` comparison.
 - The current worktree also includes controlled runtime fault injection at the `rust-driver` boundary: network faults (`fixed_delay_ms`, `jitter_ms`, `slow_honest`) and initial Byzantine node behaviors (`silent`, `invalid_fetch_response`). Treat those capabilities as implemented tooling. Minimal archived evidence now exists for the slow-honest and two initial byzantine scenarios, but do not generalize that to full WAN or broad Byzantine robustness claims.
@@ -19,7 +19,8 @@
 - The project scope is intentionally limited to ACS-based asynchronous BFT in the HoneyBadger/Dumbo family; do not preserve extensibility for DAG-style, dispersed-ledger, or unrelated consensus families unless the task explicitly requires it.
 - HoneyBadger outer orchestration, ACS scheduling, and other runtime-facing control logic are valid Rust-downshift targets; agents should not keep them in Python just to preserve a generic or overly extensible framework shape.
 - The three Rust ACS backends live in the `honey-acs` crate under `honey-acs/src/backends/rust_fin/`, `honey-acs/src/backends/rust_dumbo/`, and `honey-acs/src/backends/rust_hb/`; each is a `mod.rs` root plus focused submodules.
-- The rust-driver runtime (formerly called `network_driver`) lives under `honey-node/src/node_runtime/`; it is the binary-only module tree orchestrating round execution, HoneyBadger TPKE, broadcast mempool reuse, and the fetch fallback protocol.
+- The rust-driver node implementation lives under `honey-node/src/driver_node/`; it is the binary-only module tree orchestrating round execution, HoneyBadger TPKE, ACS proposal payload resolution, cross-round reuse, and the fetch fallback protocol.
+- Current-round sealed transaction batches must enter the protocol as ACS proposal payload bytes. Do not add a separate driver-level reliable-broadcast path for current-round batches; correctness-critical availability belongs to the ACS backend's RBC/PRBC/ACS machinery.
 - Generated benchmark reports appear under `benchmarks/results/`; treat them as artifacts rather than source.
 
 ## Stack And Layout
@@ -30,14 +31,14 @@
 - The `PersistentAcsHost` bridge (Python ↔ Rust IPC glue) lives in `honey-acs/packages/honey-acs/src/honey_acs/host.py`.
 - Python cryptographic parameter construction and key serialization helpers live in `honey-acs/packages/honey-acs/src/honey_acs/crypto/bootstrap.py`; Rust-side host crypto helpers live in `honey-acs/src/host_crypto.rs`.
 - Pool-reuse encoding/decoding (cross-round broadcast reuse) lives in `honey-acs/packages/honey-acs/src/honey_acs/pool_reuse.py`.
-- The rust-driver broadcast mempool runtime lives in `honey-node/src/node_runtime/pool_reuse.rs`; Python-side configuration for it flows through `honey-acs/packages/honey-acs/src/honey_acs/params.py`.
+- The rust-driver broadcast mempool runtime lives in `honey-node/src/driver_node/reuse/mempool.rs`; Python-side configuration for it flows through `honey-acs/packages/honey-acs/src/honey_acs/params.py`.
 - Telemetry and metrics live in `honey-acs/packages/honey-acs/src/honey_acs/telemetry.py`.
 - Protocol exceptions live in `honey-acs/packages/honey-acs/src/honey_acs/exceptions.py`.
 - The Rust workspace is defined at the project root `Cargo.toml`; the four core crates are `honey-crypto/` (shared crypto), `honey-wire/` (wire-format and codec layer), `honey-acs/` (ACS protocol backends), and `honey-node/` (standalone driver/runtime binary). Additional workspace members are `honey-acs/honey-native/` (PyO3 extension) and `benchmarks/honey-bench/` (Rust benchmark orchestrator).
-- Crate boundaries: `honey-wire` may depend on `honey-crypto` but must not depend on `honey-node` or `node_runtime`; `honey-acs` depends on `honey-crypto` and `honey-wire`; `honey-node` depends on `honey-acs`, `honey-wire`, and `honey-crypto` and owns runtime orchestration.
+- Crate boundaries: `honey-wire` may depend on `honey-crypto` but must not depend on `honey-node` or driver-node runtime code; `honey-acs` depends on `honey-crypto` and `honey-wire`; `honey-node` depends on `honey-acs`, `honey-wire`, and `honey-crypto` and owns runtime orchestration.
 - `honey-node`'s library surface (`honey-node/src/lib.rs`) exposes only three modules: `keygen` (cryptographic key-pair generation), `ledger` (SQLite persistence), and `transport` (`LocalTcpTransport`).
-- `honey-node`'s binary entry (`honey-node/src/main.rs` → `cli.rs`) delegates to `node_runtime/mod.rs`, which owns the full round-execution loop under `honey-node/src/node_runtime/`.
-- Key submodules of `honey-node/src/node_runtime/`: `hb.rs` (HoneyBadger TPKE batch encryption/decryption), `pool_reuse.rs` (broadcast mempool), `pool_wire.rs` (fetch fallback P2P wire), `driver_wire.rs` (bench-driver TCP frame format), `round/driver.rs` (per-round event loop).
+- `honey-node`'s binary entry (`honey-node/src/main.rs` → `cli.rs`) delegates to `driver_node/mod.rs`, which owns the full rust-driver node loop under `honey-node/src/driver_node/`.
+- Key submodules of `honey-node/src/driver_node/`: `hb_shell/` (HoneyBadger batch encryption/decryption shell), `reuse/` (ACS proposal payload bundle/reference encoding, reusable proposal mempool, and fetch fallback), `wire/` (driver TCP frames and pool-fetch wire), `round/` (round inbox, state, and per-round loop), `config/` (runtime config parsing), and `output.rs` (result JSON rendering).
 - Python tests use `pytest` plus `pytest-asyncio`. Protocol tests live alongside the code they test: `honey-acs/packages/honey-acs/tests/acs/`, `honey-acs/packages/honey-acs/tests/subprotocols/`, and `honey-acs/honey-native/tests/native/`. Integration and benchmark tests stay at the root under `tests/runtime/` and `tests/benchmarks/`.
 - Benchmark CLIs live under `benchmarks/cli/`; reusable runner helpers live under `benchmarks/support/runners/`.
 - Active benchmark CLI scripts: `benchmarks/cli/tps.py` and `benchmarks/cli/dumbo_reuse_sweep.py`.
@@ -149,8 +150,8 @@
 - The Python package consumes `honey-acs/honey-native` through the `uv` workspace; the Rust workspace is defined at the project root `Cargo.toml`.
 - Building the Rust workspace pulls in all crates (`honey-crypto`, `honey-wire`, `honey-acs`, `honey-native`, `honey-node`, `honey-bench`); keep the root `Cargo.lock` in sync if a workspace dependency changes.
 - Running Rust workspace commands may create or refresh `Cargo.lock` and `target/`; treat both as generated unless the task explicitly includes workspace lock updates.
-- `honey-node bench-driver` is config-file driven. Prefer editing or generating TOML benchmark configs rather than extending the CLI argument surface.
-- The internal `run-driver-node` command still uses explicit flags because it is spawned by the benchmark driver, not by end users.
+- `honey-bench run` and `honey-bench suite` are config-file driven. Prefer editing or generating TOML benchmark configs rather than extending the CLI argument surface.
+- `honey-node` is the internal per-node process entrypoint spawned by the benchmark driver. It uses explicit flags directly and no longer has a `run-driver-node` subcommand.
 - `ty` is configured with `error-on-warning = true`, so warnings should be treated as failures.
 - `ty` currently checks `honey-acs/packages/honey-acs/src/honey_acs` and `honey-acs/honey-native/tests/native/test_ecdsa_and_crypto_params.py` only (see `pyproject.toml [tool.ty.src]`).
 - Ruff excludes `honey-acs/honey-native`, so do not expect Python lint commands to touch Rust sources.
@@ -237,7 +238,7 @@
 - `unwrap()` appears in tests; avoid adding new `unwrap()` calls in non-test logic unless the invariant is truly internal and obvious.
 - If an invariant is impossible but worth documenting, use `expect(...)` with a specific message rather than a bare `unwrap()`.
 - For `honey-acs`, keep each backend root (`honey-acs/src/backends/rust_fin/mod.rs`, `rust_dumbo/mod.rs`, `rust_hb/mod.rs`) as a thin orchestration shell; put wire/state/crypto/protocol details in their sibling submodules.
-- For `honey-node`, keep `honey-node/src/node_runtime/mod.rs` as the round-execution entry and place per-stage logic in its submodules (`hb.rs`, `pool_reuse.rs`, `pool_wire.rs`, `driver_wire.rs`, `round/`); do not re-centralize that logic back into lib.rs.
+- For `honey-node`, keep `honey-node/src/driver_node/mod.rs` as the rust-driver node entry and place per-stage logic in its submodules (`hb_shell/`, `reuse/`, `wire/`, `round/`, `config/`); do not re-centralize that logic back into lib.rs.
 
 ## Interop Guidance
 - Python serialization/deserialization helpers in `honey_acs.messages` wrap native errors as `SerializationError`; preserve that pattern.
