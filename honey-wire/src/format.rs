@@ -1,30 +1,58 @@
+use honey_crypto::merkle::MerkleProof;
 use rkyv::{Archive, Deserialize, Serialize};
 
-#[derive(Archive, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub struct EncryptedBatchWire {
     pub encrypted_key: Vec<u8>,
     pub ciphertext: Vec<u8>,
 }
 
-#[derive(Archive, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub struct TxBatchWire {
     pub items: Vec<Vec<u8>>,
 }
 
-#[derive(Archive, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub struct MerkleProofWire {
     pub leaf_index: usize,
     pub siblings: Vec<Vec<u8>>,
 }
 
-#[derive(Archive, Serialize, Deserialize)]
+impl MerkleProofWire {
+    pub fn from_runtime(value: &MerkleProof) -> Self {
+        Self {
+            leaf_index: value.leaf_index,
+            siblings: value
+                .siblings
+                .iter()
+                .map(|sibling| sibling.to_vec())
+                .collect(),
+        }
+    }
+
+    pub fn into_runtime(self) -> Result<MerkleProof, String> {
+        let mut siblings = Vec::with_capacity(self.siblings.len());
+        for sibling in self.siblings {
+            let sibling: [u8; 32] = sibling.try_into().map_err(|bytes: Vec<u8>| {
+                format!("invalid Merkle sibling length: {}", bytes.len())
+            })?;
+            siblings.push(sibling);
+        }
+        Ok(MerkleProof {
+            leaf_index: self.leaf_index,
+            siblings,
+        })
+    }
+}
+
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub struct EncodedShardWire {
     pub index: usize,
     pub data: Vec<u8>,
     pub proof: MerkleProofWire,
 }
 
-#[derive(Archive, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub struct MerkleResultWire {
     pub root: Vec<u8>,
     pub shards: Vec<Vec<u8>>,
@@ -199,4 +227,36 @@ pub struct PdStoreRecordWire {
     pub stripe_owner: u32,
     pub stripe: Vec<u8>,
     pub merkle_proof: Vec<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merkle_proof_wire_round_trips_runtime_proof() {
+        let proof = MerkleProof {
+            leaf_index: 2,
+            siblings: vec![[7u8; 32], [9u8; 32]],
+        };
+
+        let decoded = MerkleProofWire::from_runtime(&proof)
+            .into_runtime()
+            .expect("valid proof should decode");
+
+        assert_eq!(decoded.leaf_index, proof.leaf_index);
+        assert_eq!(decoded.siblings, proof.siblings);
+    }
+
+    #[test]
+    fn merkle_proof_wire_rejects_invalid_sibling_length() {
+        let err = MerkleProofWire {
+            leaf_index: 0,
+            siblings: vec![vec![1, 2, 3]],
+        }
+        .into_runtime()
+        .expect_err("short sibling should be rejected");
+
+        assert!(err.contains("invalid Merkle sibling length: 3"));
+    }
 }

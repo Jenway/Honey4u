@@ -14,7 +14,7 @@ use honey_crypto::threshold::keygen::{PartialSignature, SigPrivateKeyShare, SigP
 use honey_wire::api::decode_result;
 use honey_wire::codec::hex_encode;
 use honey_wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
-use serde::{Deserialize, Serialize};
+use honey_wire::format::MerkleProofWire;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
@@ -161,7 +161,7 @@ impl RustAcsBackend {
                 sender,
                 leader as usize,
                 roothash,
-                proof,
+                proof.into_runtime()?,
                 stripe,
                 stripe_index as usize,
             ),
@@ -176,7 +176,7 @@ impl RustAcsBackend {
                 sender,
                 leader as usize,
                 roothash,
-                proof,
+                proof.into_runtime()?,
                 stripe,
                 stripe_index as usize,
             ),
@@ -287,7 +287,7 @@ impl AcsBackend for RustAcsBackend {
             let message = RustAcsMessage::PrbcVal {
                 leader: self.pid as u32,
                 roothash: merkle_result.root,
-                proof: merkle_result.proofs[recipient].clone(),
+                proof: MerkleProofWire::from_runtime(&merkle_result.proofs[recipient]),
                 stripe: merkle_result.shards[recipient].clone(),
                 stripe_index: recipient as u32,
             };

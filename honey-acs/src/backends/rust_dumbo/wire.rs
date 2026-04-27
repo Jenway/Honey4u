@@ -1,18 +1,20 @@
 use super::*;
+use honey_wire::api::{decode_result, encode_result};
+use rkyv::{Archive, Deserialize, Serialize};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub(super) struct PrbcProof {
     pub(super) roothash: [u8; 32],
     pub(super) sigmas: Vec<(usize, Vec<u8>)>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub(super) struct ThresholdProof {
     pub(super) roothash: [u8; 32],
     pub(super) signature: Vec<u8>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(super) struct PdStoreRecord {
     pub(super) roothash: [u8; 32],
     pub(super) stripe_owner: u32,
@@ -20,32 +22,60 @@ pub(super) struct PdStoreRecord {
     pub(super) merkle_proof: MerkleProof,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
+pub(super) struct PdStoreRecordWire {
+    pub(super) roothash: [u8; 32],
+    pub(super) stripe_owner: u32,
+    pub(super) stripe: Vec<u8>,
+    pub(super) merkle_proof: MerkleProofWire,
+}
+
+impl PdStoreRecordWire {
+    pub(super) fn from_runtime(value: &PdStoreRecord) -> Self {
+        Self {
+            roothash: value.roothash,
+            stripe_owner: value.stripe_owner,
+            stripe: value.stripe.clone(),
+            merkle_proof: MerkleProofWire::from_runtime(&value.merkle_proof),
+        }
+    }
+
+    pub(super) fn into_runtime(self) -> Result<PdStoreRecord, String> {
+        Ok(PdStoreRecord {
+            roothash: self.roothash,
+            stripe_owner: self.stripe_owner,
+            stripe: self.stripe,
+            merkle_proof: self.merkle_proof.into_runtime()?,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Archive, Serialize, Deserialize)]
 pub(super) enum DumboCoinScope {
     Election { permutation_round: u32 },
     Aba { mvba_round: u32, epoch: u32 },
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub(super) struct RustDumboEnvelope {
     pub(super) round_id: u32,
     pub(super) sender: u32,
     pub(super) message: RustDumboMessage,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub(super) enum RustDumboMessage {
     PrbcVal {
         leader: u32,
         roothash: [u8; 32],
-        proof: MerkleProof,
+        proof: MerkleProofWire,
         stripe: Vec<u8>,
         stripe_index: u32,
     },
     PrbcEcho {
         leader: u32,
         roothash: [u8; 32],
-        proof: MerkleProof,
+        proof: MerkleProofWire,
         stripe: Vec<u8>,
         stripe_index: u32,
     },
@@ -62,7 +92,7 @@ pub(super) enum RustDumboMessage {
         leader: u32,
         roothash: [u8; 32],
         stripe: Vec<u8>,
-        merkle_proof: MerkleProof,
+        merkle_proof: MerkleProofWire,
     },
     PdStored {
         leader: u32,
@@ -95,7 +125,7 @@ pub(super) enum RustDumboMessage {
     RcStore {
         mvba_round: u32,
         leader: u32,
-        store: PdStoreRecord,
+        store: PdStoreRecordWire,
     },
     AbaEst {
         mvba_round: u32,
@@ -124,16 +154,15 @@ impl RustDumboAcsBackend {
         round_id: usize,
         message: RustDumboMessage,
     ) -> Result<Vec<u8>, String> {
-        bincode::serialize(&RustDumboEnvelope {
+        encode_result(&RustDumboEnvelope {
             round_id: round_id as u32,
             sender: self.pid as u32,
             message,
         })
-        .map_err(|err| err.to_string())
     }
 
     pub(super) fn decode_envelope(payload: &[u8]) -> Result<RustDumboEnvelope, String> {
-        bincode::deserialize(payload).map_err(|err| err.to_string())
+        decode_result(payload)
     }
 
     pub(super) fn build_proposal_id(round_id: usize, proposer: usize, digest: &[u8; 32]) -> String {

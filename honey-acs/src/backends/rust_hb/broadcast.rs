@@ -294,7 +294,7 @@ impl RustHbAcsBackend {
             RustHbMessage::RbcEcho {
                 leader: leader as u32,
                 roothash,
-                proof,
+                proof: MerkleProofWire::from_runtime(&proof),
                 stripe,
                 stripe_index: self.pid as u32,
             },
@@ -399,7 +399,7 @@ impl RustHbAcsBackend {
             RustHbMessage::PrbcEcho {
                 leader: leader as u32,
                 roothash,
-                proof,
+                proof: MerkleProofWire::from_runtime(&proof),
                 stripe,
                 stripe_index: self.pid as u32,
             },

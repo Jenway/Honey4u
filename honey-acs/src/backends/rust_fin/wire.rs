@@ -1,31 +1,33 @@
 use super::*;
+use honey_wire::api::{decode_result, encode_result};
+use rkyv::{Archive, Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Archive, Serialize, Deserialize)]
 pub(super) enum CoinScope {
     Election { iteration: u32 },
     Raba { iteration: u32, loop_index: u32 },
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub(super) struct RustAcsEnvelope {
     pub(super) round_id: u32,
     pub(super) sender: u32,
     pub(super) message: RustAcsMessage,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Archive, Serialize, Deserialize)]
 pub(super) enum RustAcsMessage {
     PrbcVal {
         leader: u32,
         roothash: [u8; 32],
-        proof: MerkleProof,
+        proof: MerkleProofWire,
         stripe: Vec<u8>,
         stripe_index: u32,
     },
     PrbcEcho {
         leader: u32,
         roothash: [u8; 32],
-        proof: MerkleProof,
+        proof: MerkleProofWire,
         stripe: Vec<u8>,
         stripe_index: u32,
     },
@@ -87,16 +89,15 @@ impl RustAcsBackend {
         round_id: usize,
         message: RustAcsMessage,
     ) -> Result<Vec<u8>, String> {
-        bincode::serialize(&RustAcsEnvelope {
+        encode_result(&RustAcsEnvelope {
             round_id: round_id as u32,
             sender: self.pid as u32,
             message,
         })
-        .map_err(|err| err.to_string())
     }
 
     pub(super) fn decode_envelope(payload: &[u8]) -> Result<RustAcsEnvelope, String> {
-        bincode::deserialize(payload).map_err(|err| err.to_string())
+        decode_result(payload)
     }
 
     pub(super) fn build_proposal_id(round_id: usize, proposer: usize, digest: &[u8; 32]) -> String {

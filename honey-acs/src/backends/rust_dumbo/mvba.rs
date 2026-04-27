@@ -50,7 +50,7 @@ impl RustDumboAcsBackend {
                     leader: leader as u32,
                     roothash: encoded.root,
                     stripe: encoded.shards[recipient].clone(),
-                    merkle_proof: encoded.proofs[recipient].clone(),
+                    merkle_proof: MerkleProofWire::from_runtime(&encoded.proofs[recipient]),
                 },
             )?;
             changed = true;
@@ -753,7 +753,7 @@ impl RustDumboAcsBackend {
                 RustDumboMessage::RcStore {
                     mvba_round: mvba_round as u32,
                     leader: leader as u32,
-                    store,
+                    store: PdStoreRecordWire::from_runtime(&store),
                 },
             )?;
             changed = true;

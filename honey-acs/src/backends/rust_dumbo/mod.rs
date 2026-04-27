@@ -10,7 +10,7 @@ use honey_crypto::threshold::keygen::{PartialSignature, SigPrivateKeyShare, SigP
 use honey_wire::api::decode_result;
 use honey_wire::codec::hex_encode;
 use honey_wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
-use serde::{Deserialize, Serialize};
+use honey_wire::format::MerkleProofWire;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Mutex;
@@ -189,7 +189,7 @@ impl RustDumboAcsBackend {
                     sender,
                     leader,
                     roothash,
-                    proof,
+                    proof.into_runtime()?,
                     stripe,
                     stripe_index as usize,
                 )?;
@@ -211,7 +211,7 @@ impl RustDumboAcsBackend {
                     sender,
                     leader,
                     roothash,
-                    proof,
+                    proof.into_runtime()?,
                     stripe,
                     stripe_index as usize,
                 )?;
@@ -250,7 +250,7 @@ impl RustDumboAcsBackend {
                     sender,
                     leader as usize,
                     roothash,
-                    merkle_proof,
+                    merkle_proof.into_runtime()?,
                     stripe,
                 )?;
                 if changed {
@@ -340,7 +340,7 @@ impl RustDumboAcsBackend {
                     sender,
                     mvba_round as usize,
                     leader as usize,
-                    store,
+                    store.into_runtime()?,
                 )?;
                 if changed {
                     round.mark_mvba_dirty();
@@ -438,7 +438,7 @@ impl AcsBackend for RustDumboAcsBackend {
             let message = RustDumboMessage::PrbcVal {
                 leader: self.pid as u32,
                 roothash: merkle_result.root,
-                proof: merkle_result.proofs[recipient].clone(),
+                proof: MerkleProofWire::from_runtime(&merkle_result.proofs[recipient]),
                 stripe: merkle_result.shards[recipient].clone(),
                 stripe_index: recipient as u32,
             };

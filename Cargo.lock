@@ -129,15 +129,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
-name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -625,7 +616,6 @@ dependencies = [
 name = "honey-acs"
 version = "0.1.0"
 dependencies = [
- "bincode",
  "crossbeam-channel",
  "honey-crypto",
  "honey-wire",
@@ -633,7 +623,6 @@ dependencies = [
  "pyo3",
  "rand",
  "rkyv",
- "serde",
  "serde_json",
  "sha2 0.11.0",
 ]
@@ -680,7 +669,6 @@ dependencies = [
 name = "honey-node"
 version = "0.1.0"
 dependencies = [
- "bincode",
  "clap",
  "crossbeam-channel",
  "hex",
@@ -694,7 +682,6 @@ dependencies = [
  "rand",
  "rkyv",
  "rusqlite",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror",

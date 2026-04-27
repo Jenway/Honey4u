@@ -1,9 +1,9 @@
 use super::super::error::{DriverError, DriverResult};
-use bincode::{deserialize, serialize};
 use honey_node::transport::LocalTcpTransport;
-use serde::{Deserialize, Serialize};
+use honey_wire::api::{decode_result, encode_result};
+use rkyv::{Archive, Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Archive, Serialize, Deserialize)]
 pub(in crate::driver_node) enum DriverWireFrame {
     AcsEnvelope {
         round_id: usize,
@@ -21,11 +21,11 @@ pub(in crate::driver_node) enum DriverWireFrame {
 pub(in crate::driver_node) fn encode_driver_frame(
     frame: &DriverWireFrame,
 ) -> DriverResult<Vec<u8>> {
-    serialize(frame).map_err(|err| DriverError::wire(err.to_string()))
+    encode_result(frame).map_err(DriverError::wire)
 }
 
 pub(in crate::driver_node) fn decode_driver_frame(payload: &[u8]) -> DriverResult<DriverWireFrame> {
-    deserialize(payload).map_err(|err| DriverError::wire(err.to_string()))
+    decode_result(payload).map_err(DriverError::wire)
 }
 
 pub(in crate::driver_node) fn send_frame(
