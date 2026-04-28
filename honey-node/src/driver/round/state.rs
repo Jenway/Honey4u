@@ -1,7 +1,7 @@
 use super::super::config::{BroadcastPoolConfig, ByzantineNodeConfig};
 use super::super::encryption::{HbPkePrivateKeyShare, HbPkePublicParams};
 use super::super::frame::PoolFetchWire;
-use super::metrics::{RoundMetricsSnapshot, DriverPhaseStats};
+use super::metrics::{DriverPhaseStats, RoundMetricsSnapshot};
 use crate::driver::args::NodeRuntimeArgs;
 use honey_acs::AcsBackend;
 use honey_transport::TransportHandle;

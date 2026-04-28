@@ -1,9 +1,10 @@
 use crate::handle::{NetworkFaultConfig, TransportHandle, TransportStats};
 use crate::wakeup::WakeupCounter;
-use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, unbounded};
+use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::io;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -19,7 +20,6 @@ pub struct QuicTransport {
     recv_frames: Arc<AtomicUsize>,
     wakeup_counter: Arc<WakeupCounter>,
     _rt_guard: Option<thread::JoinHandle<()>>,
-    _sender_guard: Option<thread::JoinHandle<()>>,
     network_faults: NetworkFaultConfig,
     rng_seed: u64,
 }
@@ -68,7 +68,7 @@ impl QuicTransport {
             .iter()
             .map(|(h, p)| {
                 format!("{h}:{p}")
-                    .parse()
+                    .parse::<SocketAddr>()
                     .map_err(|err| io::Error::other(err.to_string()))
             })
             .collect::<io::Result<Vec<_>>>()?;
@@ -76,47 +76,44 @@ impl QuicTransport {
         let (cert_der, key_der) = generate_self_signed_cert()?;
 
         let rt_stop = Arc::clone(&stop);
-        let rt_inbound_tx = inbound_tx.clone();
+        let rt_inbound_tx = inbound_tx;
         let rt_inbound_len = Arc::clone(&inbound_len);
         let rt_recv_frames = Arc::clone(&recv_frames);
         let rt_wakeup_counter = Arc::clone(&wakeup_counter);
-        let rt_outbound_rx = outbound_rx.clone();
-        let rt_outbound_len = Arc::clone(&outbound_len);
         let rt_sent_frames = Arc::clone(&sent_frames);
-        let rt_peer_addrs = peer_addrs.clone();
         let rt_pid = pid;
         let rt_socket_addr = socket_addr;
 
+        let rt_outbound_len = Arc::clone(&outbound_len);
         let rt_guard = thread::spawn(move || {
-            let rt = match tokio::runtime::Builder::new_current_thread()
+            let rt = match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)
                 .enable_all()
                 .build()
             {
                 Ok(rt) => rt,
-                Err(_) => return,
-            };
-
-            match rt.block_on(run_quic_node(
-                rt_stop,
-                rt_pid,
-                rt_socket_addr,
-                rt_peer_addrs,
-                cert_der,
-                key_der,
-                rt_inbound_tx,
-                rt_inbound_len,
-                rt_recv_frames,
-                rt_wakeup_counter,
-                rt_outbound_rx,
-                rt_outbound_len,
-                rt_sent_frames,
-                network_faults,
-            )) {
-                Ok(()) => {}
-                Err(_err) => {
-                    // Transport stopped
+                Err(_e) => {
+                    return;
                 }
-            }
+            };
+            let _ = rt.block_on(async move {
+                run_quic_node(
+                    rt_stop,
+                    rt_pid,
+                    rt_socket_addr,
+                    peer_addrs,
+                    cert_der,
+                    key_der,
+                    rt_inbound_tx,
+                    rt_inbound_len,
+                    rt_recv_frames,
+                    rt_wakeup_counter,
+                    outbound_rx,
+                    rt_outbound_len,
+                    rt_sent_frames,
+                )
+                .await
+            });
         });
 
         Ok(Self {
@@ -129,7 +126,6 @@ impl QuicTransport {
             recv_frames,
             wakeup_counter,
             _rt_guard: Some(rt_guard),
-            _sender_guard: None,
             network_faults,
             rng_seed,
         })
@@ -185,9 +181,6 @@ impl QuicTransport {
 
     pub fn close(&self) -> io::Result<()> {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self._rt_guard.as_ref() {
-            let _ = handle.thread().unpark();
-        }
         Ok(())
     }
 }
@@ -228,7 +221,31 @@ impl TransportHandle for QuicTransport {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+fn build_server_crypto(
+    cert_der: CertificateDer<'static>,
+    key_der: PrivateKeyDer<'static>,
+) -> io::Result<QuicServerConfig> {
+    let mut server_crypto = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert_der.clone()], key_der.clone_key())
+        .map_err(io::Error::other)?;
+    server_crypto.alpn_protocols = vec![b"honey-quic".to_vec()];
+    QuicServerConfig::try_from(server_crypto).map_err(io::Error::other)
+}
+
+fn build_client_crypto(cert_der: &CertificateDer<'static>) -> io::Result<QuicClientConfig> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(cert_der.clone()).map_err(io::Error::other)?;
+    let mut client_crypto = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    client_crypto.alpn_protocols = vec![b"honey-quic".to_vec()];
+    client_crypto
+        .dangerous()
+        .set_certificate_verifier(Arc::new(SkipServerVerification));
+    QuicClientConfig::try_from(client_crypto).map_err(io::Error::other)
+}
+
 async fn run_quic_node(
     stop: Arc<AtomicBool>,
     pid: usize,
@@ -243,157 +260,208 @@ async fn run_quic_node(
     outbound_rx: Receiver<(usize, Vec<u8>)>,
     outbound_len: Arc<AtomicUsize>,
     sent_frames: Arc<AtomicUsize>,
-    _faults: NetworkFaultConfig,
-) -> io::Result<()> {
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(cert_der.clone()).map_err(io::Error::other)?;
-
-    let mut server_crypto = rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert_der.clone()], key_der.clone_key())
-        .map_err(io::Error::other)?;
-    server_crypto.alpn_protocols = vec![b"honey-quic".to_vec()];
-
-    let mut client_crypto = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.add(cert_der).map_err(io::Error::other)?;
-    client_crypto.dangerous()
-        .set_certificate_verifier(Arc::new(SkipServerVerification::new()));
-    client_crypto.alpn_protocols = vec![b"honey-quic".to_vec()];
-
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_idle_timeout(Some(Duration::from_secs(30).try_into().unwrap()));
-    transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-
-    let server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
-    let endpoint =
-        quinn::Endpoint::new(quinn::EndpointConfig::default(), Some(server_config), socket_addr)
-            .map_err(io::Error::other)?;
-
-    let mut connections: Vec<Option<quinn::Connection>> = vec![None; peer_addrs.len()];
-    for (target_pid, addr) in peer_addrs.iter().enumerate() {
-        if target_pid == pid {
-            connections[pid] = None;
-            continue;
+) {
+    let server_crypto = match build_server_crypto(cert_der.clone(), key_der.clone_key()) {
+        Ok(c) => c,
+        Err(_e) => {
+            return;
         }
-        let client_config = quinn::ClientConfig::new(Arc::new(client_crypto.clone()));
-        match quinn::Endpoint::new(
-            quinn::EndpointConfig::default(),
-            None,
-            "[::]:0".parse().unwrap(),
-        )
-        .map_err(io::Error::other)?
-        .connect_with(client_config, *addr, "localhost")
-        .map_err(io::Error::other)?
-        .await
-        {
-            Ok(conn) => {
-                connections[target_pid] = Some(conn);
+    };
+    let server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
+
+    let mut socket = None;
+    for i in 0..50 {
+        match UdpSocket::bind(socket_addr) {
+            Ok(s) => {
+                socket = Some(s);
+                break;
             }
             Err(_) => {
-                connections[target_pid] = None;
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
     }
+    let socket = match socket {
+        Some(s) => s,
+        None => {
+            return;
+        }
+    };
 
-    let connections = Arc::new(Mutex::new(connections));
-    tokio::pin! {
-        let accept_fut = accept_loop(
-            &endpoint,
-            Arc::clone(&inbound_tx),
-            Arc::clone(&inbound_len),
-            Arc::clone(&recv_frames),
-            Arc::clone(&wakeup_counter),
-        );
+    let endpoint = match quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        Some(server_config),
+        socket,
+        Arc::new(quinn::TokioRuntime),
+    ) {
+        Ok(ep) => Arc::new(ep),
+        Err(_e) => {
+            return;
+        }
+    };
+
+    let client_crypto = match build_client_crypto(&cert_der) {
+        Ok(c) => c,
+        Err(_e) => {
+            return;
+        }
+    };
+    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
+
+    let connections: Arc<Mutex<Vec<Option<quinn::Connection>>>> =
+        Arc::new(Mutex::new(vec![None; peer_addrs.len()]));
+
+    // ── Accept task (runs while we connect) ────────────────────────────
+    let accept_ep = Arc::clone(&endpoint);
+    let accept_stop = Arc::clone(&stop);
+    tokio::spawn(async move {
+        while let Some(incoming) = accept_ep.accept().await {
+            let tx = inbound_tx.clone();
+            let len = Arc::clone(&inbound_len);
+            let frames = Arc::clone(&recv_frames);
+            let waker = Arc::clone(&wakeup_counter);
+            tokio::spawn(async move {
+                let Ok(conn) = incoming.await else { return };
+                loop {
+                    match conn.accept_uni().await {
+                        Ok(stream) => {
+                            let tx = tx.clone();
+                            let len = Arc::clone(&len);
+                            let frames = Arc::clone(&frames);
+                            let waker = Arc::clone(&waker);
+                            tokio::spawn(async move {
+                                if let Ok(data) = read_stream_to_end(stream).await {
+                                    len.fetch_add(1, Ordering::Relaxed);
+                                    frames.fetch_add(1, Ordering::Relaxed);
+                                    waker.notify();
+                                    let _ = tx.send(data);
+                                }
+                            });
+                        }
+                        Err(quinn::ConnectionError::ApplicationClosed { .. }) => break,
+                        Err(_) => continue,
+                    }
+                }
+            });
+        }
+    });
+    tokio::task::yield_now().await;
+    // ── Connect to every peer (with retry) ─────────────────────────────
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut client_endpoints: Vec<quinn::Endpoint> = Vec::with_capacity(peer_addrs.len());
+
+    for (target_pid, addr) in peer_addrs.iter().enumerate() {
+        if target_pid == pid {
+            continue;
+        }
+        let client_socket = match UdpSocket::bind("127.0.0.1:0") {
+            Ok(s) => s,
+            Err(_e) => {
+                continue;
+            }
+        };
+        let client_ep = match quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            None,
+            client_socket,
+            Arc::new(quinn::TokioRuntime),
+        ) {
+            Ok(ep) => ep,
+            Err(_e) => {
+                continue;
+            }
+        };
+
+        let mut connected = false;
+        for attempt in 0..100 {
+            match client_ep.connect_with(client_config.clone(), *addr, "localhost") {
+                Ok(connecting) => match connecting.await {
+                    Ok(conn) => {
+                        if let Ok(mut guard) = connections.lock() {
+                            guard[target_pid] = Some(conn);
+                        }
+                        connected = true;
+                        break;
+                    }
+                    Err(_e) => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                },
+                Err(_e) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+        if connected {
+            client_endpoints.push(client_ep);
+        }
     }
 
-    let conns_for_send = Arc::clone(&connections);
-    let send_task = tokio::spawn(async move {
-        while !stop.load(Ordering::Relaxed) {
+    // ── Send task ──────────────────────────────────────────────────────
+    let send_conns = Arc::clone(&connections);
+    let send_stop = Arc::clone(&stop);
+    tokio::spawn(async move {
+        loop {
             let (recipient, payload) = match outbound_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(item) => item,
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {
+                    if send_stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
             };
             outbound_len.fetch_sub(1, Ordering::Relaxed);
 
-            let guard = conns_for_send.lock().unwrap();
-            if let Some(Some(conn)) = guard.get(recipient) {
-                if let Ok(mut send) = conn.open_uni().await {
-                    if send.write_all(&payload).await.is_ok() {
-                        let _ = send.finish().await;
-                        sent_frames.fetch_add(1, Ordering::Relaxed);
+            let conn = {
+                let guard = send_conns.lock().unwrap();
+                guard.get(recipient).and_then(|c| c.as_ref()).cloned()
+            };
+            if let Some(conn) = conn {
+                match conn.open_uni().await {
+                    Ok(mut send) => {
+                        if send.write_all(&payload).await.is_ok() {
+                            let _ = send.finish();
+                            sent_frames.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
+                    Err(_e) => {}
                 }
+            } else {
+            }
+
+            if send_stop.load(Ordering::Relaxed) {
+                break;
             }
         }
     });
 
-    tokio::select! {
-        _ = accept_fut => {},
-        _ = send_task => {},
-        _ = tokio::signal::ctrl_c() => {},
+    // ── Wait until stopped ─────────────────────────────────────────────
+    loop {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
     }
 
     endpoint.close(0u32.into(), b"shutdown");
-    Ok(())
-}
-
-async fn accept_loop(
-    endpoint: &quinn::Endpoint,
-    inbound_tx: Sender<Vec<u8>>,
-    inbound_len: Arc<AtomicUsize>,
-    recv_frames: Arc<AtomicUsize>,
-    wakeup_counter: Arc<WakeupCounter>,
-) {
-    loop {
-        match endpoint.accept().await {
-            Some(incoming) => {
-                let tx = inbound_tx.clone();
-                let len = Arc::clone(&inbound_len);
-                let frames = Arc::clone(&recv_frames);
-                let waker = Arc::clone(&wakeup_counter);
-                tokio::spawn(async move {
-                    match incoming.accept() {
-                        Ok(conn) => {
-                            while let Ok(stream) = conn.accept_uni().await {
-                                let tx = tx.clone();
-                                let len = Arc::clone(&len);
-                                let frames = Arc::clone(&frames);
-                                let waker = Arc::clone(&waker);
-                                tokio::spawn(async move {
-                                    if let Ok(data) = read_stream_to_end(stream).await {
-                                        len.fetch_add(1, Ordering::Relaxed);
-                                        frames.fetch_add(1, Ordering::Relaxed);
-                                        waker.notify();
-                                        let _ = tx.send(data);
-                                    }
-                                });
-                            }
-                        }
-                        Err(_) => {}
-                    }
-                });
-            }
-            None => break,
-        }
-    }
 }
 
 async fn read_stream_to_end(mut recv: quinn::RecvStream) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     loop {
-        match recv.read_chunk(8192, false).await {
+        match recv.read_chunk(8192, true).await {
             Ok(Some(chunk)) => {
                 buf.extend_from_slice(&chunk.bytes);
             }
             Ok(None) => break,
             Err(_) => {
                 if buf.is_empty() {
-                    return Err(io::Error::new(io::ErrorKind::ConnectionReset, "stream error"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "stream error",
+                    ));
                 }
                 break;
             }
@@ -403,17 +471,7 @@ async fn read_stream_to_end(mut recv: quinn::RecvStream) -> io::Result<Vec<u8>> 
 }
 
 #[derive(Debug)]
-struct SkipServerVerification {
-    verified: Arc<rustls::crypto::CryptoProvider>,
-}
-
-impl SkipServerVerification {
-    fn new() -> Self {
-        Self {
-            verified: Arc::new(rustls::crypto::ring::default_provider()),
-        }
-    }
-}
+struct SkipServerVerification;
 
 impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
@@ -429,23 +487,26 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
 
     fn verify_tls12_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.verified.signature_verification_algorithms())
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
     }
 
     fn verify_tls13_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.verified.signature_verification_algorithms())
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.verified.signature_verification_algorithms().supported_schemes()
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+        ]
     }
 }

@@ -1,8 +1,10 @@
+use super::state::{DriverCarryovers, InboundShareBundle, QueuePeaksSnapshot};
 use crate::driver::DRIVER_NETWORK_BATCH_LIMIT;
 use crate::driver::error::DriverResult;
-use crate::driver::frame::{DriverWireFrame, PoolFetchWire, decode_driver_frame, decode_pool_fetch_from_wire};
+use crate::driver::frame::{
+    DriverWireFrame, PoolFetchWire, decode_driver_frame, decode_pool_fetch_from_wire,
+};
 use crate::driver::mempool::fetch::PendingPoolFetchRequest;
-use super::state::{DriverCarryovers, InboundShareBundle, QueuePeaksSnapshot};
 use honey_transport::TransportHandle;
 
 pub(in crate::driver) fn update_queue_peaks(

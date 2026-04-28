@@ -333,10 +333,7 @@ impl ConsistencySummary {
 // ---------------------------------------------------------------------------
 
 /// Split round array into warmup and measured slices.
-pub fn split_warmup_rounds<'a>(
-    rounds: &'a [Value],
-    warmup_rounds: usize,
-) -> (&'a [Value], &'a [Value]) {
+pub fn split_warmup_rounds(rounds: &[Value], warmup_rounds: usize) -> (&[Value], &[Value]) {
     if warmup_rounds == 0 {
         return (&[], rounds);
     }
@@ -399,7 +396,7 @@ static SUBPROTOCOL_LABELS_MAP: LazyLock<Vec<(&'static str, &'static str)>> = Laz
 
 /// Returns the human-readable label for a subprotocol metric name,
 /// or the original metric_name if no mapping exists.
-pub fn subprotocol_label<'a>(metric_name: &'a str) -> &'a str {
+pub fn subprotocol_label(metric_name: &str) -> &str {
     for (key, label) in SUBPROTOCOL_LABELS_MAP.iter() {
         if *key == metric_name {
             return label;

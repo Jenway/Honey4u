@@ -3,6 +3,9 @@ name = "honey-bench"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+quic = ["honey-node/quic"]
+
 [dependencies]
 honey-acs = { path = "../../honey-acs" }
 honey-node = { path = "../../honey-node" }

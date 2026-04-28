@@ -13,11 +13,11 @@ from typing import Any
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from benchmarks.plotting.svg import build_svg_line_chart
 from benchmarks.support.runners import (
     benchmark_local_dumbo_nodes_rust_driven,
     benchmark_local_honeybadger_nodes_rust_driven,
 )
-from benchmarks.plotting.svg import build_svg_line_chart, format_number
 
 
 @dataclass(frozen=True)
@@ -229,7 +229,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--acs-backend",
         type=str,
-        choices=("python_hb", "python_dumbo"), default="python_hb", help="ACS backend for HoneyBadger rust-driver mode",
+        choices=("python_hb", "python_dumbo"),
+        default="python_hb",
+        help="ACS backend for HoneyBadger rust-driver mode",
     )
     parser.add_argument(
         "--round-timeout", type=float, default=20.0, help="per-round timeout seconds"

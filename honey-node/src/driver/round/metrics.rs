@@ -161,11 +161,7 @@ impl<'a> AcsMetrics<'a> {
         self.snapshot.driver_stats.send_payload_bytes += payload_len * sent;
     }
 
-    pub(in crate::driver) fn proposal_available(
-        &mut self,
-        payload_len: usize,
-        proof_len: usize,
-    ) {
+    pub(in crate::driver) fn proposal_available(&mut self, payload_len: usize, proof_len: usize) {
         self.snapshot.driver_stats.proposal_available_events += 1;
         self.snapshot.driver_stats.proposal_available_payload_bytes += payload_len;
         self.snapshot.driver_stats.proposal_available_proof_bytes += proof_len;

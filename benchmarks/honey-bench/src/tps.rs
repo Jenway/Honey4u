@@ -2,10 +2,7 @@
 //! computes comprehensive statistics (latency percentiles, subprotocol timings,
 //! communication / fetch derived ratios, consistency checks), and writes JSON.
 
-use crate::stats::{
-    self, ConsistencySummary, LatencyStats, PeakStats,
-    TimingStats,
-};
+use crate::stats::{self, ConsistencySummary, LatencyStats, PeakStats, TimingStats};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -79,11 +76,7 @@ pub struct ByzantineSummary {
 }
 
 /// Build a `TpsResult` from the raw JSON output of a benchmark run.
-pub fn build_tps_result(
-    result_json: &Value,
-    warmup_rounds: usize,
-    backend: &str,
-) -> TpsResult {
+pub fn build_tps_result(result_json: &Value, warmup_rounds: usize, backend: &str) -> TpsResult {
     let rounds_data = result_json["rounds"]
         .as_array()
         .map(|a| a.as_slice())
@@ -94,7 +87,10 @@ pub fn build_tps_result(
         .unwrap_or(&[]);
 
     let sid = result_json["sid"].as_str().unwrap_or("").to_owned();
-    let protocol = result_json["protocol"].as_str().unwrap_or("dumbo").to_owned();
+    let protocol = result_json["protocol"]
+        .as_str()
+        .unwrap_or("dumbo")
+        .to_owned();
     let nodes = result_json["nodes_count"].as_u64().unwrap_or(0) as usize;
     let faulty = result_json["faulty"].as_u64().unwrap_or(0) as usize;
     let enable_pool_reuse = result_json["enable_pool_reuse"].as_bool().unwrap_or(false);
@@ -129,16 +125,15 @@ pub fn build_tps_result(
     // Split warmup / measured
     let (_warmup_rounds, measured_rounds) = stats::split_warmup_rounds(rounds_data, warmup_rounds);
     let measured_round_count = measured_rounds.len();
-    let (measured_wall, measured_acs) = if warmup_rounds > 0
-        && warmup_rounds < round_wall_seconds.len()
-    {
-        (
-            round_wall_seconds[warmup_rounds..].to_vec(),
-            round_acs_seconds[warmup_rounds..].to_vec(),
-        )
-    } else {
-        (round_wall_seconds.clone(), round_acs_seconds.clone())
-    };
+    let (measured_wall, measured_acs) =
+        if warmup_rounds > 0 && warmup_rounds < round_wall_seconds.len() {
+            (
+                round_wall_seconds[warmup_rounds..].to_vec(),
+                round_acs_seconds[warmup_rounds..].to_vec(),
+            )
+        } else {
+            (round_wall_seconds.clone(), round_acs_seconds.clone())
+        };
 
     let total_rounds = rounds_data.len();
     let tps_wall = if wall_total_seconds > 0.0 {
@@ -168,26 +163,21 @@ pub fn build_tps_result(
     // Transport summary
     let mut transport = TransportSummary::default();
     for node in nodes_data {
-        transport.sent_frames_total +=
-            node["transport_sent_frames"].as_u64().unwrap_or(0) as usize;
-        transport.recv_frames_total +=
-            node["transport_recv_frames"].as_u64().unwrap_or(0) as usize;
+        transport.sent_frames_total += node["transport_sent_frames"].as_u64().unwrap_or(0) as usize;
+        transport.recv_frames_total += node["transport_recv_frames"].as_u64().unwrap_or(0) as usize;
         transport.connect_retries_total +=
             node["transport_connect_retries"].as_u64().unwrap_or(0) as usize;
         transport.delayed_frames_total +=
             node["transport_delayed_frames"].as_u64().unwrap_or(0) as usize;
-        transport.total_injected_delay_ms_total +=
-            node["transport_total_injected_delay_ms"]
-                .as_u64()
-                .unwrap_or(0) as usize;
+        transport.total_injected_delay_ms_total += node["transport_total_injected_delay_ms"]
+            .as_u64()
+            .unwrap_or(0) as usize;
         let df = node["transport_delayed_frames"].as_u64().unwrap_or(0) as usize;
         let dm = node["transport_total_injected_delay_ms"]
             .as_u64()
             .unwrap_or(0) as usize;
-        transport.max_delayed_frames_per_node =
-            transport.max_delayed_frames_per_node.max(df);
-        transport.max_injected_delay_ms_per_node =
-            transport.max_injected_delay_ms_per_node.max(dm);
+        transport.max_delayed_frames_per_node = transport.max_delayed_frames_per_node.max(df);
+        transport.max_injected_delay_ms_per_node = transport.max_injected_delay_ms_per_node.max(dm);
     }
 
     // Byzantine summary
@@ -200,10 +190,9 @@ pub fn build_tps_result(
         byzantine.fetch_requests_ignored_total += node["byzantine_fetch_requests_ignored"]
             .as_u64()
             .unwrap_or(0) as usize;
-        byzantine.share_broadcast_suppressed_total +=
-            node["byzantine_share_broadcast_suppressed"]
-                .as_u64()
-                .unwrap_or(0) as usize;
+        byzantine.share_broadcast_suppressed_total += node["byzantine_share_broadcast_suppressed"]
+            .as_u64()
+            .unwrap_or(0) as usize;
         byzantine.empty_proposal_rounds_total += node["byzantine_empty_proposal_rounds"]
             .as_u64()
             .unwrap_or(0) as usize;
@@ -268,10 +257,7 @@ pub fn build_tps_result(
             &measured_wall,
             measured_round_count,
         ),
-        round_acs_latency_measured: LatencyStats::from_seconds(
-            &measured_acs,
-            measured_round_count,
-        ),
+        round_acs_latency_measured: LatencyStats::from_seconds(&measured_acs, measured_round_count),
         subprotocol_timings,
         communication,
         reused_reference_total,

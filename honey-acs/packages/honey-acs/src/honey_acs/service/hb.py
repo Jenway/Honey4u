@@ -211,7 +211,7 @@ class HoneyBadgerAcsService(AcsService):
         output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
         super().__init__(
-            protocol="hb",
+            backend="python_hb",
             pid=pid,
             nodes=nodes,
             faulty=faulty,

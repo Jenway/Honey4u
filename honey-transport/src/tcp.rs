@@ -11,15 +11,7 @@ use std::time::Duration;
 
 type ConnectionMap = Arc<Mutex<HashMap<usize, TcpStream>>>;
 
-const RNG_MIX_CONST: u64 = 0x9E37_79B9_7F4A_7C15;
-const RNG_FALLBACK_SEED: u64 = 0xA076_1D64_78BD_642F;
-
-impl NetworkFaultConfig {
-    fn mixed_seed(self, pid: usize) -> u64 {
-        let mixed = self.seed ^ ((pid as u64).wrapping_add(1).wrapping_mul(RNG_MIX_CONST));
-        if mixed == 0 { RNG_FALLBACK_SEED } else { mixed }
-    }
-}
+impl NetworkFaultConfig {}
 
 #[derive(Clone, Copy)]
 struct DelayRng {
@@ -64,18 +56,57 @@ fn send_frame(stream: &mut TcpStream, payload: &[u8]) -> io::Result<()> {
 }
 
 fn recv_frame(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
-    let mut header = [0u8; 4];
-    stream.read_exact(&mut header)?;
-    let size = u32::from_be_bytes(header) as usize;
+    // Use non-blocking reads with manual buffering so that
+    // partial reads on timeout do not corrupt the frame stream.
+    let mut header_buf = [0u8; 4];
+    let mut header_pos = 0usize;
+    while header_pos < 4 {
+        match stream.read(&mut header_buf[header_pos..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "connection closed",
+                ));
+            }
+            Ok(n) => header_pos += n,
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    let size = u32::from_be_bytes(header_buf) as usize;
+    if size > 16 * 1024 * 1024 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
+    }
     let mut payload = vec![0u8; size];
-    stream.read_exact(&mut payload)?;
+    let mut pos = 0usize;
+    while pos < size {
+        match stream.read(&mut payload[pos..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "connection closed",
+                ));
+            }
+            Ok(n) => pos += n,
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
     Ok(payload)
 }
 
 fn set_stream_defaults(stream: &TcpStream) -> io::Result<()> {
     stream.set_nodelay(true)?;
-    stream.set_read_timeout(Some(Duration::from_millis(200)))?;
-    stream.set_write_timeout(Some(Duration::from_millis(200)))?;
+    stream.set_nonblocking(true)?;
     Ok(())
 }
 

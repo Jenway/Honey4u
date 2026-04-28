@@ -1,12 +1,12 @@
-use crate::driver::error::{DriverError, DriverResult};
+use super::inbox::update_queue_peaks;
+use super::metrics::RoundMetricsRecorder;
+use super::state::{DriverRoundCtx, InboundShareBundle, QueuePeaksSnapshot};
 use crate::driver::encryption::{
     BatchDecryptor as HbBatchDecryptor, decode_tx_batch as decode_hb_tx_batch,
     merge_tx_batches_bytes as merge_hb_tx_batches_bytes,
 };
+use crate::driver::error::{DriverError, DriverResult};
 use crate::driver::frame::{DriverWireFrame, encode_driver_frame, fanout_encoded_payload};
-use super::inbox::update_queue_peaks;
-use super::metrics::RoundMetricsRecorder;
-use super::state::{DriverRoundCtx, InboundShareBundle, QueuePeaksSnapshot};
 use std::collections::BTreeSet;
 use std::time::Instant;
 

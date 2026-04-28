@@ -19,9 +19,7 @@ pub(in crate::driver) enum DriverWireFrame {
     },
 }
 
-pub(in crate::driver) fn encode_driver_frame(
-    frame: &DriverWireFrame,
-) -> DriverResult<Vec<u8>> {
+pub(in crate::driver) fn encode_driver_frame(frame: &DriverWireFrame) -> DriverResult<Vec<u8>> {
     encode_result(frame).map_err(DriverError::wire)
 }
 
@@ -64,9 +62,7 @@ pub(in crate::driver) fn fanout_encoded_payload(
     Ok(sent)
 }
 
-pub(in crate::driver) fn parse_addresses_json(
-    payload: &str,
-) -> DriverResult<Vec<(String, u16)>> {
+pub(in crate::driver) fn parse_addresses_json(payload: &str) -> DriverResult<Vec<(String, u16)>> {
     serde_json::from_str(payload).map_err(|err| DriverError::config(err.to_string()))
 }
 

@@ -224,7 +224,7 @@ class DumboAcsService(AcsService):
         output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
         super().__init__(
-            protocol="dumbo",
+            backend="python_dumbo",
             pid=pid,
             nodes=nodes,
             faulty=faulty,

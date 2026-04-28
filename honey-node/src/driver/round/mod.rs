@@ -11,14 +11,14 @@ pub(super) use r#loop::run_driver_rounds;
 #[cfg(test)]
 mod tests {
     use super::super::config::ByzantineNodeConfig;
-    use super::super::frame::{DriverWireFrame, PoolFetchWire, decode_driver_frame, decode_pool_fetch_from_wire};
+    use super::super::frame::{
+        DriverWireFrame, PoolFetchWire, decode_driver_frame, decode_pool_fetch_from_wire,
+    };
     use super::super::mempool::fetch::{
         FetchRequestAction, PoolFetchTracker, ProposalResolutionError, ResolvedSelectedProposals,
         resolve_selected_proposals,
     };
-    use super::super::mempool::pool::{
-        BroadcastMempool, PoolReference, encode_bundle_acs_payload,
-    };
+    use super::super::mempool::pool::{BroadcastMempool, PoolReference, encode_bundle_acs_payload};
     use honey_acs::proposal::AvailableProposal;
     use honey_crypto::merkle;
     use honey_transport::LocalTcpTransport;
@@ -157,9 +157,8 @@ mod tests {
             .collect::<Vec<_>>();
         drop(reserved);
 
-        let responder_transport =
-            LocalTcpTransport::new(0, addresses.clone(), Default::default())
-                .expect("transport 0 should bind");
+        let responder_transport = LocalTcpTransport::new(0, addresses.clone(), Default::default())
+            .expect("transport 0 should bind");
         let requester_transport = LocalTcpTransport::new(1, addresses, Default::default())
             .expect("transport 1 should bind");
 
@@ -242,9 +241,8 @@ mod tests {
             .collect::<Vec<_>>();
         drop(reserved);
 
-        let responder_transport =
-            LocalTcpTransport::new(0, addresses.clone(), Default::default())
-                .expect("transport 0 should bind");
+        let responder_transport = LocalTcpTransport::new(0, addresses.clone(), Default::default())
+            .expect("transport 0 should bind");
         let requester_transport = LocalTcpTransport::new(1, addresses, Default::default())
             .expect("transport 1 should bind");
 

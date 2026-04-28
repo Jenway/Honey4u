@@ -239,7 +239,7 @@ class AcsService:
 
     def _build_round_context(self) -> AcsRoundContext:
         return AcsRoundContext(
-            protocol=self._protocol_family,
+            backend=self._backend_val,
             pid=self.pid,
             nodes=self.nodes,
             faulty=self.faulty,
@@ -308,7 +308,7 @@ class AcsService:
 
     @staticmethod
     def _default_logger_name(backend: AcsBackend) -> str:
-        if protocol == "hb":
+        if backend == "python_hb":
             return "honey.acs.hb.service"
         return "honey.acs.dumbo.service"
 

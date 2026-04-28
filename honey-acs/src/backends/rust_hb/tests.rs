@@ -2,7 +2,6 @@ use super::*;
 use crate::AcsBackendKind;
 use crate::harness::{run_acs_round, serialize_crypto_payloads};
 
-
 fn build_hosts(nodes: usize, faulty: usize, mode: HbBroadcastMode) -> Vec<RustHbAcsBackend> {
     let config_json = match mode {
         HbBroadcastMode::Rbc => r#"{"acs_backend":"rust_hb","hb_broadcast_protocol":"rbc"}"#,

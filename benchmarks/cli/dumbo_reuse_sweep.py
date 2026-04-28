@@ -13,17 +13,14 @@ from typing import Any
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from benchmarks.support.runners import run_local_dumbo_new_driver
 from benchmarks.plotting.svg import (
-    MODE_COLORS,
-    MODE_LABELS,
     MODE_ORDER,
     build_comparison_svg_chart,
     collect_series,
-    format_number,
     render_png,
     round_ms,
 )
+from benchmarks.support.runners import run_local_dumbo_new_driver
 
 
 def _parse_int_list(raw: str) -> list[int]:
@@ -308,8 +305,7 @@ def _build_chart_payloads(
             if metric_key.endswith("_seconds_mean"):
                 for item in series:
                     item["values"] = [
-                        (round_ms(value) if value is not None else None)
-                        for value in item["values"]
+                        (round_ms(value) if value is not None else None) for value in item["values"]
                     ]
             panels.append(
                 {

@@ -1,26 +1,26 @@
-use crate::driver::DRIVER_IDLE_BACKOFF;
-use crate::driver::args::NodeRuntimeArgs;
-use crate::driver::config::{BroadcastPoolConfig, ByzantineNodeConfig};
-use crate::driver::error::{DriverError, DriverResult};
-use crate::driver::encryption::{
-    HbPkePrivateKeyShare, HbPkePublicParams, seal_encrypted_batch as seal_hb_encrypted_batch,
-};
-use crate::driver::mempool::fetch::{
-    FetchRequestAction, PoolFetchTracker, ProposalResolutionError, resolve_selected_proposals,
-};
-use crate::driver::mempool::pool::{BroadcastMempool, encode_bundle_acs_payload};
+use super::acs_io::pump_acs_host;
+use super::inbox::{RoundTransportInbox, drain_transport_into_round, update_queue_peaks};
+use super::metrics::RoundMetricsRecorder;
 use super::proposal::{
     build_acs_proposal_input, build_driver_round_batch, collect_selected_proposals,
     selected_pids_from_proposals,
 };
-use super::acs_io::pump_acs_host;
-use super::inbox::{RoundTransportInbox, drain_transport_into_round, update_queue_peaks};
-use super::metrics::RoundMetricsRecorder;
 use super::state::{
     DriverCarryovers, DriverNodeResult, DriverRoundCtx, DriverRoundOutcome, DriverRunAccumulator,
     QueuePeaksSnapshot,
 };
 use super::tpke::{TpkeRoundState, TpkeStepContext, decoded_tx_count, run_tpke_step};
+use crate::driver::DRIVER_IDLE_BACKOFF;
+use crate::driver::args::NodeRuntimeArgs;
+use crate::driver::config::{BroadcastPoolConfig, ByzantineNodeConfig};
+use crate::driver::encryption::{
+    HbPkePrivateKeyShare, HbPkePublicParams, seal_encrypted_batch as seal_hb_encrypted_batch,
+};
+use crate::driver::error::{DriverError, DriverResult};
+use crate::driver::mempool::fetch::{
+    FetchRequestAction, PoolFetchTracker, ProposalResolutionError, resolve_selected_proposals,
+};
+use crate::driver::mempool::pool::{BroadcastMempool, encode_bundle_acs_payload};
 use honey_acs::AcsBackend;
 use honey_acs::proposal::ProposalStore;
 use honey_transport::TransportHandle;
@@ -44,8 +44,7 @@ fn run_driver_round(
     let byzantine_is_silent = ctx.byzantine_node_config.is_silent();
     let mut metrics = RoundMetricsRecorder::new(ctx.args.nodes);
 
-    let reuse_enabled = ctx.args.acs_backend.is_dumbo()
-        && ctx.broadcast_pool_config.enable_reuse;
+    let reuse_enabled = ctx.args.acs_backend.is_dumbo() && ctx.broadcast_pool_config.enable_reuse;
     let proposal_input = if byzantine_is_silent {
         metrics.byzantine().empty_proposal();
         encode_bundle_acs_payload(b"", &[])

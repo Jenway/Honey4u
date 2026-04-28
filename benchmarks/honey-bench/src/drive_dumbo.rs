@@ -27,7 +27,8 @@ pub fn run_drive_dumbo_multiprocess(
     debug_acs_driver("dumbo-mp:serialize_hb_crypto_payloads:done");
 
     debug_acs_driver("dumbo-mp:serialize_acs_crypto_payloads:start");
-    let acs_crypto_payloads = serialize_crypto_payloads(AcsBackendKind::PythonDumbo, args.nodes, args.faulty)?;
+    let acs_crypto_payloads =
+        serialize_crypto_payloads(AcsBackendKind::PythonDumbo, args.nodes, args.faulty)?;
     debug_acs_driver("dumbo-mp:serialize_acs_crypto_payloads:done");
 
     let addresses = allocate_loopback_addresses(args.nodes)?;
@@ -56,7 +57,7 @@ pub fn run_drive_dumbo_multiprocess(
             .arg("--sid")
             .arg(&args.sid)
             .arg("--acs-backend")
-            .arg("python_dumbo")
+            .arg(args.acs_backend.as_str())
             .arg("--nodes")
             .arg(args.nodes.to_string())
             .arg("--faulty")

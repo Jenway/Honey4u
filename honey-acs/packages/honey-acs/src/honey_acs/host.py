@@ -401,6 +401,7 @@ class PersistentAcsHost:
                 os.close(self._outbound_rfd)
                 os.close(self._outbound_wfd)
             else:
+                assert self._outbound_wsock is not None
                 self._outbound_rsock.close()
                 self._outbound_wsock.close()
 

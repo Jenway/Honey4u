@@ -2,6 +2,8 @@ use crate::driver::args::NodeRuntimeArgs;
 use crate::driver::encryption::keys::parse_honeybadger_crypto_payload;
 use crate::driver::output::write_output;
 use honey_acs::build_acs_backend;
+#[cfg(feature = "quic")]
+use honey_transport::QuicTransport;
 use honey_transport::{LocalTcpTransport, TransportHandle};
 use std::time::Duration;
 
@@ -30,11 +32,8 @@ pub(crate) fn run_driver_node(args: NodeRuntimeArgs) -> DriverResult<()> {
     let network_fault_config = parse_network_fault_config(&args.config_json, args.pid)?;
     let byzantine_node_config = parse_byzantine_node_config(&args.config_json, args.pid)?;
     let addresses = parse_addresses_json(&args.addresses_json)?;
-    let transport: Box<dyn TransportHandle> = Box::new(LocalTcpTransport::new(
-        args.pid,
-        addresses,
-        network_fault_config,
-    )?);
+    let transport: Box<dyn TransportHandle> =
+        create_transport(&args.config_json, args.pid, addresses, network_fault_config)?;
     let host = build_acs_backend(
         args.acs_backend,
         args.pid,
@@ -83,6 +82,37 @@ pub(crate) fn run_driver_node(args: NodeRuntimeArgs) -> DriverResult<()> {
 
     host_shutdown.map_err(|message| DriverError::acs("shutdown", message))?;
     write_output(args.result_path.as_deref(), &rendered)
+}
+
+fn resolve_transport_backend(config_json: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(config_json)
+        && let Some(transport) = value.get("transport").and_then(|v| v.as_str())
+    {
+        return transport.to_owned();
+    }
+    "tcp".to_owned()
+}
+
+fn create_transport(
+    config_json: &str,
+    pid: usize,
+    addresses: Vec<(String, u16)>,
+    network_fault_config: honey_transport::NetworkFaultConfig,
+) -> DriverResult<Box<dyn TransportHandle>> {
+    let backend = resolve_transport_backend(config_json);
+    match backend.as_str() {
+        #[cfg(feature = "quic")]
+        "quic" => Ok(Box::new(QuicTransport::new(
+            pid,
+            addresses,
+            network_fault_config,
+        )?)),
+        _ => Ok(Box::new(LocalTcpTransport::new(
+            pid,
+            addresses,
+            network_fault_config,
+        )?)),
+    }
 }
 
 use std::thread;

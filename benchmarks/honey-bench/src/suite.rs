@@ -7,6 +7,7 @@
 use crate::BenchDumboArgs;
 use crate::drive_dumbo;
 use crate::stats::{self, ConsistencySummary, LatencyStats, PeakStats, TimingStats};
+use honey_acs::AcsBackendKind;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -1905,6 +1906,7 @@ pub fn run_suite(suite_path: &Path, node_binary: &Path, opts: SuiteRunOpts) -> R
                 let config_json = build_config_json(case);
                 let bench_args = BenchDumboArgs {
                     sid: sid.clone(),
+                    acs_backend: AcsBackendKind::parse(&case.backend)?,
                     nodes: case.nodes,
                     faulty: case.faulty,
                     rounds: case.rounds,

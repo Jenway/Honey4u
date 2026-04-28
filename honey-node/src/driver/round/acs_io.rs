@@ -1,10 +1,10 @@
+use super::metrics::RoundMetricsRecorder;
+use super::state::DriverRoundCtx;
 use crate::driver::DRIVER_NETWORK_BATCH_LIMIT;
 use crate::driver::error::{DriverError, DriverResult};
 use crate::driver::frame::{
     DriverWireFrame, encode_driver_frame, fanout_encoded_payload, send_frame,
 };
-use super::metrics::RoundMetricsRecorder;
-use super::state::DriverRoundCtx;
 use honey_acs::AcsEvent;
 use honey_acs::proposal::ProposalStore;
 use std::time::Instant;

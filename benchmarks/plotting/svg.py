@@ -164,8 +164,7 @@ def collect_series(
     metric_key: str,
 ) -> list[dict[str, Any]]:
     indexed = {
-        (int(item["nodes"]), int(item["batch_size"]), str(item["mode"])): item
-        for item in summaries
+        (int(item["nodes"]), int(item["batch_size"]), str(item["mode"])): item for item in summaries
     }
     series: list[dict[str, Any]] = []
     for mode in MODE_ORDER:
@@ -231,12 +230,7 @@ def build_comparison_svg_chart(
     panel_gap = 40
     plot_width = right - left
     panel_height = height_per_panel
-    height = (
-        top
-        + len(node_panels) * panel_height
-        + max(0, len(node_panels) - 1) * panel_gap
-        + 88
-    )
+    height = top + len(node_panels) * panel_height + max(0, len(node_panels) - 1) * panel_gap + 88
     bottom = height - 68
 
     def x_positions() -> list[float]:
@@ -261,9 +255,7 @@ def build_comparison_svg_chart(
         lines.append(
             f"<line x1='{legend_x}' y1='{legend_y}' x2='{legend_x + 28}' y2='{legend_y}' stroke='{color}' stroke-width='4' stroke-linecap='round'/>"
         )
-        lines.append(
-            f"<circle cx='{legend_x + 14}' cy='{legend_y}' r='4.5' fill='{color}'/>"
-        )
+        lines.append(f"<circle cx='{legend_x + 14}' cy='{legend_y}' r='4.5' fill='{color}'/>")
         lines.append(
             f"<text x='{legend_x + 38}' y='{legend_y + 5}' font-size='13' font-family='Segoe UI, Arial, sans-serif' fill='#1e293b'>{escape(label)}</text>"
         )
@@ -360,6 +352,6 @@ def render_png(svg_path: Path) -> Path | None:
             capture_output=True,
             text=True,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         return None
     return png_path

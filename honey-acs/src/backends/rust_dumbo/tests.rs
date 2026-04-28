@@ -2,7 +2,6 @@ use super::*;
 use crate::AcsBackendKind;
 use crate::harness::{run_acs_round, serialize_crypto_payloads};
 
-
 fn build_hosts(nodes: usize, faulty: usize) -> Vec<RustDumboAcsBackend> {
     serialize_crypto_payloads(AcsBackendKind::RustDumbo, nodes, faulty)
         .expect("crypto payloads should serialize")

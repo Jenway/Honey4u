@@ -15,9 +15,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod drive_dumbo;
 mod drive_hb;
-pub mod suite;
 pub mod stats;
+pub mod suite;
 pub mod tps;
+pub mod tps_cmd;
 
 pub use drive_dumbo::run_drive_dumbo_multiprocess;
 
@@ -89,6 +90,7 @@ pub struct BenchHoneyBadgerArgs {
 
 pub struct BenchDumboArgs {
     pub sid: String,
+    pub acs_backend: AcsBackendKind,
     pub nodes: usize,
     pub faulty: usize,
     pub rounds: usize,
@@ -132,6 +134,7 @@ pub fn run_with_args(args: BenchDriverArgs, node_binary: &Path) -> Result<(), St
         BenchDriverMode::Dumbo => drive_dumbo::run_drive_dumbo(
             BenchDumboArgs {
                 sid: args.sid,
+                acs_backend: args.acs_backend,
                 nodes: args.nodes,
                 faulty: args.faulty,
                 rounds: args.rounds,
@@ -270,8 +273,7 @@ fn run_bench_rust_driver(args: BenchDriverArgs, node_binary: &Path) -> Result<()
     let addresses_json = serde_json::to_string(&addresses).map_err(|err| err.to_string())?;
     let hb_crypto_payloads =
         serialize_crypto_payloads(AcsBackendKind::PythonHb, args.nodes, args.faulty)?;
-    let acs_crypto_payloads =
-        serialize_crypto_payloads(args.acs_backend, args.nodes, args.faulty)?;
+    let acs_crypto_payloads = serialize_crypto_payloads(args.acs_backend, args.nodes, args.faulty)?;
     let result_dir = build_result_dir("hb-rust-driver", &args.sid)?;
     let start_at_ms = current_time_millis()?
         .checked_add(5_000)
@@ -487,4 +489,30 @@ fn debug_acs_driver(message: &str) {
     if std::env::var_os("HONEY_DEBUG_ACS").is_some() {
         eprintln!("[honey-bench] {message}");
     }
+}
+
+pub fn resolve_node_binary() -> Result<std::path::PathBuf, String> {
+    if let Some(value) = std::env::var_os("HONEY_NODE_BINARY") {
+        let path = std::path::PathBuf::from(value);
+        if path.exists() {
+            return Ok(path);
+        }
+        return Err(format!(
+            "HONEY_NODE_BINARY points to missing path: {}",
+            path.display()
+        ));
+    }
+    let current = std::env::current_exe().map_err(|err| err.to_string())?;
+    let sibling = current.with_file_name("honey-node");
+    if sibling.exists() {
+        return Ok(sibling);
+    }
+    let sibling_exe = current.with_file_name("honey-node.exe");
+    if sibling_exe.exists() {
+        return Ok(sibling_exe);
+    }
+    Err(format!(
+        "could not locate honey-node; set HONEY_NODE_BINARY or build sibling binary at {}",
+        sibling.display()
+    ))
 }

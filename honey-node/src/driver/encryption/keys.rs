@@ -1,5 +1,5 @@
-use crate::driver::error::{DriverError, DriverResult};
 use super::{HbPkePrivateKeyShare, HbPkePublicParams};
+use crate::driver::error::{DriverError, DriverResult};
 use honey_wire::codec::{decode_hex, json_string_field};
 use honey_wire::crypto_wire::{PkePrivateKeyShareWire, PkePublicParamsWire};
 use serde_json::Value;

@@ -1,6 +1,9 @@
 use std::io;
 use std::thread;
 
+const RNG_MIX_CONST: u64 = 0x9E37_79B9_7F4A_7C15;
+const RNG_FALLBACK_SEED: u64 = 0xA076_1D64_78BD_642F;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TransportStats {
     pub sent_frames: usize,
@@ -30,6 +33,11 @@ impl NetworkFaultConfig {
             && (self.fixed_delay_ms > 0
                 || self.jitter_ms > 0
                 || self.slow_honest_extra_delay_ms > 0)
+    }
+
+    pub fn mixed_seed(self, pid: usize) -> u64 {
+        let mixed = self.seed ^ ((pid as u64).wrapping_add(1).wrapping_mul(RNG_MIX_CONST));
+        if mixed == 0 { RNG_FALLBACK_SEED } else { mixed }
     }
 }
 

@@ -174,15 +174,6 @@ impl AcsBackendKind {
     }
 }
 
-fn parse_acs_backend_kind(config_json: &str) -> Result<AcsBackendKind, String> {
-    let value: Value = serde_json::from_str(config_json).map_err(|err| err.to_string())?;
-    let raw = value
-        .get("acs_backend")
-        .and_then(Value::as_str)
-        .ok_or_else(|| String::from("acs_backend is required in config_json"))?;
-    AcsBackendKind::parse(raw)
-}
-
 fn json_string_array_field(value: &Value, key: &str) -> Result<Vec<String>, String> {
     let entries = value
         .get(key)
@@ -255,23 +246,15 @@ pub fn build_acs_backend(
             crypto,
             config_json,
         )?))),
-        AcsBackendKind::RustDumbo => {
-            Ok(Box::new(ThreadedAcsBackend::new(RustDumboAcsBackend::new(
-                pid,
-                nodes,
-                faulty,
-                crypto,
-                config_json,
-            )?)))
-        }
-        AcsBackendKind::RustHb => {
-            Ok(Box::new(ThreadedAcsBackend::new(RustHbAcsBackend::new(
-                pid,
-                nodes,
-                faulty,
-                crypto,
-                config_json,
-            )?)))
-        }
+        AcsBackendKind::RustDumbo => Ok(Box::new(ThreadedAcsBackend::new(
+            RustDumboAcsBackend::new(pid, nodes, faulty, crypto, config_json)?,
+        ))),
+        AcsBackendKind::RustHb => Ok(Box::new(ThreadedAcsBackend::new(RustHbAcsBackend::new(
+            pid,
+            nodes,
+            faulty,
+            crypto,
+            config_json,
+        )?))),
     }
 }

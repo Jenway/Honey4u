@@ -1,10 +1,10 @@
+use super::pool::{AcsPayload, BroadcastMempool, PoolReference, decode_acs_payload};
 use crate::driver::config::ByzantineNodeConfig;
 use crate::driver::error::{DriverError, DriverResult};
 use crate::driver::frame::{
     DriverWireFrame, PoolFetchWire, encode_driver_frame, encode_pool_fetch_request_wire,
     encode_pool_fetch_response_wire, fanout_encoded_payload, send_frame,
 };
-use super::pool::{AcsPayload, BroadcastMempool, PoolReference, decode_acs_payload};
 use honey_acs::proposal::AvailableProposal;
 use honey_crypto::merkle;
 use honey_transport::TransportHandle;
