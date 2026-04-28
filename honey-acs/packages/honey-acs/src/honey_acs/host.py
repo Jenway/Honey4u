@@ -5,6 +5,7 @@ import io
 import json
 import os
 import pstats
+import socket
 import threading
 from dataclasses import dataclass
 from dataclasses import fields as dataclass_fields
@@ -15,7 +16,7 @@ from typing import Any, cast
 from honey_acs.crypto.bootstrap import build_crypto_params, build_crypto_params_from_json
 from honey_acs.params import HBConfig
 from honey_acs.service import (
-    AcsProtocol,
+    AcsBackend,
     AcsService,
 )
 
@@ -33,14 +34,15 @@ class PersistentAcsHost:
     def __init__(
         self,
         *,
-        protocol: AcsProtocol,
+        backend: AcsBackend,
         pid: int,
         nodes: int,
         faulty: int,
         crypto,
         config: HBConfig | None = None,
     ) -> None:
-        self._protocol = protocol
+        self._backend = backend
+        self._protocol_family = "hb" if backend == "python_hb" else "dumbo"
         self._pid = pid
         self._nodes = nodes
         self._faulty = faulty
@@ -71,10 +73,19 @@ class PersistentAcsHost:
         self._outbound_signal_lock = threading.Lock()
         self._outbound_signal_pending = False
         self._outbound_signal_enabled = False
-        self._outbound_rfd, self._outbound_wfd = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+        if hasattr(os, "pipe2"):
+            self._outbound_rfd, self._outbound_wfd = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+            self._outbound_rsock: socket.socket | None = None
+            self._outbound_wsock: socket.socket | None = None
+        else:
+            self._outbound_rsock, self._outbound_wsock = socket.socketpair()
+            self._outbound_rsock.setblocking(False)
+            self._outbound_wsock.setblocking(False)
+            self._outbound_rfd = self._outbound_rsock.fileno()
+            self._outbound_wfd = self._outbound_wsock.fileno()
         self._worker = threading.Thread(
             target=self._worker_main,
-            name=f"honey-acs-host-{protocol}-{pid}",
+            name=f"honey-acs-host-{backend}-{pid}",
             daemon=True,
         )
         self._profile: cProfile.Profile | None = None
@@ -91,7 +102,7 @@ class PersistentAcsHost:
 
     def _build_service(self) -> AcsService:
         return AcsService(
-            protocol=self._protocol,
+            backend=self._backend,
             pid=self._pid,
             nodes=self._nodes,
             faulty=self._faulty,
@@ -194,7 +205,10 @@ class PersistentAcsHost:
             if self._outbound_signal_pending:
                 return
             try:
-                os.write(self._outbound_wfd, b"\x01")
+                if self._outbound_wsock is None:
+                    os.write(self._outbound_wfd, b"\x01")
+                else:
+                    self._outbound_wsock.send(b"\x01")
             except BlockingIOError:
                 return
             except OSError:
@@ -209,7 +223,10 @@ class PersistentAcsHost:
                 return
             while True:
                 try:
-                    drained = os.read(self._outbound_rfd, 4096)
+                    if self._outbound_rsock is None:
+                        drained = os.read(self._outbound_rfd, 4096)
+                    else:
+                        drained = self._outbound_rsock.recv(4096)
                 except BlockingIOError:
                     break
                 except OSError:
@@ -271,7 +288,7 @@ class PersistentAcsHost:
 
         directory = Path(output_dir)
         directory.mkdir(parents=True, exist_ok=True)
-        self._profile_path = directory / f"{self._protocol}_acs_host_pid{pid}.prof"
+        self._profile_path = directory / f"{self._backend}_acs_host_pid{pid}.prof"
         self._profile = cProfile.Profile()
         self._profile.enable()
 
@@ -289,7 +306,7 @@ class PersistentAcsHost:
         stats.sort_stats(sort_by)
         stats.print_stats(limit)
         self._profile_path.with_suffix(".txt").write_text(
-            f"protocol={self._protocol}\nworker_ident={self._worker_ident}\n"
+            f"protocol={self._backend}\nworker_ident={self._worker_ident}\n"
             f"sort={sort_by}\nlimit={limit}\n\n{buffer.getvalue()}",
             encoding="utf-8",
         )
@@ -380,32 +397,37 @@ class PersistentAcsHost:
             self._clear_outbound_signal()
             self._worker_stopped.wait()
             self._worker.join(timeout=1.0)
-            os.close(self._outbound_rfd)
-            os.close(self._outbound_wfd)
+            if self._outbound_rsock is None:
+                os.close(self._outbound_rfd)
+                os.close(self._outbound_wfd)
+            else:
+                self._outbound_rsock.close()
+                self._outbound_wsock.close()
 
 
 def build_persistent_acs_host_from_json(
     *,
-    protocol: AcsProtocol,
+    backend: AcsBackend,
     pid: int,
     nodes: int,
     faulty: int,
     crypto_json: str,
     config_json: str | None = None,
 ) -> PersistentAcsHost:
+    protocol_family = "hb" if backend == "python_hb" else "dumbo"
     return _build_persistent_acs_host(
-        protocol=protocol,
+        backend=backend,
         pid=pid,
         nodes=nodes,
         faulty=faulty,
-        crypto=build_crypto_params_from_json(protocol, crypto_json),
+        crypto=build_crypto_params_from_json(protocol_family, crypto_json),
         config_kwargs=_config_kwargs_from_json(config_json),
     )
 
 
 def build_persistent_acs_host(
     *,
-    protocol: AcsProtocol,
+    backend: AcsBackend,
     pid: int,
     nodes: int,
     faulty: int,
@@ -417,13 +439,14 @@ def build_persistent_acs_host(
     proof_sig_pk: bytes | None = None,
     proof_sig_sk: bytes | None = None,
 ) -> PersistentAcsHost:
+    protocol_family = "hb" if backend == "python_hb" else "dumbo"
     return _build_persistent_acs_host(
-        protocol=protocol,
+        backend=backend,
         pid=pid,
         nodes=nodes,
         faulty=faulty,
         crypto=build_crypto_params(
-            protocol,
+            protocol_family,
             sig_pk=sig_pk,
             sig_sk=sig_sk,
             ecdsa_pks=ecdsa_pks,
@@ -437,7 +460,7 @@ def build_persistent_acs_host(
 
 def _build_persistent_acs_host(
     *,
-    protocol: AcsProtocol,
+    backend: AcsBackend,
     pid: int,
     nodes: int,
     faulty: int,
@@ -445,7 +468,7 @@ def _build_persistent_acs_host(
     config_kwargs: dict[str, Any],
 ) -> PersistentAcsHost:
     return PersistentAcsHost(
-        protocol=protocol,
+        backend=backend,
         pid=pid,
         nodes=nodes,
         faulty=faulty,

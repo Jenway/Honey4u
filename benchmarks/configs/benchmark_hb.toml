@@ -1,7 +1,7 @@
 # Local HoneyBadger benchmark with HoneyBadger ACS.
 mode = "benchmark"
 sid = "bench:local:hb"
-acs_protocol = "hb"
+acs_backend = "python_hb"
 nodes = 4
 faulty = 1
 rounds = 5

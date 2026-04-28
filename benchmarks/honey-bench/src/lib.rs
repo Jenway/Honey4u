@@ -1,5 +1,7 @@
 #![recursion_limit = "256"]
 
+use honey_acs::AcsBackendKind;
+
 use honey_node::keygen::{generate_dumbo_crypto_payloads_json, generate_hb_crypto_payloads_json};
 use honey_wire::phase_stats::{DriverPhaseStats, driver_phase_stats_json};
 use serde::Deserialize;
@@ -14,29 +16,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod drive_dumbo;
 mod drive_hb;
 pub mod suite;
+pub mod stats;
+pub mod tps;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Protocol {
-    HoneyBadger,
-    Dumbo,
-}
+pub use drive_dumbo::run_drive_dumbo_multiprocess;
 
-impl Protocol {
-    fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "hb" | "honeybadger" => Ok(Self::HoneyBadger),
-            "dumbo" => Ok(Self::Dumbo),
-            _ => Err(format!("unsupported protocol: {value}")),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::HoneyBadger => "hb",
-            Self::Dumbo => "dumbo",
-        }
-    }
-}
+// Re-export commonly-used types for main.rs
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BenchDriverMode {
@@ -62,7 +47,7 @@ struct BenchDriverConfigFile {
     mode: Option<String>,
     sid: Option<String>,
     protocol: Option<String>,
-    acs_protocol: Option<String>,
+    acs_backend: Option<String>,
     nodes: Option<usize>,
     faulty: Option<usize>,
     rounds: Option<usize>,
@@ -77,8 +62,8 @@ struct BenchDriverConfigFile {
 pub struct BenchDriverArgs {
     pub mode: BenchDriverMode,
     pub sid: String,
-    pub protocol: Protocol,
-    pub acs_protocol: Protocol,
+    pub backend: AcsBackendKind,
+    pub acs_backend: AcsBackendKind,
     pub nodes: usize,
     pub faulty: usize,
     pub rounds: usize,
@@ -92,7 +77,7 @@ pub struct BenchDriverArgs {
 
 pub struct BenchHoneyBadgerArgs {
     pub sid: String,
-    pub acs_protocol: Protocol,
+    pub acs_backend: AcsBackendKind,
     pub nodes: usize,
     pub faulty: usize,
     pub rounds: usize,
@@ -133,7 +118,7 @@ pub fn run_with_args(args: BenchDriverArgs, node_binary: &Path) -> Result<(), St
         BenchDriverMode::HoneyBadger => drive_hb::run_drive_honeybadger(
             BenchHoneyBadgerArgs {
                 sid: args.sid,
-                acs_protocol: args.acs_protocol,
+                acs_backend: args.acs_backend,
                 nodes: args.nodes,
                 faulty: args.faulty,
                 rounds: args.rounds,
@@ -178,15 +163,15 @@ fn build_args(file_config: BenchDriverConfigFile) -> Result<BenchDriverArgs, Str
     let protocol = file_config
         .protocol
         .as_deref()
-        .map(Protocol::parse)
+        .map(AcsBackendKind::parse)
         .transpose()?
-        .unwrap_or(Protocol::HoneyBadger);
-    let acs_protocol = file_config
-        .acs_protocol
+        .unwrap_or(AcsBackendKind::PythonHb);
+    let acs_backend = file_config
+        .acs_backend
         .as_deref()
-        .map(Protocol::parse)
+        .map(AcsBackendKind::parse)
         .transpose()?
-        .unwrap_or(Protocol::HoneyBadger);
+        .unwrap_or(AcsBackendKind::PythonHb);
     let nodes = file_config.nodes.unwrap_or(4);
     let faulty = file_config.faulty.unwrap_or(1);
     let rounds = file_config.rounds.unwrap_or(1);
@@ -220,8 +205,8 @@ fn build_args(file_config: BenchDriverConfigFile) -> Result<BenchDriverArgs, Str
         sid: file_config
             .sid
             .unwrap_or_else(|| String::from("bench:driver:hb")),
-        protocol,
-        acs_protocol,
+        backend: protocol,
+        acs_backend,
         nodes,
         faulty,
         rounds,
@@ -284,9 +269,9 @@ fn run_bench_rust_driver(args: BenchDriverArgs, node_binary: &Path) -> Result<()
     let addresses = allocate_loopback_addresses(args.nodes)?;
     let addresses_json = serde_json::to_string(&addresses).map_err(|err| err.to_string())?;
     let hb_crypto_payloads =
-        serialize_crypto_payloads(Protocol::HoneyBadger, args.nodes, args.faulty)?;
+        serialize_crypto_payloads(AcsBackendKind::PythonHb, args.nodes, args.faulty)?;
     let acs_crypto_payloads =
-        serialize_crypto_payloads(args.acs_protocol, args.nodes, args.faulty)?;
+        serialize_crypto_payloads(args.acs_backend, args.nodes, args.faulty)?;
     let result_dir = build_result_dir("hb-rust-driver", &args.sid)?;
     let start_at_ms = current_time_millis()?
         .checked_add(5_000)
@@ -305,8 +290,8 @@ fn run_bench_rust_driver(args: BenchDriverArgs, node_binary: &Path) -> Result<()
             .arg(pid.to_string())
             .arg("--sid")
             .arg(&args.sid)
-            .arg("--acs-protocol")
-            .arg(args.acs_protocol.as_str())
+            .arg("--acs-backend")
+            .arg(args.acs_backend.as_str())
             .arg("--nodes")
             .arg(args.nodes.to_string())
             .arg("--faulty")
@@ -425,13 +410,16 @@ fn run_bench_rust_driver(args: BenchDriverArgs, node_binary: &Path) -> Result<()
 }
 
 fn serialize_crypto_payloads(
-    protocol: Protocol,
+    protocol: AcsBackendKind,
     nodes: usize,
     faulty: usize,
 ) -> Result<Vec<String>, String> {
     match protocol {
-        Protocol::HoneyBadger => generate_hb_crypto_payloads_json(nodes, faulty),
-        Protocol::Dumbo => generate_dumbo_crypto_payloads_json(nodes, faulty),
+        AcsBackendKind::PythonHb => generate_hb_crypto_payloads_json(nodes, faulty),
+        AcsBackendKind::PythonDumbo
+        | AcsBackendKind::RustFin
+        | AcsBackendKind::RustDumbo
+        | AcsBackendKind::RustHb => generate_dumbo_crypto_payloads_json(nodes, faulty),
     }
 }
 

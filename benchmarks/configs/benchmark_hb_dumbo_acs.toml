@@ -1,7 +1,7 @@
 # Local HoneyBadger benchmark with Dumbo ACS as the provider.
 mode = "benchmark"
 sid = "bench:local:hb:dumbo-acs"
-acs_protocol = "dumbo"
+acs_backend = "python_dumbo"
 nodes = 4
 faulty = 1
 rounds = 5

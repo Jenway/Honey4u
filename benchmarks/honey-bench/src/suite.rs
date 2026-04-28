@@ -6,8 +6,9 @@
 
 use crate::BenchDumboArgs;
 use crate::drive_dumbo;
+use crate::stats::{self, ConsistencySummary, LatencyStats, PeakStats, TimingStats};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
@@ -16,7 +17,7 @@ use std::time::{Instant, SystemTime};
 // Constants
 // ---------------------------------------------------------------------------
 
-const SUPPORTED_BACKENDS: &[&str] = &["python", "rust_fin", "rust_dumbo"];
+const SUPPORTED_BACKENDS: &[&str] = &["python_dumbo", "rust_fin", "rust_dumbo"];
 
 /// Ordered list of keys that may appear as expansion dimensions in [[experiments]].
 /// `byzantine_nodes` is intentionally absent — it is a fixed attribute of the
@@ -229,6 +230,17 @@ struct RunRecord {
     byzantine_share_broadcast_suppressed_total: usize,
     byzantine_empty_proposal_rounds_total: usize,
     chain_digest: Option<String>,
+    // Per-round latency samples (for percentile computation in Summary)
+    round_wall_seconds: Vec<f64>,
+    round_acs_seconds: Vec<f64>,
+    // Raw subprotocol timing maps (one per round)
+    subprotocol_timings: Vec<BTreeMap<String, Value>>,
+    // Queue peak snapshots (one per node)
+    queue_peak_snapshots: Vec<Value>,
+    // Per-node chain digests for consistency check
+    node_chain_digests: Vec<Option<String>>,
+    // Warmup rounds deducted from latency computation
+    warmup_rounds: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +326,14 @@ struct Summary {
     byzantine_fetch_requests_ignored_total_mean: f64,
     byzantine_share_broadcast_suppressed_total_mean: f64,
     byzantine_empty_proposal_rounds_total_mean: f64,
+    // New comprehensive statistics from stats.rs
+    round_wall_latency: LatencyStats,
+    round_acs_latency: LatencyStats,
+    subprotocol_timings: BTreeMap<String, TimingStats>,
+    bytes_per_delivered_transaction: f64,
+    fetch_success_ratio: f64,
+    consistency: ConsistencySummary,
+    queue_peak_stats: BTreeMap<String, PeakStats>,
 }
 
 // ---------------------------------------------------------------------------
@@ -794,7 +814,7 @@ fn build_config_json(case: &ExperimentCase) -> String {
         byz_arr = serde_json::Value::Array(nodes);
     }
     serde_json::to_string(&json!({
-        "acs_host_backend": case.backend,
+        "acs_backend": case.backend,
         "enable_broadcast_pool_reuse": case.reuse_enabled,
         "enable_pool_reference_proposals": case.enable_pool_reference_proposals,
         "enable_pool_fetch_fallback": case.enable_pool_fetch_fallback,
@@ -866,7 +886,7 @@ batch_size = {batch_size}
 global_timeout = {global_timeout}
 
 [config]
-acs_host_backend = "{backend}"
+acs_backend = "{backend}"
 enable_broadcast_pool_reuse = {reuse_enabled}
 enable_pool_reference_proposals = {enable_pool_reference_proposals}
 enable_pool_fetch_fallback = {enable_pool_fetch_fallback}
@@ -913,6 +933,12 @@ fn extract_run_record(
         .map(|a| a.as_slice())
         .unwrap_or(&[]);
 
+    // Collect per-round latency samples
+    let mut round_wall_seconds: Vec<f64> = Vec::with_capacity(rounds_data.len());
+    let mut round_acs_seconds: Vec<f64> = Vec::with_capacity(rounds_data.len());
+    let mut subprotocol_timings: Vec<BTreeMap<String, Value>> =
+        Vec::with_capacity(rounds_data.len());
+
     // Aggregate per-round metrics
     let mut delivered_total = 0usize;
     let mut wall_total_seconds = 0.0f64;
@@ -929,6 +955,18 @@ fn extract_run_record(
     let mut fetched_reference_total = 0usize;
 
     for round in rounds_data {
+        round_wall_seconds.push(round["wall_seconds"].as_f64().unwrap_or(0.0));
+        round_acs_seconds.push(round["acs_seconds"].as_f64().unwrap_or(0.0));
+
+        // Capture subprotocol timings if present
+        if let Some(timings) = round.get("subprotocol_timings").and_then(Value::as_object) {
+            let map: BTreeMap<String, Value> = timings
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            subprotocol_timings.push(map);
+        }
+
         delivered_total += round["delivered_count"].as_u64().unwrap_or(0) as usize;
         wall_total_seconds += round["wall_seconds"].as_f64().unwrap_or(0.0);
         acs_total_seconds += round["acs_seconds"].as_f64().unwrap_or(0.0);
@@ -959,6 +997,16 @@ fn extract_run_record(
     let tracked_driver_bytes_total = send_payload_bytes_total
         + proposal_available_payload_bytes_total
         + proposal_available_proof_bytes_total;
+
+    // Collect per-node chain digests and queue peak snapshots
+    let mut node_chain_digests: Vec<Option<String>> = Vec::with_capacity(nodes_data.len());
+    let mut queue_peak_snapshots: Vec<Value> = Vec::with_capacity(nodes_data.len());
+    for node in nodes_data {
+        node_chain_digests.push(node["chain_digest"].as_str().map(|s| s.to_owned()));
+        if let Some(peaks) = node.get("queue_peaks") {
+            queue_peak_snapshots.push(peaks.clone());
+        }
+    }
 
     // Aggregate per-node transport metrics
     let mut transport_sent_frames_total = 0usize;
@@ -1075,6 +1123,13 @@ fn extract_run_record(
         byzantine_share_broadcast_suppressed_total,
         byzantine_empty_proposal_rounds_total,
         chain_digest,
+        // New comprehensive stats
+        round_wall_seconds,
+        round_acs_seconds,
+        subprotocol_timings,
+        queue_peak_snapshots,
+        node_chain_digests,
+        warmup_rounds: 0, // filled in by caller if needed
     }
 }
 
@@ -1101,6 +1156,62 @@ fn aggregate_records(records: &[RunRecord]) -> Vec<Summary> {
                     fmean(&runs.iter().map(|r| r.$field as f64).collect::<Vec<_>>())
                 };
             }
+            // Compute round latency statistics from all round samples across all repeats
+            let mut all_wall_samples: Vec<f64> = Vec::new();
+            let mut all_acs_samples: Vec<f64> = Vec::new();
+            let mut all_timings: Vec<BTreeMap<String, Value>> = Vec::new();
+            let mut all_queue_peaks: HashMap<String, Vec<u64>> = HashMap::new();
+            let mut all_node_digests: Vec<Option<String>> = Vec::new();
+            let mut total_delivered = 0usize;
+            let mut total_tracked_bytes = 0usize;
+            let mut total_fetch_reqs = 0usize;
+            let mut total_fetched = 0usize;
+            for r in &runs {
+                all_wall_samples.extend(&r.round_wall_seconds);
+                all_acs_samples.extend(&r.round_acs_seconds);
+                all_timings.extend(r.subprotocol_timings.iter().cloned());
+                total_delivered += r.delivered_total;
+                total_tracked_bytes += r.tracked_driver_bytes_total;
+                total_fetch_reqs += r.fetch_requests_sent_total;
+                total_fetched += r.fetched_reference_total;
+                all_node_digests.extend(r.node_chain_digests.iter().cloned());
+                for peak in &r.queue_peak_snapshots {
+                    for field in stats::QUEUE_PEAK_FIELDS {
+                        if let Some(val) = peak.get(*field).and_then(Value::as_u64) {
+                            all_queue_peaks
+                                .entry(field.to_string())
+                                .or_default()
+                                .push(val);
+                        }
+                    }
+                }
+            }
+
+            let expected_rounds_total: usize = runs.iter().map(|r| r.rounds).sum();
+            let div_tx = |n: usize| -> f64 {
+                if total_delivered > 0 {
+                    n as f64 / total_delivered as f64
+                } else {
+                    0.0
+                }
+            };
+
+            // Build consistency summary from node chain digests
+            let consistency = ConsistencySummary::from_node_digests(&all_node_digests);
+
+            // Build subprotocol timing stats
+            let mut subprotocol_timings = BTreeMap::new();
+            for (metric_name, label) in stats::subprotocol_labels() {
+                let ts = TimingStats::from_subprotocol_timings(&all_timings, metric_name);
+                subprotocol_timings.insert(label.to_string(), ts);
+            }
+
+            // Build queue peak stats
+            let mut queue_peak_stats = BTreeMap::new();
+            for (field, values) in &all_queue_peaks {
+                queue_peak_stats.insert(field.clone(), PeakStats::from_values(values));
+            }
+
             Summary {
                 run_count: runs.len(),
                 elapsed_seconds_mean: mean_f!(elapsed_seconds),
@@ -1157,6 +1268,23 @@ fn aggregate_records(records: &[RunRecord]) -> Vec<Summary> {
                 byzantine_empty_proposal_rounds_total_mean: mean_u!(
                     byzantine_empty_proposal_rounds_total
                 ),
+                round_wall_latency: LatencyStats::from_seconds(
+                    &all_wall_samples,
+                    expected_rounds_total,
+                ),
+                round_acs_latency: LatencyStats::from_seconds(
+                    &all_acs_samples,
+                    expected_rounds_total,
+                ),
+                subprotocol_timings,
+                bytes_per_delivered_transaction: div_tx(total_tracked_bytes),
+                fetch_success_ratio: if total_fetch_reqs > 0 {
+                    total_fetched as f64 / total_fetch_reqs as f64
+                } else {
+                    0.0
+                },
+                consistency,
+                queue_peak_stats,
                 key,
             }
         })
@@ -1275,7 +1403,7 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
 
     let non_python_backends: std::collections::BTreeSet<String> = summaries
         .iter()
-        .filter(|s| s.key.backend != "python")
+        .filter(|s| s.key.backend != "python_dumbo")
         .map(|s| s.key.backend.clone())
         .collect();
 
@@ -1304,7 +1432,7 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
         }
 
         let python_key = AggKey {
-            backend: "python".to_owned(),
+            backend: "python_dumbo".to_owned(),
             ..s.key.clone()
         };
         let Some(python_item) = indexed.get(&python_key) else {
@@ -1330,7 +1458,7 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
                 "network_fault_label": s.key.network_fault_label,
                 "byzantine_label": s.key.byzantine_label,
                 "candidate_backend": backend,
-                "baseline_backend": "python",
+                "baseline_backend": "python_dumbo",
                 "candidate_vs_python_tps_wall_delta_pct": pct_change(cand_item.tps_wall_mean, python_item.tps_wall_mean),
                 "candidate_vs_python_tps_acs_delta_pct": pct_change(cand_item.tps_acs_mean, python_item.tps_acs_mean),
                 "candidate_vs_python_tracked_driver_bytes_delta_pct": pct_change(cand_item.tracked_driver_bytes_total_mean, python_item.tracked_driver_bytes_total_mean),
@@ -1400,6 +1528,43 @@ fn summary_to_json(s: &Summary) -> Value {
         "byzantine_fetch_requests_ignored_total_mean": s.byzantine_fetch_requests_ignored_total_mean,
         "byzantine_share_broadcast_suppressed_total_mean": s.byzantine_share_broadcast_suppressed_total_mean,
         "byzantine_empty_proposal_rounds_total_mean": s.byzantine_empty_proposal_rounds_total_mean,
+        // New comprehensive statistics
+        "round_wall_latency": latency_to_json(&s.round_wall_latency),
+        "round_acs_latency": latency_to_json(&s.round_acs_latency),
+        "subprotocol_timings": s.subprotocol_timings.iter().map(|(k, v)| {
+            (k.clone(), json!({
+                "sample_count": v.sample_count,
+                "mean_ms": v.mean_ms,
+                "max_ms": v.max_ms,
+            }))
+        }).collect::<serde_json::Map<_, _>>(),
+        "bytes_per_delivered_transaction": s.bytes_per_delivered_transaction,
+        "fetch_success_ratio": s.fetch_success_ratio,
+        "consistency": json!({
+            "all_nodes_agree": s.consistency.all_nodes_agree,
+            "diverge_count": s.consistency.diverge_count,
+            "diverged_pids": s.consistency.diverged_pids,
+            "canonical_digest": s.consistency.canonical_digest,
+        }),
+        "queue_peak_stats": s.queue_peak_stats.iter().map(|(k, v)| {
+            (k.clone(), json!({
+                "mean": v.mean,
+                "p95": v.p95,
+                "max": v.max,
+            }))
+        }).collect::<serde_json::Map<_, _>>(),
+    })
+}
+
+fn latency_to_json(s: &LatencyStats) -> Value {
+    json!({
+        "sample_count": s.sample_count,
+        "coverage": s.coverage,
+        "mean_ms": s.mean_ms,
+        "p50_ms": s.p50_ms,
+        "p95_ms": s.p95_ms,
+        "p99_ms": s.p99_ms,
+        "max_ms": s.max_ms,
     })
 }
 

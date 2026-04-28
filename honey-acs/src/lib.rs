@@ -11,7 +11,6 @@ use self::backends::rust_fin::RustAcsBackend;
 use self::backends::rust_hb::RustHbAcsBackend;
 use self::threaded::ThreadedAcsBackend;
 use crate::proposal::AvailableProposal;
-use crate::protocol::AcsProtocol;
 use honey_wire::codec::{decode_hex, json_string_field};
 use serde_json::Value;
 
@@ -120,35 +119,68 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
-enum AcsBackendKind {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AcsBackendKind {
     #[cfg(feature = "python-backend")]
-    Python,
+    PythonHb,
+    #[cfg(feature = "python-backend")]
+    PythonDumbo,
     RustFin,
     RustDumbo,
     RustHb,
 }
 
+impl AcsBackendKind {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            #[cfg(feature = "python-backend")]
+            "python_hb" => Ok(Self::PythonHb),
+            #[cfg(not(feature = "python-backend"))]
+            "python_hb" => Err(String::from(
+                "acs_backend=python_hb requires the python-backend feature",
+            )),
+            #[cfg(feature = "python-backend")]
+            "python_dumbo" => Ok(Self::PythonDumbo),
+            #[cfg(not(feature = "python-backend"))]
+            "python_dumbo" => Err(String::from(
+                "acs_backend=python_dumbo requires the python-backend feature",
+            )),
+            "rust" | "rust_fin" => Ok(Self::RustFin),
+            "rust_dumbo" => Ok(Self::RustDumbo),
+            "rust_hb" => Ok(Self::RustHb),
+            other => Err(format!("unsupported acs_backend: {other}")),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            #[cfg(feature = "python-backend")]
+            Self::PythonHb => "python_hb",
+            #[cfg(feature = "python-backend")]
+            Self::PythonDumbo => "python_dumbo",
+            Self::RustFin => "rust_fin",
+            Self::RustDumbo => "rust_dumbo",
+            Self::RustHb => "rust_hb",
+        }
+    }
+
+    pub fn is_dumbo(self) -> bool {
+        match self {
+            #[cfg(feature = "python-backend")]
+            Self::PythonDumbo => true,
+            Self::RustFin | Self::RustDumbo => true,
+            _ => false,
+        }
+    }
+}
+
 fn parse_acs_backend_kind(config_json: &str) -> Result<AcsBackendKind, String> {
     let value: Value = serde_json::from_str(config_json).map_err(|err| err.to_string())?;
-    match value
-        .get("acs_host_backend")
+    let raw = value
+        .get("acs_backend")
         .and_then(Value::as_str)
-        .ok_or_else(|| String::from("acs_host_backend is required in config_json"))?
-    {
-        #[cfg(feature = "python-backend")]
-        "python" => Ok(AcsBackendKind::Python),
-        #[cfg(not(feature = "python-backend"))]
-        "python" => Err(String::from(
-            "acs_host_backend=python requires the python-backend feature",
-        )),
-        "rust" | "rust_fin" => Ok(AcsBackendKind::RustFin),
-        "rust_dumbo" => Ok(AcsBackendKind::RustDumbo),
-        "rust_hb" => Ok(AcsBackendKind::RustHb),
-        other => Err(format!(
-            "unsupported acs_host_backend in config_json: {other}"
-        )),
-    }
+        .ok_or_else(|| String::from("acs_backend is required in config_json"))?;
+    AcsBackendKind::parse(raw)
 }
 
 fn json_string_array_field(value: &Value, key: &str) -> Result<Vec<String>, String> {
@@ -168,7 +200,7 @@ fn json_string_array_field(value: &Value, key: &str) -> Result<Vec<String>, Stri
 }
 
 pub fn parse_acs_crypto_payload(
-    protocol: AcsProtocol,
+    backend: AcsBackendKind,
     payload: &str,
 ) -> Result<AcsCryptoMaterial, String> {
     let decoded = serde_json::from_str::<Value>(payload).map_err(|err| err.to_string())?;
@@ -176,12 +208,13 @@ pub fn parse_acs_crypto_payload(
         .into_iter()
         .map(|value| decode_hex(&value))
         .collect::<Result<Vec<_>, _>>()?;
-    let (proof_sig_pk, proof_sig_sk) = match protocol {
-        AcsProtocol::HoneyBadger => (None, None),
-        AcsProtocol::Dumbo => (
+    let (proof_sig_pk, proof_sig_sk) = if backend.is_dumbo() {
+        (
             Some(decode_hex(json_string_field(&decoded, "proof_sig_pk")?)?),
             Some(decode_hex(json_string_field(&decoded, "proof_sig_sk")?)?),
-        ),
+        )
+    } else {
+        (None, None)
     };
     Ok(AcsCryptoMaterial {
         sig_pk: decode_hex(json_string_field(&decoded, "sig_pk")?)?,
@@ -194,20 +227,20 @@ pub fn parse_acs_crypto_payload(
 }
 
 pub fn build_acs_backend(
-    protocol: AcsProtocol,
+    backend: AcsBackendKind,
     pid: usize,
     nodes: usize,
     faulty: usize,
     crypto_json: &str,
     config_json: &str,
 ) -> Result<Box<dyn AcsBackend>, String> {
-    let crypto = parse_acs_crypto_payload(protocol, crypto_json)?;
-    match parse_acs_backend_kind(config_json)? {
+    let crypto = parse_acs_crypto_payload(backend, crypto_json)?;
+    match backend {
         #[cfg(feature = "python-backend")]
-        AcsBackendKind::Python => {
+        AcsBackendKind::PythonHb | AcsBackendKind::PythonDumbo => {
             use self::backends::python::PyAcsBackend;
             Ok(Box::new(PyAcsBackend::new_with_material(
-                protocol,
+                backend,
                 pid,
                 nodes,
                 faulty,
@@ -223,11 +256,6 @@ pub fn build_acs_backend(
             config_json,
         )?))),
         AcsBackendKind::RustDumbo => {
-            if !matches!(protocol, AcsProtocol::Dumbo) {
-                return Err(String::from(
-                    "acs_host_backend=rust_dumbo currently supports only acs_protocol=dumbo",
-                ));
-            }
             Ok(Box::new(ThreadedAcsBackend::new(RustDumboAcsBackend::new(
                 pid,
                 nodes,
@@ -237,11 +265,6 @@ pub fn build_acs_backend(
             )?)))
         }
         AcsBackendKind::RustHb => {
-            if !matches!(protocol, AcsProtocol::HoneyBadger) {
-                return Err(String::from(
-                    "acs_host_backend=rust_hb currently supports only acs_protocol=hb",
-                ));
-            }
             Ok(Box::new(ThreadedAcsBackend::new(RustHbAcsBackend::new(
                 pid,
                 nodes,

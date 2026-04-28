@@ -1,3 +1,4 @@
 pub mod keygen;
 pub mod ledger;
-pub mod transport;
+
+pub use honey_transport as transport;

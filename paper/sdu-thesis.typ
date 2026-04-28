@@ -25,11 +25,8 @@
   back_cover: none,
   body,
 ) = {
-  // The original school template expects SimSun/SimHei, but this repository
-  // is commonly compiled on Linux machines where those Windows fonts are absent.
-  // Use broadly available CJK fallbacks so local preview PDFs remain stable.
-  let 宋体 = "Noto Serif CJK SC"
-  let 黑体 = "Noto Sans CJK SC"
+  let 宋体 = ("SimSun", "Noto Serif CJK SC", "Source Han Serif SC")
+  let 黑体 = ("SimHei", "Noto Sans CJK SC", "Source Han Sans SC")
   let 西文字体 = "Times New Roman"
 
   let centered-page-number(pattern: "1") = context [
@@ -44,7 +41,7 @@
 
   let body-header = context [
     #set align(center)
-    #set text(font: 宋体, size: 9pt)
+    #set text(font: (..宋体), size: 9pt)
     山东大学本科毕业论文（设计）
     #v(-0.55em)
     #line(length: 100%, stroke: 0.5pt)
@@ -53,14 +50,14 @@
   let front-title(body) = {
     v(0.8em)
     align(center)[
-      #set text(font: 黑体, size: 18pt, weight: "bold")
+      #set text(font: (..黑体), size: 18pt, weight: "bold")
       #body
     ]
     v(0.5em)
   }
 
   let body-text() = {
-    set text(font: (宋体, 西文字体), size: 12pt)
+    set text(font: (..宋体, 西文字体), size: 12pt)
     set par(
       first-line-indent: 2em,
       leading: 6pt,
@@ -69,7 +66,7 @@
   }
 
   let abstract-text() = {
-    set text(font: (宋体, 西文字体), size: 12pt)
+    set text(font: (..宋体, 西文字体), size: 12pt)
     set par(
       first-line-indent: 2em,
       leading: 6pt,
@@ -78,7 +75,7 @@
   }
 
   let reference-text() = {
-    set text(font: (宋体, 西文字体), size: 10.5pt)
+    set text(font: (..宋体, 西文字体), size: 10.5pt)
     set par(
       first-line-indent: 0em,
       leading: 0pt,
@@ -96,16 +93,16 @@
     inset: (x: 0.15cm, top: 0.05cm, bottom: 0.08cm),
     stroke: (bottom: 0.5pt),
   )[
-    #text(font: 宋体, size: 14pt)[#value]
+    #text(font: (..宋体), size: 14pt)[#value]
   ]
 
   let render-score-sheet() = {
     if score_sheet == none {
       align(center)[
         #v(11cm)
-        #text(font: 黑体, size: 18pt, weight: "bold")[成绩评定表]
+        #text(font: (..黑体), size: 18pt, weight: "bold")[成绩评定表]
         #v(1cm)
-        #text(font: 宋体, size: 12pt)[请按学院统一格式插入本页]
+        #text(font: (..宋体), size: 12pt)[To be filled]
       ]
     } else {
       score_sheet
@@ -118,9 +115,9 @@
         image(cover_logo, width: 8.8cm)
         v(1.1cm)
       }
-      #text(font: 黑体, size: 22pt, weight: "bold")[山东大学本科#paper_type]
+      #text(font: (..黑体), size: 22pt, weight: "bold")[山东大学本科#paper_type]
       #v(2.1cm)
-      #text(font: 黑体, size: 18pt, weight: "bold")[#title]
+      #text(font: (..黑体), size: 18pt, weight: "bold")[#title]
       #if english_title != "" {
         v(0.8cm)
         text(font: 西文字体, size: 16pt, weight: "bold")[#english_title]
@@ -131,15 +128,15 @@
         column-gutter: 0.4cm,
         row-gutter: 0.9cm,
         align: (right, left),
-        [#text(font: 宋体, size: 14pt)[姓名]], [#cover-value(author)],
-        [#text(font: 宋体, size: 14pt)[学号]], [#cover-value(school_id)],
-        [#text(font: 宋体, size: 14pt)[学院]], [#cover-value(school)],
-        [#text(font: 宋体, size: 14pt)[专业]], [#cover-value(major)],
-        [#text(font: 宋体, size: 14pt)[年级]], [#cover-value(grade)],
-        [#text(font: 宋体, size: 14pt)[指导教师]], [#cover-value(supervisor)],
+        [#text(font: (..宋体), size: 14pt)[姓名]], [#cover-value(author)],
+        [#text(font: (..宋体), size: 14pt)[学号]], [#cover-value(school_id)],
+        [#text(font: (..宋体), size: 14pt)[学院]], [#cover-value(school)],
+        [#text(font: (..宋体), size: 14pt)[专业]], [#cover-value(major)],
+        [#text(font: (..宋体), size: 14pt)[年级]], [#cover-value(grade)],
+        [#text(font: (..宋体), size: 14pt)[指导教师]], [#cover-value(supervisor)],
       )
       #v(2cm)
-      #text(font: 宋体, size: 14pt)[#date]
+      #text(font: (..宋体), size: 14pt)[#date]
     ]
   }
 
@@ -149,14 +146,14 @@
     abstract_zh
     v(1em)
     set par(first-line-indent: 0em)
-    text(font: 黑体, size: 12pt, weight: "bold")[关键字]
+    text(font: (..黑体), size: 12pt, weight: "bold")[关键字]
     h(0.5em)
-    text(font: 宋体, size: 12pt)[#keywords_zh.join("；")]
+    text(font: (..宋体), size: 12pt)[#keywords_zh.join("；")]
   }
 
   let render-en-abstract() = {
     front-title([ABSTRACT])
-    set text(font: (西文字体, 宋体), size: 12pt)
+    set text(font: (西文字体, ..宋体), size: 12pt)
     set par(
       first-line-indent: 2em,
       leading: 6pt,
@@ -187,7 +184,7 @@
 
   let render-translation-en() = {
     front-title([外文原文])
-    set text(font: (西文字体, 宋体), size: 12pt)
+    set text(font: (西文字体, ..宋体), size: 12pt)
     set par(
       first-line-indent: 2em,
       leading: 6pt,
@@ -248,7 +245,7 @@
   set page(header: [], footer: centered-page-number(pattern: "I"))
   counter(page).update(1)
   front-title([目#h(2em)录])
-  set text(font: 宋体, size: 12pt)
+  set text(font: (..宋体), size: 12pt)
   set par(first-line-indent: 0em, justify: false)
   outline(title: none)
   pagebreak()
@@ -263,7 +260,7 @@
     pagebreak(weak: true)
     v(0.8em)
     align(center)[
-      #set text(font: 黑体, size: 16pt, weight: "bold")
+      #set text(font: (..黑体), size: 16pt, weight: "bold")
       #it
     ]
     v(0.5em)
@@ -271,20 +268,20 @@
 
   show heading.where(level: 2): it => {
     v(0.5em)
-    set text(font: 黑体, size: 14pt, weight: "bold")
+    set text(font: (..黑体), size: 14pt, weight: "bold")
     it
     v(0.5em)
   }
 
   show heading.where(level: 3): it => {
-    set text(font: 黑体, size: 12pt, weight: "bold")
+    set text(font: (..黑体), size: 12pt, weight: "bold")
     it
     v(0.35em)
   }
 
   show figure.caption: it => block(width: 100%)[
     #set align(center)
-    #set text(font: 宋体, size: 10.5pt, weight: "bold")
+    #set text(font: (..宋体), size: 10.5pt, weight: "bold")
     #it.supplement
     #context it.counter.display(it.numbering)
     #h(0.6em)

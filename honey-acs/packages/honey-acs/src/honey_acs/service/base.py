@@ -13,14 +13,14 @@ from honey_acs.crypto.protocols import AcsRuntimeCrypto
 from honey_acs.exceptions import ProtocolInvariantError
 from honey_acs.params import HBConfig
 
-type AcsProtocol = Literal["hb", "dumbo"]
+type AcsBackend = Literal["python_hb", "python_dumbo"]
 type AcsOutputMode = Literal["selected_pids", "payloads"]
 type AcsEvent = dict[str, object]
 
 
 @dataclass(slots=True)
 class AcsRoundContext:
-    protocol: AcsProtocol
+    backend: AcsBackend
     pid: int
     nodes: int
     faulty: int
@@ -79,7 +79,7 @@ class AcsService:
     def __init__(
         self,
         *,
-        protocol: AcsProtocol,
+        backend: AcsBackend,
         pid: int,
         nodes: int,
         faulty: int,
@@ -89,7 +89,8 @@ class AcsService:
         event_notifier: Callable[[], None] | None = None,
         output_mode: AcsOutputMode = "selected_pids",
     ) -> None:
-        self.protocol = protocol
+        self._backend_val = backend
+        self._protocol_family: Literal["hb", "dumbo"] = "hb" if backend == "python_hb" else "dumbo"
         self.pid = pid
         self.nodes = nodes
         self.faulty = faulty
@@ -97,7 +98,7 @@ class AcsService:
         self.config = config or HBConfig()
         self.output_mode = output_mode
         self.logger = logging.LoggerAdapter(
-            logging.getLogger(logger_name or self._default_logger_name(protocol)),
+            logging.getLogger(logger_name or self._default_logger_name(backend)),
             extra={"node": pid},
         )
         self._events: Queue[AcsEvent] = Queue()
@@ -128,7 +129,7 @@ class AcsService:
 
     def stats(self) -> dict[str, object]:
         stats: dict[str, object] = {
-            "protocol": self.protocol,
+            "backend": self._backend_val,
             "pid": self.pid,
             "nodes": self.nodes,
             "faulty": self.faulty,
@@ -238,7 +239,7 @@ class AcsService:
 
     def _build_round_context(self) -> AcsRoundContext:
         return AcsRoundContext(
-            protocol=self.protocol,
+            protocol=self._protocol_family,
             pid=self.pid,
             nodes=self.nodes,
             faulty=self.faulty,
@@ -261,7 +262,7 @@ class AcsService:
         sid: str,
         proposal_input: bytes,
     ) -> ManagedRoundSession:
-        if self.protocol == "hb":
+        if self._protocol_family == "hb":
             if self.output_mode == "payloads":
                 raise ProtocolInvariantError(
                     "HB payload output mode has been removed; use selected_pids output only"
@@ -274,7 +275,7 @@ class AcsService:
                 sid=sid,
                 proposal_input=proposal_input,
             )
-        if self.protocol == "dumbo":
+        if self._protocol_family == "dumbo":
             from honey_acs.service.dumbo import DumboRoundSession
 
             return DumboRoundSession(
@@ -283,7 +284,7 @@ class AcsService:
                 sid=sid,
                 proposal_input=proposal_input,
             )
-        raise ValueError(f"unsupported ACS protocol: {self.protocol}")
+        raise ValueError(f"unsupported ACS protocol: {self._protocol_family}")
 
     def _finish_round_session(self, session: ManagedRoundSession) -> None:
         current = self._rounds.get(session.round_id)
@@ -306,7 +307,7 @@ class AcsService:
             self._queue_peaks[name] = size
 
     @staticmethod
-    def _default_logger_name(protocol: AcsProtocol) -> str:
+    def _default_logger_name(backend: AcsBackend) -> str:
         if protocol == "hb":
             return "honey.acs.hb.service"
         return "honey.acs.dumbo.service"

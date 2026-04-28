@@ -1,6 +1,5 @@
 use crate::proposal::AvailableProposal;
-use crate::protocol::AcsProtocol;
-use crate::{AcsBackend, AcsBackendStats, AcsCryptoMaterial, AcsEvent};
+use crate::{AcsBackend, AcsBackendKind, AcsBackendStats, AcsCryptoMaterial, AcsEvent};
 use honey_wire::api::{decode_result, encode_result};
 use honey_wire::format::{
     AbaPayloadWire, ChannelWire, MessageWire, PdStoreRecordWire, PrbcProofWire,
@@ -747,7 +746,7 @@ fn parse_acs_decoded_event(
 
 impl PyAcsBackend {
     pub fn new_with_material(
-        protocol: AcsProtocol,
+        backend: AcsBackendKind,
         pid: usize,
         nodes: usize,
         faulty: usize,
@@ -758,7 +757,7 @@ impl PyAcsBackend {
             prepend_python_paths(py)?;
             let module = PyModule::import(py, "honey_acs.host")?;
             let kwargs = PyDict::new(py);
-            kwargs.set_item("protocol", protocol.as_str())?;
+            kwargs.set_item("backend", backend.as_str())?;
             kwargs.set_item("pid", pid)?;
             kwargs.set_item("nodes", nodes)?;
             kwargs.set_item("faulty", faulty)?;

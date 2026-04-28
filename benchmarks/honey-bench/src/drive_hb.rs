@@ -48,13 +48,13 @@ fn run_drive_honeybadger_multiprocess(
 ) -> Result<String, String> {
     debug_acs_driver("hb-mp:serialize_hb_crypto_payloads:start");
     let hb_crypto_payloads =
-        serialize_crypto_payloads(Protocol::HoneyBadger, args.nodes, args.faulty)?;
+        serialize_crypto_payloads(AcsBackendKind::PythonHb, args.nodes, args.faulty)?;
     debug_acs_driver("hb-mp:serialize_hb_crypto_payloads:done");
-    let acs_crypto_payloads = if matches!(args.acs_protocol, Protocol::HoneyBadger) {
+    let acs_crypto_payloads = if !args.acs_backend.is_dumbo() {
         hb_crypto_payloads.clone()
     } else {
         debug_acs_driver("hb-mp:serialize_acs_crypto_payloads:start");
-        let payloads = serialize_crypto_payloads(args.acs_protocol, args.nodes, args.faulty)?;
+        let payloads = serialize_crypto_payloads(args.acs_backend, args.nodes, args.faulty)?;
         debug_acs_driver("hb-mp:serialize_acs_crypto_payloads:done");
         payloads
     };
@@ -82,8 +82,8 @@ fn run_drive_honeybadger_multiprocess(
             .arg(pid.to_string())
             .arg("--sid")
             .arg(&args.sid)
-            .arg("--acs-protocol")
-            .arg(args.acs_protocol.as_str())
+            .arg("--acs-backend")
+            .arg(args.acs_backend.as_str())
             .arg("--nodes")
             .arg(args.nodes.to_string())
             .arg("--faulty")
@@ -356,7 +356,7 @@ fn run_drive_honeybadger_multiprocess(
 
     serde_json::to_string(&json!({
         "protocol": "hb",
-        "acs_protocol": args.acs_protocol.as_str(),
+        "acs_backend": args.acs_backend.as_str(),
         "sid": args.sid,
         "transport": "tcp-loopback-mp",
         "chain_digest": canonical_chain,

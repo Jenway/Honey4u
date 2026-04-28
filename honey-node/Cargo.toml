@@ -13,6 +13,7 @@ crossbeam-channel = "0.5"
 hex = "0.4"
 honey-acs = { path = "../honey-acs" }
 honey-crypto = { path = "../honey-crypto" }
+honey-transport = { path = "../honey-transport" }
 honey-wire = { path = "../honey-wire" }
 k256 = "0.13.4"
 metrics = "0.24"

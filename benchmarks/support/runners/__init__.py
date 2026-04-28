@@ -1,9 +1,6 @@
 """Runner helpers used by benchmark CLIs and runtime tests."""
 
 from benchmarks.support.runners._core import (
-    _build_honey_bench_binary,
-)
-from benchmarks.support.runners.results import (
     MetricTimingSummary,
     MultiprocessDriverStats,
     MultiprocessNodeResult,
@@ -18,8 +15,7 @@ from benchmarks.support.runners.results import (
     RustDrivenHoneyBadgerRunResult,
     RustDrivenHostPhaseStats,
     TransportStats,
-)
-from benchmarks.support.runners.rust_driver import (
+    _build_honey_bench_binary,
     benchmark_local_dumbo_nodes_rust_driven,
     benchmark_local_honeybadger_nodes_rust_driven,
     run_local_dumbo_new_driver,

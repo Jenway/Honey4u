@@ -1,13 +1,14 @@
 use super::*;
+use crate::AcsBackendKind;
 use crate::harness::{run_acs_round, serialize_crypto_payloads};
-use crate::protocol::AcsProtocol;
+
 
 fn build_hosts(nodes: usize, faulty: usize, mode: HbBroadcastMode) -> Vec<RustHbAcsBackend> {
     let config_json = match mode {
-        HbBroadcastMode::Rbc => r#"{"acs_host_backend":"rust_hb","hb_broadcast_protocol":"rbc"}"#,
-        HbBroadcastMode::Prbc => r#"{"acs_host_backend":"rust_hb","hb_broadcast_protocol":"prbc"}"#,
+        HbBroadcastMode::Rbc => r#"{"acs_backend":"rust_hb","hb_broadcast_protocol":"rbc"}"#,
+        HbBroadcastMode::Prbc => r#"{"acs_backend":"rust_hb","hb_broadcast_protocol":"prbc"}"#,
     };
-    serialize_crypto_payloads(AcsProtocol::HoneyBadger, nodes, faulty)
+    serialize_crypto_payloads(AcsBackendKind::RustHb, nodes, faulty)
         .expect("crypto payloads should serialize")
         .into_iter()
         .enumerate()
@@ -16,7 +17,7 @@ fn build_hosts(nodes: usize, faulty: usize, mode: HbBroadcastMode) -> Vec<RustHb
                 pid,
                 nodes,
                 faulty,
-                crate::parse_acs_crypto_payload(AcsProtocol::HoneyBadger, &payload)
+                crate::parse_acs_crypto_payload(AcsBackendKind::RustHb, &payload)
                     .expect("crypto payload should parse"),
                 config_json,
             )

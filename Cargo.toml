@@ -5,6 +5,7 @@ members = [
     "honey-acs",
     "honey-acs/honey-native",
     "honey-node",
+    "honey-transport",
     "benchmarks/honey-bench",
 ]
 resolver = "2"

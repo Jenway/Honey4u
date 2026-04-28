@@ -14,7 +14,7 @@ enable_pool_fetch_fallback = true
 [[experiments]]
 name = "grace_python_n12_micro"
 description = "Compact grace-window sensitivity run for thesis figures."
-backend = ["python"]
+backend = ["python_dumbo"]
 reuse_enabled = [true]
 nodes = [12]
 batch_size = [32]

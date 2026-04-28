@@ -1,9 +1,10 @@
 use super::*;
+use crate::AcsBackendKind;
 use crate::harness::{run_acs_round, serialize_crypto_payloads};
-use crate::protocol::AcsProtocol;
 
-fn build_hosts(protocol: AcsProtocol, nodes: usize, faulty: usize) -> Vec<RustAcsBackend> {
-    serialize_crypto_payloads(protocol, nodes, faulty)
+
+fn build_hosts(backend: AcsBackendKind, nodes: usize, faulty: usize) -> Vec<RustAcsBackend> {
+    serialize_crypto_payloads(backend, nodes, faulty)
         .expect("crypto payloads should serialize")
         .into_iter()
         .enumerate()
@@ -12,9 +13,9 @@ fn build_hosts(protocol: AcsProtocol, nodes: usize, faulty: usize) -> Vec<RustAc
                 pid,
                 nodes,
                 faulty,
-                crate::parse_acs_crypto_payload(protocol, &payload)
+                crate::parse_acs_crypto_payload(backend, &payload)
                     .expect("crypto payload should parse"),
-                r#"{"acs_host_backend":"rust"}"#,
+                r#"{"acs_backend":"rust"}"#,
             )
             .expect("Rust ACS host should construct")
         })
@@ -32,7 +33,7 @@ fn completion_vector_roundtrip_rejects_invalid_bits() {
 
 #[test]
 fn rust_acs_round_reaches_consistent_decision() {
-    let hosts = build_hosts(AcsProtocol::HoneyBadger, 4, 1);
+    let hosts = build_hosts(AcsBackendKind::RustFin, 4, 1);
     let proposals = (0..4)
         .map(|pid| format!("rust-acs-proposal-{pid}").into_bytes())
         .collect::<Vec<_>>();

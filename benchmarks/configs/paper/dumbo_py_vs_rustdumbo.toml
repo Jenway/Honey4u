@@ -15,7 +15,7 @@ enable_pool_fetch_fallback = true
 [[experiments]]
 name = "reuse_scale"
 description = "Direct comparison of Python Dumbo vs Rust Dumbo backend across reuse modes."
-backend = ["python", "rust_dumbo"]
+backend = ["python_dumbo", "rust_dumbo"]
 reuse_enabled = [false, true]
 nodes = [4, 8]
 batch_size = [8, 16]

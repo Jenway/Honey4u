@@ -123,9 +123,10 @@ def _build_hosts_from_crypto(
     faulty: int,
     config: dict[str, object] | None = None,
 ) -> list[PersistentAcsHost]:
+    backend = "python_hb" if protocol == "hb" else "python_dumbo"
     return [
         build_persistent_acs_host(
-            protocol=protocol,
+            backend=backend,
             pid=pid,
             nodes=num_nodes,
             faulty=faulty,

@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 _HONEY_BENCH_BINARY: Path | None = None
 TxInputMode = Literal["json_str", "bytes"]
 TransportBackend = Literal["tcp", "quic"]
-AcsRuntimeProtocol = Literal["hb", "dumbo"]
+AcsRuntimeBackend = Literal["python_hb", "python_dumbo"]
 BroadcastPoolBackend = Literal["none", "rust"]
 
 
@@ -204,7 +204,7 @@ class RustDrivenHoneyBadgerRunResult:
     chain_digest: str | None
     nodes: tuple[RustDrivenAcsNodeResult, ...]
     rounds: tuple[RustDrivenHoneyBadgerRoundResult, ...]
-    acs_protocol: str = "hb"
+    acs_backend: str = "python_hb"
 
 
 @dataclass(frozen=True)
@@ -456,7 +456,7 @@ def _decode_rust_driven_honeybadger_payload(
 ) -> RustDrivenHoneyBadgerRunResult:
     return RustDrivenHoneyBadgerRunResult(
         protocol=str(value["protocol"]),
-        acs_protocol=str(value.get("acs_protocol", "hb")),
+        acs_backend=str(value.get("acs_backend", "python_hb")),
         sid=str(value["sid"]),
         chain_digest=str(value["chain_digest"]) if value.get("chain_digest") is not None else None,
         nodes=tuple(
@@ -522,21 +522,28 @@ def _build_honey_bench_binary() -> Path:
     global _HONEY_BENCH_BINARY
     if _HONEY_BENCH_BINARY is not None and _HONEY_BENCH_BINARY.exists():
         return _HONEY_BENCH_BINARY
-    # Allow an explicit override via environment variable (useful for release builds).
-    env_override = os.environ.get("HONEY_BENCH_BINARY") or os.environ.get("HONEY_NODE_BINARY")
+    # Explicit override via environment variable.
+    env_override = os.environ.get("HONEY_BENCH_BINARY")
     if env_override:
         override_path = Path(env_override)
         if override_path.exists():
             _HONEY_BENCH_BINARY = override_path
             return _HONEY_BENCH_BINARY
-    use_release = os.environ.get("HONEY_NODE_RELEASE", "").lower() in ("1", "true", "yes")
-    build_args = ["cargo", "build", "-p", "honey-bench", "-p", "honey-node"]
-    if use_release:
-        build_args.append("--release")
-    subprocess.run(build_args, check=True)
-    profile = "release" if use_release else "debug"
-    _HONEY_BENCH_BINARY = Path(f"target/{profile}/honey-bench")
-    return _HONEY_BENCH_BINARY
+    # Auto-detect: look near honey-bench source first, then target/.
+    binary_name = "honey-bench" + (".exe" if os.name == "nt" else "")
+    candidates = [
+        Path(f"target/release/{binary_name}"),
+        Path(f"target/debug/{binary_name}"),
+        Path(__file__).resolve().parents[3] / "target" / "release" / binary_name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            _HONEY_BENCH_BINARY = candidate
+            return _HONEY_BENCH_BINARY
+    raise FileNotFoundError(
+        f"cannot find {binary_name}. Build with 'cargo build --release -p honey-bench' "
+        f"or set HONEY_BENCH_BINARY env var."
+    )
 
 
 def _format_toml_key(key: str) -> str:
@@ -579,7 +586,7 @@ def _render_bench_driver_config(
     global_timeout: float,
     batch_size: int | None = None,
     protocol: str | None = None,
-    acs_protocol: str | None = None,
+    acs_backend: str | None = None,
     result_path: str | None = None,
     ledger_dir: str | None = None,
     tx_payload: list[list[str]] | None = None,
@@ -597,8 +604,8 @@ def _render_bench_driver_config(
         lines.append(f"batch_size = {batch_size}")
     if protocol is not None:
         lines.append(f"protocol = {json.dumps(protocol)}")
-    if acs_protocol is not None:
-        lines.append(f"acs_protocol = {json.dumps(acs_protocol)}")
+    if acs_backend is not None:
+        lines.append(f"acs_backend = {json.dumps(acs_backend)}")
     if result_path is not None:
         lines.append(f"result_path = {json.dumps(result_path)}")
     if ledger_dir is not None:
@@ -634,7 +641,7 @@ def _benchmark_rust_driver_nodes(
     batch_size: int,
     max_rounds: int,
     global_timeout: float,
-    acs_protocol: AcsRuntimeProtocol,
+    acs_backend: AcsRuntimeBackend,
     config_payload: dict[str, Any],
 ) -> list[MultiprocessNodeResult]:
     completed = _run_bench_driver(
@@ -646,7 +653,7 @@ def _benchmark_rust_driver_nodes(
             max_rounds=max_rounds,
             batch_size=batch_size,
             global_timeout=global_timeout,
-            acs_protocol=acs_protocol,
+            acs_backend=acs_backend,
             config_payload=config_payload,
         )
     )
@@ -669,7 +676,7 @@ def _run_rust_driven_honeybadger(
     batch_size: int,
     max_rounds: int,
     global_timeout: float,
-    acs_protocol: AcsRuntimeProtocol = "hb",
+    acs_backend: AcsRuntimeBackend = "python_hb",
     acs_config_payload: dict[str, Any] | None = None,
 ) -> RustDrivenHoneyBadgerRunResult:
     completed = _run_bench_driver(
@@ -681,7 +688,7 @@ def _run_rust_driven_honeybadger(
             max_rounds=max_rounds,
             batch_size=batch_size,
             global_timeout=global_timeout,
-            acs_protocol=acs_protocol,
+            acs_backend=acs_backend,
             config_payload=acs_config_payload or {},
         )
     )
@@ -889,7 +896,7 @@ def _relabel_rust_driven_protocol(
         chain_digest=run_result.chain_digest,
         nodes=run_result.nodes,
         rounds=run_result.rounds,
-        acs_protocol=run_result.acs_protocol,
+        acs_backend=run_result.acs_backend,
     )
 
 
@@ -907,7 +914,7 @@ def benchmark_local_honeybadger_nodes_rust_driven(
     log_level: str = "WARNING",
     rust_tx_pool_max_bytes: int = 0,
     ledger_dir: str | None = None,
-    acs_protocol: AcsRuntimeProtocol = "hb",
+    acs_backend: AcsRuntimeBackend = "python_hb",
     hb_broadcast_protocol: str = "rbc",
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
@@ -932,17 +939,17 @@ def benchmark_local_honeybadger_nodes_rust_driven(
         raise ValueError("Rust-driven HoneyBadger benchmark does not support ledger persistence")
 
     acs_config_payload: dict[str, Any] | None = None
-    if acs_protocol == "dumbo":
+    if acs_backend == "python_dumbo":
         acs_config_payload = {
             "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
             "pool_grace_ms": pool_grace_ms,
         }
-    elif acs_protocol == "hb":
+    elif acs_backend == "python_hb":
         acs_config_payload = {
             "hb_broadcast_protocol": hb_broadcast_protocol,
         }
     config_payload = dict(acs_config_payload or {})
-    config_payload["acs_host_backend"] = "python"
+    config_payload["acs_backend"] = "python_dumbo"
     config_payload["broadcast_mempool_backend"] = broadcast_mempool_backend
     config_payload["pool_mempool_max"] = pool_mempool_max
     return _benchmark_rust_driver_nodes(
@@ -952,7 +959,7 @@ def benchmark_local_honeybadger_nodes_rust_driven(
         batch_size=batch_size,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        acs_protocol=acs_protocol,
+        acs_backend=acs_backend,
         config_payload=_inject_runtime_faults(config_payload, network_faults, byzantine_nodes),
     )
 
@@ -999,10 +1006,10 @@ def benchmark_local_dumbo_nodes_rust_driven(
         batch_size=batch_size,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        acs_protocol="dumbo",
+        acs_backend="python_dumbo",
         config_payload=_inject_runtime_faults(
             {
-                "acs_host_backend": "python",
+                "acs_backend": "python_dumbo",
                 "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
                 "enable_pool_reference_proposals": enable_pool_reference_proposals,
                 "enable_pool_fetch_fallback": enable_pool_fetch_fallback,
@@ -1021,7 +1028,7 @@ def run_local_honeybadger_rust_driven(
     batch_size: int = 1,
     max_rounds: int = 1,
     global_timeout: float = 30.0,
-    acs_protocol: AcsRuntimeProtocol = "hb",
+    acs_backend: AcsRuntimeBackend = "python_hb",
     hb_broadcast_protocol: str = "rbc",
     enable_broadcast_pool_reuse: bool = False,
     pool_grace_ms: int = 200,
@@ -1031,17 +1038,17 @@ def run_local_honeybadger_rust_driven(
     byzantine_nodes: list[dict[str, Any]] | None = None,
 ) -> RustDrivenHoneyBadgerRunResult:
     acs_config_payload: dict[str, Any] | None = None
-    if acs_protocol == "dumbo":
+    if acs_backend == "python_dumbo":
         acs_config_payload = {
             "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
             "pool_grace_ms": pool_grace_ms,
         }
-    elif acs_protocol == "hb":
+    elif acs_backend == "python_hb":
         acs_config_payload = {
             "hb_broadcast_protocol": hb_broadcast_protocol,
         }
     config_payload = dict(acs_config_payload or {})
-    config_payload["acs_host_backend"] = "python"
+    config_payload["acs_backend"] = "python_dumbo"
     config_payload["broadcast_mempool_backend"] = broadcast_mempool_backend
     config_payload["pool_mempool_max"] = pool_mempool_max
     return _run_rust_driven_honeybadger(
@@ -1051,7 +1058,7 @@ def run_local_honeybadger_rust_driven(
         batch_size=batch_size,
         max_rounds=max_rounds,
         global_timeout=global_timeout,
-        acs_protocol=acs_protocol,
+        acs_backend=acs_backend,
         acs_config_payload=_inject_runtime_faults(config_payload, network_faults, byzantine_nodes),
     )
 
@@ -1077,7 +1084,7 @@ def run_local_dumbo_rust_driven(
         global_timeout=global_timeout,
         config_payload=_inject_runtime_faults(
             {
-                "acs_host_backend": "python",
+                "acs_backend": "python_dumbo",
                 "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
                 "pool_grace_ms": pool_grace_ms,
             },
@@ -1119,7 +1126,7 @@ def run_local_dumbo_new_driver(
             Each inner list must contain at least ``batch_size * max_rounds`` entries.
     """
     config_payload: dict[str, Any] = {
-        "acs_host_backend": "python",
+        "acs_backend": "python_dumbo",
         "enable_broadcast_pool_reuse": enable_broadcast_pool_reuse,
         "enable_pool_reference_proposals": enable_pool_reference_proposals,
         "enable_pool_fetch_fallback": enable_pool_fetch_fallback,

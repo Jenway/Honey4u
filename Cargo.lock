@@ -631,6 +631,7 @@ dependencies = [
 name = "honey-bench"
 version = "0.1.0"
 dependencies = [
+ "honey-acs",
  "honey-node",
  "honey-wire",
  "serde",
@@ -674,6 +675,7 @@ dependencies = [
  "hex",
  "honey-acs",
  "honey-crypto",
+ "honey-transport",
  "honey-wire",
  "k256",
  "metrics",
@@ -686,6 +688,13 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "honey-transport"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use crate::driver_node::args::NodeRuntimeArgs;
+use crate::driver::args::NodeRuntimeArgs;
 use clap::Parser;
 
 pub(crate) fn parse_args() -> NodeRuntimeArgs {

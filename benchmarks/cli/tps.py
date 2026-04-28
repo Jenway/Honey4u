@@ -17,6 +17,7 @@ from benchmarks.support.runners import (
     benchmark_local_dumbo_nodes_rust_driven,
     benchmark_local_honeybadger_nodes_rust_driven,
 )
+from benchmarks.plotting.svg import build_svg_line_chart, format_number
 
 
 @dataclass(frozen=True)
@@ -142,7 +143,7 @@ class BenchmarkSummary:
     measured_fetch: FetchStats = field(default_factory=FetchStats)
     byzantine: ByzantineStats = field(default_factory=ByzantineStats)
     node_runtime: str = "rust-driver"
-    acs_protocol: str = "hb"
+    acs_backend: str = "python_hb"
     all_nodes_agree: bool = True
     consensus_chain_digest: str | None = None
     diverged_pids: tuple[int, ...] = ()
@@ -226,11 +227,9 @@ def _parse_args() -> argparse.Namespace:
         help="node runtime mode: Rust driver over multi-process local TCP",
     )
     parser.add_argument(
-        "--acs-protocol",
+        "--acs-backend",
         type=str,
-        choices=("hb", "dumbo"),
-        default="hb",
-        help="ACS provider for HoneyBadger rust-driver mode",
+        choices=("python_hb", "python_dumbo"), default="python_hb", help="ACS backend for HoneyBadger rust-driver mode",
     )
     parser.add_argument(
         "--round-timeout", type=float, default=20.0, help="per-round timeout seconds"
@@ -644,8 +643,8 @@ def _build_benchmark_kwargs(
         )
     else:
         kwargs["rust_tx_pool_max_bytes"] = args.rust_tx_pool_max_bytes
-        kwargs["acs_protocol"] = args.acs_protocol
-        if args.acs_protocol == "dumbo":
+        kwargs["acs_backend"] = args.acs_backend
+        if args.acs_backend == "python_dumbo":
             kwargs["enable_broadcast_pool_reuse"] = args.enable_pool_reuse
             kwargs["pool_grace_ms"] = args.pool_grace_ms
     return kwargs
@@ -764,7 +763,7 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
         tx_input=args.tx_input,
         transport_backend=args.transport_backend,
         node_runtime=args.node_runtime,
-        acs_protocol=("dumbo" if args.protocol == "dumbo" else args.acs_protocol),
+        acs_backend=("python_dumbo" if args.protocol == "dumbo" else args.acs_backend),
         max_rounds=args.rounds,
         warmup_rounds=warmup_rounds,
         transactions_per_node=transactions_per_node,
@@ -850,115 +849,6 @@ def _build_summary(args: argparse.Namespace, *, batch_size: int) -> BenchmarkSum
     )
 
 
-def _format_number(value: float) -> str:
-    if abs(value) >= 1000:
-        return f"{value:,.0f}"
-    if value >= 100:
-        return f"{value:.0f}"
-    if value >= 10:
-        return f"{value:.1f}"
-    return f"{value:.2f}"
-
-
-def _build_svg_line_chart(
-    *,
-    title: str,
-    subtitle: str,
-    x_labels: list[str],
-    panels: list[dict[str, Any]],
-    width: int = 1280,
-    height: int = 980,
-) -> str:
-    left = 90
-    right = width - 40
-    top = 90
-    panel_gap = 30
-    panel_height = 180
-    plot_width = right - left
-    chart_height = len(panels) * panel_height + (len(panels) - 1) * panel_gap
-    bottom = top + chart_height
-
-    def x_positions() -> list[float]:
-        if len(x_labels) == 1:
-            return [left + plot_width / 2]
-        step = plot_width / (len(x_labels) - 1)
-        return [left + idx * step for idx in range(len(x_labels))]
-
-    xs = x_positions()
-    lines: list[str] = [
-        f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' viewBox='0 0 {width} {height}'>",
-        f"<rect width='{width}' height='{height}' fill='#f7f4ea'/>",
-        f"<text x='{left}' y='42' font-size='28' font-family='Segoe UI, Arial, sans-serif' fill='#1f2937' font-weight='700'>{title}</text>",
-        f"<text x='{left}' y='68' font-size='14' font-family='Segoe UI, Arial, sans-serif' fill='#6b7280'>{subtitle}</text>",
-    ]
-
-    for panel_idx, panel in enumerate(panels):
-        y0 = top + panel_idx * (panel_height + panel_gap)
-        y1 = y0 + panel_height
-        values = [float(value) for value in panel["values"]]
-        ymin = float(panel.get("ymin", min(values) if values else 0.0))
-        ymax = float(panel.get("ymax", max(values) if values else 1.0))
-        if ymax <= ymin:
-            ymax = ymin + 1.0
-
-        lines.append(
-            f"<text x='{left}' y='{y0 - 12}' font-size='18' font-family='Segoe UI, Arial, sans-serif' fill='#1f2937' font-weight='600'>{panel['label']}</text>"
-        )
-        lines.append(
-            f"<rect x='{left}' y='{y0}' width='{plot_width}' height='{panel_height}' fill='white' stroke='#d6d3d1'/>"
-        )
-
-        for tick in range(6):
-            ratio = tick / 5
-            y = y1 - ratio * panel_height
-            tick_value = ymin + ratio * (ymax - ymin)
-            lines.append(
-                f"<line x1='{left}' y1='{y:.1f}' x2='{right}' y2='{y:.1f}' stroke='#d6d3d1' stroke-dasharray='4 4'/>"
-            )
-            lines.append(
-                f"<text x='{left - 12}' y='{y + 5:.1f}' text-anchor='end' font-size='12' font-family='Segoe UI, Arial, sans-serif' fill='#6b7280'>{_format_number(tick_value)}</text>"
-            )
-
-        for x, label in zip(xs, x_labels, strict=True):
-            lines.append(
-                f"<line x1='{x:.1f}' y1='{y0}' x2='{x:.1f}' y2='{y1}' stroke='#e7e5e4' stroke-dasharray='3 6'/>"
-            )
-            if panel_idx == len(panels) - 1:
-                lines.append(
-                    f"<text x='{x:.1f}' y='{bottom + 24}' text-anchor='middle' font-size='12' font-family='Segoe UI, Arial, sans-serif' fill='#6b7280'>{label}</text>"
-                )
-
-        def map_y(
-            value: float,
-            *,
-            _y1: float = y1,
-            _ymin: float = ymin,
-            _ymax: float = ymax,
-        ) -> float:
-            return _y1 - ((value - _ymin) / (_ymax - _ymin)) * panel_height
-
-        points = " ".join(
-            f"{x:.1f},{map_y(value):.1f}" for x, value in zip(xs, values, strict=True)
-        )
-        color = panel["color"]
-        lines.append(
-            f"<polyline points='{points}' fill='none' stroke='{color}' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/>"
-        )
-        for idx, (x, value) in enumerate(zip(xs, values, strict=True)):
-            y = map_y(value)
-            lines.append(f"<circle cx='{x:.1f}' cy='{y:.1f}' r='4.5' fill='{color}'/>")
-            if idx == len(values) - 1:
-                lines.append(
-                    f"<text x='{x + 8:.1f}' y='{y - 8:.1f}' font-size='12' font-family='Segoe UI, Arial, sans-serif' fill='#1f2937'>{_format_number(value)}</text>"
-                )
-
-    lines.append(
-        f"<text x='{left + plot_width / 2:.1f}' y='{bottom + 52}' text-anchor='middle' font-size='14' font-family='Segoe UI, Arial, sans-serif' fill='#1f2937'>Batch size per node per round</text>"
-    )
-    lines.append("</svg>")
-    return "\n".join(lines)
-
-
 def _build_sweep_payload(
     args: argparse.Namespace, summaries: list[BenchmarkSummary]
 ) -> dict[str, Any]:
@@ -977,7 +867,7 @@ def _build_sweep_payload(
             "tx_input": args.tx_input,
             "transport_backend": args.transport_backend,
             "node_runtime": args.node_runtime,
-            "acs_protocol": getattr(args, "acs_protocol", "hb"),
+            "acs_backend": getattr(args, "acs_backend", "python_hb"),
             "network_faults": _build_network_faults_config(args),
             "byzantine_nodes": _build_byzantine_nodes_config(args),
             "x_axis": "batch_size",
@@ -1097,7 +987,7 @@ def _run_sweep_mode(args: argparse.Namespace) -> dict[str, Any]:
         _write_text(args.output_json, json.dumps(payload, indent=2, sort_keys=True))
 
     if args.output_svg:
-        svg = _build_svg_line_chart(
+        svg = build_svg_line_chart(
             title="Local HoneyBadger sweep",
             subtitle=(
                 f"N={args.nodes}, f={payload['meta']['faulty']}, rounds={args.rounds}, warmup={args.warmup_rounds}, "

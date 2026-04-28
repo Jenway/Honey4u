@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+honey-acs = { path = "../../honey-acs" }
 honey-node = { path = "../../honey-node" }
 honey-wire = { path = "../../honey-wire" }
 serde = { version = "1.0", features = ["derive"] }

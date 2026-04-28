@@ -26,7 +26,7 @@ def test_local_honeybadger_outer_can_be_rust_driven_with_persistent_python_hosts
     )
 
     assert result.protocol == "hb"
-    assert result.acs_protocol == "hb"
+    assert result.acs_backend == "python_hb"
     assert len(result.nodes) == 4
     assert len(result.rounds) == 2
     assert len({node.worker_ident for node in result.nodes}) == 4
@@ -58,7 +58,7 @@ def test_local_honeybadger_outer_can_use_prbc_broadcast_mode() -> None:
     )
 
     assert result.protocol == "hb"
-    assert result.acs_protocol == "hb"
+    assert result.acs_backend == "python_hb"
     assert len(result.nodes) == 4
     assert len(result.rounds) == 1
     assert all(node.worker_error is None for node in result.nodes)
@@ -82,7 +82,7 @@ def test_local_honeybadger_outer_supports_non_python_broadcast_pools(
     )
 
     assert result.protocol == "hb"
-    assert result.acs_protocol == "hb"
+    assert result.acs_backend == "python_hb"
     assert len(result.nodes) == 4
     assert len(result.rounds) == 1
     assert all(node.worker_error is None for node in result.nodes)
@@ -98,11 +98,11 @@ def test_local_honeybadger_outer_can_be_rust_driven_with_dumbo_acs_provider() ->
         batch_size=1,
         max_rounds=1,
         global_timeout=10.0,
-        acs_protocol="dumbo",
+        acs_backend="python_dumbo",
     )
 
     assert result.protocol == "hb"
-    assert result.acs_protocol == "dumbo"
+    assert result.acs_backend == "python_dumbo"
     assert len(result.nodes) == 4
     assert len(result.rounds) == 1
     assert result.rounds[0].selected_count >= 3

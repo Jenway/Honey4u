@@ -196,7 +196,7 @@ def _args(*, protocol: str, node_runtime: str) -> argparse.Namespace:
     return argparse.Namespace(
         sid="bench:local:test",
         protocol=protocol,
-        acs_protocol="hb",
+        acs_backend="python_hb",
         nodes=4,
         faulty=1,
         batch_size=8,
@@ -251,7 +251,7 @@ def test_build_benchmark_kwargs_for_rust_driver_runtime_omits_node_runtime() -> 
     assert kwargs["global_timeout"] == 120.0
     assert "node_runtime" not in kwargs
     assert kwargs["rust_tx_pool_max_bytes"] == 4096
-    assert kwargs["acs_protocol"] == "hb"
+    assert kwargs["acs_backend"] == "python_hb"
 
 
 def test_build_benchmark_kwargs_includes_network_faults_when_configured() -> None:
@@ -314,7 +314,7 @@ def test_build_benchmark_kwargs_includes_byzantine_nodes_when_configured() -> No
 
 def test_build_benchmark_kwargs_for_rust_driver_with_dumbo_acs_includes_provider_config() -> None:
     args = _args(protocol="hb", node_runtime="rust-driver")
-    args.acs_protocol = "dumbo"
+    args.acs_backend = "python_dumbo"
 
     kwargs = _build_benchmark_kwargs(
         args,
@@ -324,7 +324,7 @@ def test_build_benchmark_kwargs_for_rust_driver_with_dumbo_acs_includes_provider
         transactions_per_node=24,
     )
 
-    assert kwargs["acs_protocol"] == "dumbo"
+    assert kwargs["acs_backend"] == "python_dumbo"
     assert kwargs["enable_broadcast_pool_reuse"] is True
     assert kwargs["pool_grace_ms"] == 250
 

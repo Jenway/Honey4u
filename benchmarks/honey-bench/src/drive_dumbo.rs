@@ -6,7 +6,7 @@ use super::*;
 /// connections. TPKE partial-decryption shares are exchanged directly between
 /// sibling subprocesses over real TCP using the `HbShareBundle` wire frame,
 /// matching the distributed `bench-driver` execution model.
-pub(crate) fn run_drive_dumbo_multiprocess(
+pub fn run_drive_dumbo_multiprocess(
     args: &BenchDumboArgs,
     node_binary: &Path,
 ) -> Result<String, String> {
@@ -23,11 +23,11 @@ pub(crate) fn run_drive_dumbo_multiprocess(
 
     debug_acs_driver("dumbo-mp:serialize_hb_crypto_payloads:start");
     let hb_crypto_payloads =
-        serialize_crypto_payloads(Protocol::HoneyBadger, args.nodes, args.faulty)?;
+        serialize_crypto_payloads(AcsBackendKind::PythonHb, args.nodes, args.faulty)?;
     debug_acs_driver("dumbo-mp:serialize_hb_crypto_payloads:done");
 
     debug_acs_driver("dumbo-mp:serialize_acs_crypto_payloads:start");
-    let acs_crypto_payloads = serialize_crypto_payloads(Protocol::Dumbo, args.nodes, args.faulty)?;
+    let acs_crypto_payloads = serialize_crypto_payloads(AcsBackendKind::PythonDumbo, args.nodes, args.faulty)?;
     debug_acs_driver("dumbo-mp:serialize_acs_crypto_payloads:done");
 
     let addresses = allocate_loopback_addresses(args.nodes)?;
@@ -55,8 +55,8 @@ pub(crate) fn run_drive_dumbo_multiprocess(
             .arg(pid.to_string())
             .arg("--sid")
             .arg(&args.sid)
-            .arg("--acs-protocol")
-            .arg("dumbo")
+            .arg("--acs-backend")
+            .arg("python_dumbo")
             .arg("--nodes")
             .arg(args.nodes.to_string())
             .arg("--faulty")

@@ -1,7 +1,7 @@
 # Rust-owned HoneyBadger outer driver with per-round protocol output.
 mode = "hb"
 sid = "bench:driver:hb"
-acs_protocol = "hb"
+acs_backend = "python_hb"
 nodes = 4
 faulty = 1
 rounds = 3
