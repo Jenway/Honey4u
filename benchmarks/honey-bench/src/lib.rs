@@ -109,6 +109,87 @@ struct SpawnedNode {
     stderr_path: PathBuf,
 }
 
+fn node_command(binary: &Path) -> Command {
+    let mut command = Command::new(binary);
+    configure_embedded_python_env(&mut command);
+    command
+}
+
+#[cfg(target_os = "windows")]
+fn configure_embedded_python_env(command: &mut Command) {
+    let Some(venv_root) = discover_venv_root() else {
+        return;
+    };
+    let python_home = python_home_from_venv(&venv_root);
+    if let Some(home) = python_home.as_ref() {
+        command.env("PYTHONHOME", home);
+    }
+
+    let mut python_paths = Vec::new();
+    if let Some(home) = python_home.as_ref() {
+        python_paths.push(home.join("Lib"));
+    }
+    let venv_site = venv_root.join("Lib").join("site-packages");
+    if venv_site.exists() {
+        python_paths.push(venv_site);
+    }
+    if let Ok(root) = std::env::current_dir() {
+        python_paths.push(
+            root.join("honey-acs")
+                .join("packages")
+                .join("honey-acs")
+                .join("src"),
+        );
+        python_paths.push(root.join("src"));
+        python_paths.push(root);
+    }
+    if let Some(existing) = std::env::var_os("PYTHONPATH") {
+        python_paths.extend(std::env::split_paths(&existing));
+    }
+    if let Ok(joined) = std::env::join_paths(python_paths) {
+        command.env("PYTHONPATH", joined);
+    }
+    command.env("VIRTUAL_ENV", venv_root);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_embedded_python_env(_command: &mut Command) {}
+
+#[cfg(target_os = "windows")]
+fn discover_venv_root() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("VIRTUAL_ENV") {
+        let root = PathBuf::from(path);
+        if root.join("pyvenv.cfg").exists() {
+            return Some(root);
+        }
+    }
+    if let Some(path) = std::env::var_os("PYO3_PYTHON") {
+        let path = PathBuf::from(path);
+        if let Some(root) = path.parent().and_then(|parent| parent.parent())
+            && root.join("pyvenv.cfg").exists()
+        {
+            return Some(root.to_path_buf());
+        }
+    }
+    let root = std::env::current_dir().ok()?.join(".venv");
+    root.join("pyvenv.cfg").exists().then_some(root)
+}
+
+#[cfg(target_os = "windows")]
+fn python_home_from_venv(venv_root: &Path) -> Option<PathBuf> {
+    let config = fs::read_to_string(venv_root.join("pyvenv.cfg")).ok()?;
+    for line in config.lines() {
+        let Some(home) = line.strip_prefix("home = ") else {
+            continue;
+        };
+        let home = PathBuf::from(home.trim());
+        if home.join("Lib").join("encodings").exists() {
+            return Some(home);
+        }
+    }
+    None
+}
+
 pub fn run_config_path(config_path: &Path, node_binary: &Path) -> Result<(), String> {
     let args = load_bench_driver_args(config_path)?;
     run_with_args(args, node_binary)
@@ -287,7 +368,7 @@ fn run_bench_rust_driver(args: BenchDriverArgs, node_binary: &Path) -> Result<()
         let stdout_handle = File::create(&stdout_path).map_err(|err| err.to_string())?;
         let stderr_handle = File::create(&stderr_path).map_err(|err| err.to_string())?;
 
-        let child = Command::new(node_binary)
+        let child = node_command(node_binary)
             .arg("--pid")
             .arg(pid.to_string())
             .arg("--sid")
@@ -363,7 +444,8 @@ fn run_bench_rust_driver(args: BenchDriverArgs, node_binary: &Path) -> Result<()
             }
         };
         if !status.success() {
-            let stderr = read_log_file(&process.stderr_path);
+            let stderr = read_node_failure_summary(&process.result_path)
+                .unwrap_or_else(|| read_log_file(&process.stderr_path));
             errors.push(format!(
                 "pid={}: returncode={}: {}",
                 process.pid,
@@ -393,10 +475,10 @@ fn run_bench_rust_driver(args: BenchDriverArgs, node_binary: &Path) -> Result<()
         ));
     }
     if !errors.is_empty() {
-        let _ = fs::remove_dir_all(&result_dir);
         return Err(format!(
-            "Rust-driver benchmark failed: {}",
-            errors.join("; ")
+            "Rust-driver benchmark failed ({}): {}",
+            failed_result_dir_hint(&result_dir),
+            errors.join("; "),
         ));
     }
 
@@ -474,6 +556,47 @@ fn current_time_millis() -> Result<u64, String> {
 
 fn read_log_file(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|_| String::from("unable to read worker stderr"))
+}
+
+fn read_node_failure_summary(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let parsed = serde_json::from_str::<Value>(&content).ok()?;
+    if parsed.get("status").and_then(Value::as_str) != Some("error") {
+        return None;
+    }
+
+    let error = parsed.get("error")?.as_object()?;
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("node failed");
+    let kind = error
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let stage = error.get("stage").and_then(Value::as_str);
+    let round_id = error.get("round_id").and_then(Value::as_u64);
+    let host_stats_error = parsed.get("host_stats_error").and_then(Value::as_str);
+    let shutdown_error = parsed.get("shutdown_error").and_then(Value::as_str);
+
+    let mut summary = format!("failure_json kind={kind}: {message}");
+    if let Some(round_id) = round_id {
+        summary.push_str(&format!(" [round={round_id}]"));
+    }
+    if let Some(stage) = stage {
+        summary.push_str(&format!(" [stage={stage}]"));
+    }
+    if let Some(host_stats_error) = host_stats_error {
+        summary.push_str(&format!(" [host_stats_error={host_stats_error}]"));
+    }
+    if let Some(shutdown_error) = shutdown_error {
+        summary.push_str(&format!(" [shutdown_error={shutdown_error}]"));
+    }
+    Some(summary)
+}
+
+fn failed_result_dir_hint(result_dir: &Path) -> String {
+    format!("artifacts kept at {}", result_dir.display())
 }
 
 fn write_output(result_path: Option<&str>, rendered: &str) -> Result<(), String> {

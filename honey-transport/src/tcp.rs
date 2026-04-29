@@ -1,13 +1,13 @@
 use crate::handle::{NetworkFaultConfig, TransportHandle, TransportStats};
 use crate::wakeup::WakeupCounter;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, unbounded};
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type ConnectionMap = Arc<Mutex<HashMap<usize, TcpStream>>>;
 
@@ -46,6 +46,36 @@ struct SenderLoopCtx {
     injected_delay_ms_total: Arc<AtomicU64>,
     network_faults: NetworkFaultConfig,
     rng_seed: u64,
+}
+
+struct ScheduledOutbound {
+    ready_at: Instant,
+    sequence: u64,
+    recipient: usize,
+    payload: Vec<u8>,
+}
+
+impl PartialEq for ScheduledOutbound {
+    fn eq(&self, other: &Self) -> bool {
+        self.ready_at == other.ready_at && self.sequence == other.sequence
+    }
+}
+
+impl Eq for ScheduledOutbound {}
+
+impl PartialOrd for ScheduledOutbound {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScheduledOutbound {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other
+            .ready_at
+            .cmp(&self.ready_at)
+            .then_with(|| other.sequence.cmp(&self.sequence))
+    }
 }
 
 fn send_frame(stream: &mut TcpStream, payload: &[u8]) -> io::Result<()> {
@@ -156,53 +186,94 @@ fn close_connections(connections: &ConnectionMap) {
 
 fn sender_loop(ctx: SenderLoopCtx) {
     let mut rng = DelayRng::new(ctx.rng_seed);
-    while !ctx.stop.load(Ordering::Relaxed) {
-        let (recipient, payload) = match ctx.outbound_rx.recv_timeout(Duration::from_millis(100)) {
+    let mut pending = BinaryHeap::new();
+    let mut sequence = 0u64;
+    loop {
+        while let Ok((recipient, payload)) = ctx.outbound_rx.try_recv() {
+            ctx.outbound_len.fetch_sub(1, Ordering::Relaxed);
+            let injected_delay_ms = compute_injected_delay_ms(ctx.network_faults, &mut rng);
+            if injected_delay_ms > 0 {
+                ctx.delayed_frames.fetch_add(1, Ordering::Relaxed);
+                ctx.injected_delay_ms_total
+                    .fetch_add(injected_delay_ms, Ordering::Relaxed);
+            }
+            pending.push(ScheduledOutbound {
+                ready_at: Instant::now() + Duration::from_millis(injected_delay_ms),
+                sequence,
+                recipient,
+                payload,
+            });
+            sequence = sequence.wrapping_add(1);
+        }
+
+        while pending
+            .peek()
+            .is_some_and(|item| item.ready_at <= Instant::now())
+        {
+            let ScheduledOutbound {
+                recipient, payload, ..
+            } = pending.pop().expect("pending heap peeked as non-empty");
+            let mut failures = 0usize;
+            while !ctx.stop.load(Ordering::Relaxed) {
+                let mut stream = match get_connection(recipient, &ctx.addresses, &ctx.connections) {
+                    Ok(stream) => stream,
+                    Err(_) => {
+                        failures += 1;
+                        ctx.connect_retries.fetch_add(1, Ordering::Relaxed);
+                        if failures >= 1000 {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                };
+
+                match send_frame(&mut stream, &payload) {
+                    Ok(()) => {
+                        ctx.sent_frames.fetch_add(1, Ordering::Relaxed);
+                        break;
+                    }
+                    Err(_) => {
+                        failures += 1;
+                        ctx.send_retries.fetch_add(1, Ordering::Relaxed);
+                        drop_connection(recipient, &ctx.connections);
+                        if failures >= 1000 {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+        }
+
+        if ctx.stop.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let wait = pending
+            .peek()
+            .map(|item| item.ready_at.saturating_duration_since(Instant::now()))
+            .unwrap_or(Duration::from_millis(100))
+            .min(Duration::from_millis(100));
+        let (recipient, payload) = match ctx.outbound_rx.recv_timeout(wait) {
             Ok(item) => item,
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         };
         ctx.outbound_len.fetch_sub(1, Ordering::Relaxed);
-
         let injected_delay_ms = compute_injected_delay_ms(ctx.network_faults, &mut rng);
         if injected_delay_ms > 0 {
             ctx.delayed_frames.fetch_add(1, Ordering::Relaxed);
             ctx.injected_delay_ms_total
                 .fetch_add(injected_delay_ms, Ordering::Relaxed);
-            thread::sleep(Duration::from_millis(injected_delay_ms));
         }
-
-        let mut failures = 0usize;
-        while !ctx.stop.load(Ordering::Relaxed) {
-            let mut stream = match get_connection(recipient, &ctx.addresses, &ctx.connections) {
-                Ok(stream) => stream,
-                Err(_) => {
-                    failures += 1;
-                    ctx.connect_retries.fetch_add(1, Ordering::Relaxed);
-                    if failures >= 1000 {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                    continue;
-                }
-            };
-
-            match send_frame(&mut stream, &payload) {
-                Ok(()) => {
-                    ctx.sent_frames.fetch_add(1, Ordering::Relaxed);
-                    break;
-                }
-                Err(_) => {
-                    failures += 1;
-                    ctx.send_retries.fetch_add(1, Ordering::Relaxed);
-                    drop_connection(recipient, &ctx.connections);
-                    if failures >= 1000 {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-            }
-        }
+        pending.push(ScheduledOutbound {
+            ready_at: Instant::now() + Duration::from_millis(injected_delay_ms),
+            sequence,
+            recipient,
+            payload,
+        });
+        sequence = sequence.wrapping_add(1);
     }
 }
 
@@ -508,7 +579,10 @@ impl TransportHandle for LocalTcpTransport {
 
 #[cfg(test)]
 mod tests {
-    use super::{DelayRng, NetworkFaultConfig, compute_injected_delay_ms};
+    use super::{DelayRng, LocalTcpTransport, NetworkFaultConfig, compute_injected_delay_ms};
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn network_fault_delay_combines_fixed_slow_and_jitter() {
@@ -540,5 +614,66 @@ mod tests {
         let delay = compute_injected_delay_ms(config, &mut rng);
 
         assert_eq!(delay, 0);
+    }
+
+    #[test]
+    fn slow_honest_delay_does_not_serially_throttle_burst() {
+        let reserved = (0..2)
+            .map(|_| TcpListener::bind("127.0.0.1:0").expect("should reserve loopback port"))
+            .collect::<Vec<_>>();
+        let addresses = reserved
+            .iter()
+            .map(|listener| {
+                let addr = listener
+                    .local_addr()
+                    .expect("listener should expose local addr");
+                (String::from("127.0.0.1"), addr.port())
+            })
+            .collect::<Vec<_>>();
+        drop(reserved);
+
+        let sender = LocalTcpTransport::new(
+            0,
+            addresses.clone(),
+            NetworkFaultConfig {
+                enabled: true,
+                seed: 7,
+                fixed_delay_ms: 0,
+                jitter_ms: 0,
+                slow_honest_extra_delay_ms: 20,
+            },
+        )
+        .expect("sender transport should bind");
+        let receiver = LocalTcpTransport::new(1, addresses, NetworkFaultConfig::default())
+            .expect("receiver transport should bind");
+
+        let payload = b"burst-frame";
+        for _ in 0..8 {
+            sender
+                .send(1, payload)
+                .expect("burst frame should enqueue successfully");
+        }
+
+        let start = Instant::now();
+        let deadline = start + Duration::from_millis(300);
+        let mut received = 0usize;
+        while Instant::now() < deadline && received < 8 {
+            received += receiver
+                .recv_batch(8 - received)
+                .expect("receiver should stay connected")
+                .len();
+            if received < 8 {
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+
+        assert_eq!(received, 8, "receiver should collect the full burst");
+        assert!(
+            start.elapsed() < Duration::from_millis(120),
+            "burst delay should not accumulate per-frame sleep"
+        );
+
+        sender.close().expect("sender should close cleanly");
+        receiver.close().expect("receiver should close cleanly");
     }
 }

@@ -178,6 +178,7 @@ async def dumbo_acs(
     on_prbc_output: Callable[[PrbcOutcome], None] | None = None,
     carryover_queue: asyncio.Queue[tuple[PrbcOutcome, ...]] | None = None,
     output_mode: Literal["selected_pids", "payloads"] = "selected_pids",
+    keep_alive_after_decision: bool = False,
 ) -> None:
     logger = logging.LoggerAdapter(logging.getLogger("honey.dumbo_acs"), extra={"node": params.pid})
     proof_validity_cache: dict[PrbcProofValidationKey, bool] = {}
@@ -332,6 +333,9 @@ async def dumbo_acs(
             "DumboACS decided",
             extra={"selected": sum(item is not None for item in decision)},
         )
+
+        if keep_alive_after_decision:
+            await asyncio.Event().wait()
 
         await mvba_task
 

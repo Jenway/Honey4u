@@ -5,6 +5,7 @@ name = "dumbo_py_vs_rustdumbo"
 rounds = 3
 repeats = 1
 global_timeout = 90.0
+transport = "quic"
 pool_grace_ms = 100
 pool_reuse_limit_per_round = 4
 pool_expire_rounds = 5

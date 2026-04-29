@@ -1,5 +1,17 @@
 use super::*;
 
+fn transport_label(config_json: &str) -> &'static str {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(config_json)
+        && let Some(transport) = value.get("transport").and_then(|v| v.as_str())
+    {
+        return match transport {
+            "quic" => "quic-loopback-mp",
+            _ => "tcp-loopback-mp",
+        };
+    }
+    "tcp-loopback-mp"
+}
+
 /// Drive Dumbo BFT by spawning N independent `honey-node` OS subprocesses.
 ///
 /// Each subprocess manages its own Python ACS host, TPKE key share, and TCP
@@ -51,7 +63,7 @@ pub fn run_drive_dumbo_multiprocess(
         let stderr_hdl = File::create(&stderr_path)
             .map_err(|e| format!("bench-driver:dumbo pid={pid}: stderr log: {e}"))?;
 
-        let child = Command::new(binary)
+        let child = node_command(binary)
             .arg("--pid")
             .arg(pid.to_string())
             .arg("--sid")
@@ -127,7 +139,8 @@ pub fn run_drive_dumbo_multiprocess(
             }
         };
         if !status.success() {
-            let stderr = read_log_file(&process.stderr_path);
+            let stderr = read_node_failure_summary(&process.result_path)
+                .unwrap_or_else(|| read_log_file(&process.stderr_path));
             errors.push(format!(
                 "pid={}: rc={}: {}",
                 process.pid,
@@ -159,8 +172,11 @@ pub fn run_drive_dumbo_multiprocess(
         ));
     }
     if !errors.is_empty() {
-        let _ = fs::remove_dir_all(&result_dir);
-        return Err(format!("bench-driver:dumbo failed: {}", errors.join("; ")));
+        return Err(format!(
+            "bench-driver:dumbo failed ({}): {}",
+            failed_result_dir_hint(&result_dir),
+            errors.join("; "),
+        ));
     }
 
     let node_jsons: Vec<Value> = node_jsons
@@ -186,9 +202,9 @@ pub fn run_drive_dumbo_multiprocess(
             .and_then(Value::as_str)
             .unwrap_or("");
         if node_chain != canonical_chain {
-            let _ = fs::remove_dir_all(&result_dir);
             return Err(format!(
-                "bench-driver:dumbo: chain_digest diverged: node0={canonical_chain} vs node_other={node_chain}"
+                "bench-driver:dumbo: chain_digest diverged: node0={canonical_chain} vs node_other={node_chain} ({})",
+                failed_result_dir_hint(&result_dir),
             ));
         }
     }
@@ -388,7 +404,7 @@ pub fn run_drive_dumbo_multiprocess(
         "faulty": args.faulty,
         "enable_pool_reuse": enable_pool_reuse,
         "has_tpke": true,
-        "transport": "tcp-loopback-mp",
+        "transport": transport_label(&args.config_json),
         "chain_digest": canonical_chain,
         "nodes": nodes_out,
         "rounds": rounds,

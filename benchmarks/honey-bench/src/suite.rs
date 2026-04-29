@@ -19,12 +19,14 @@ use std::time::{Instant, SystemTime};
 // ---------------------------------------------------------------------------
 
 const SUPPORTED_BACKENDS: &[&str] = &["python_dumbo", "rust_fin", "rust_dumbo"];
+const SUPPORTED_TRANSPORTS: &[&str] = &["tcp", "quic"];
 
 /// Ordered list of keys that may appear as expansion dimensions in [[experiments]].
 /// `byzantine_nodes` is intentionally absent — it is a fixed attribute of the
 /// experiment (not a sweep dimension) and is extracted separately.
 const DIMENSION_KEYS: &[&str] = &[
     "backend",
+    "transport",
     "reuse_enabled",
     "nodes",
     "faulty",
@@ -55,6 +57,13 @@ pub struct SuiteRunOpts {
     pub max_runs: Option<usize>,
     /// Output directory (None = auto-timestamped).
     pub output_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct FailedCase {
+    experiment: String,
+    label: String,
+    error: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +149,7 @@ struct ByzantineNodeCase {
 #[derive(Debug, Clone)]
 struct ExperimentCase {
     backend: String,
+    transport: String,
     reuse_enabled: bool,
     nodes: usize,
     faulty: usize,
@@ -175,6 +185,7 @@ struct RunRecord {
     // Group key fields
     experiment: String,
     backend: String,
+    transport: String,
     reuse_mode: String,
     reuse_enabled: bool,
     nodes: usize,
@@ -252,6 +263,7 @@ struct RunRecord {
 struct AggKey {
     experiment: String,
     backend: String,
+    transport: String,
     reuse_mode: String,
     nodes: usize,
     faulty: usize,
@@ -273,6 +285,7 @@ impl AggKey {
         Self {
             experiment: r.experiment.clone(),
             backend: r.backend.clone(),
+            transport: r.transport.clone(),
             reuse_mode: r.reuse_mode.clone(),
             nodes: r.nodes,
             faulty: r.faulty,
@@ -699,6 +712,15 @@ fn expand_experiment(
         if !SUPPORTED_BACKENDS.contains(&backend.as_str()) {
             return Err(format!("{ctx} unsupported backend: {backend:?}"));
         }
+        let transport = map
+            .get("transport")
+            .map(|v| toml_as_str(v, &format!("{ctx} transport")))
+            .transpose()?
+            .unwrap_or("quic")
+            .to_owned();
+        if !SUPPORTED_TRANSPORTS.contains(&transport.as_str()) {
+            return Err(format!("{ctx} unsupported transport: {transport:?}"));
+        }
 
         let nodes = toml_as_usize(map["nodes"], &format!("{ctx} nodes"), 1)?;
         let faulty = map
@@ -761,6 +783,7 @@ fn expand_experiment(
 
         cases.push(ExperimentCase {
             backend,
+            transport,
             reuse_enabled,
             nodes,
             faulty,
@@ -780,6 +803,7 @@ fn expand_experiment(
         });
 
         let _ = map.remove("faulty");
+        let _ = map.remove("transport");
         let _ = map.remove("reuse_enabled");
         let _ = map.remove("pool_grace_ms");
         let _ = map.remove("pool_reuse_limit_per_round");
@@ -816,6 +840,7 @@ fn build_config_json(case: &ExperimentCase) -> String {
     }
     serde_json::to_string(&json!({
         "acs_backend": case.backend,
+        "transport": case.transport,
         "enable_broadcast_pool_reuse": case.reuse_enabled,
         "enable_pool_reference_proposals": case.enable_pool_reference_proposals,
         "enable_pool_fetch_fallback": case.enable_pool_fetch_fallback,
@@ -832,8 +857,9 @@ fn build_config_json(case: &ExperimentCase) -> String {
 fn case_label(case: &ExperimentCase, repeat_index: usize) -> String {
     let reuse = reuse_mode_label(case.reuse_enabled).replace('_', "-");
     format!(
-        "{}-{}-n{}-b{}-r{}-g{}-l{}-e{}-m{}-nf{}-rep{}",
+        "{}-{}-{}-n{}-b{}-r{}-g{}-l{}-e{}-m{}-nf{}-rep{}",
         case.backend,
+        case.transport,
         reuse,
         case.nodes,
         case.batch_size,
@@ -849,9 +875,10 @@ fn case_label(case: &ExperimentCase, repeat_index: usize) -> String {
 
 fn case_sid(experiment_name: &str, case: &ExperimentCase, repeat_index: usize) -> String {
     format!(
-        "bench:dumbo:paper:{}:{}:{}:n{}:b{}:nf{}:rep{}",
+        "bench:dumbo:paper:{}:{}:{}:{}:n{}:b{}:nf{}:rep{}",
         experiment_name,
         case.backend,
+        case.transport,
         reuse_mode_label(case.reuse_enabled),
         case.nodes,
         case.batch_size,
@@ -888,6 +915,7 @@ global_timeout = {global_timeout}
 
 [config]
 acs_backend = "{backend}"
+transport = "{transport}"
 enable_broadcast_pool_reuse = {reuse_enabled}
 enable_pool_reference_proposals = {enable_pool_reference_proposals}
 enable_pool_fetch_fallback = {enable_pool_fetch_fallback}
@@ -904,6 +932,7 @@ byzantine_nodes = {byz_json}
         batch_size = case.batch_size,
         global_timeout = case.global_timeout,
         backend = case.backend,
+        transport = case.transport,
         reuse_enabled = case.reuse_enabled,
         enable_pool_reference_proposals = case.enable_pool_reference_proposals,
         enable_pool_fetch_fallback = case.enable_pool_fetch_fallback,
@@ -1075,6 +1104,7 @@ fn extract_run_record(
     RunRecord {
         experiment: experiment.to_owned(),
         backend: case.backend.clone(),
+        transport: case.transport.clone(),
         reuse_mode: reuse_mode_label(case.reuse_enabled).to_owned(),
         reuse_enabled: case.reuse_enabled,
         nodes: case.nodes,
@@ -1291,13 +1321,14 @@ fn aggregate_records(records: &[RunRecord]) -> Vec<Summary> {
         })
         .collect();
 
-    // Sort deterministically: experiment, backend, reuse_mode, nodes, batch_size, ...
+    // Sort deterministically: experiment, backend, transport, reuse_mode, nodes, batch_size, ...
     summaries.sort_by(|a, b| {
         let ka = &a.key;
         let kb = &b.key;
         ka.experiment
             .cmp(&kb.experiment)
             .then(ka.backend.cmp(&kb.backend))
+            .then(ka.transport.cmp(&kb.transport))
             .then(ka.reuse_mode.cmp(&kb.reuse_mode))
             .then(ka.nodes.cmp(&kb.nodes))
             .then(ka.batch_size.cmp(&kb.batch_size))
@@ -1332,9 +1363,10 @@ fn build_reuse_deltas(summaries: &[Summary]) -> Vec<Value> {
     for key in &common_keys {
         // Build the dedup fingerprint without reuse_mode
         let fingerprint = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             key.experiment,
             key.backend,
+            key.transport,
             key.nodes,
             key.faulty,
             key.batch_size,
@@ -1370,6 +1402,7 @@ fn build_reuse_deltas(summaries: &[Summary]) -> Vec<Value> {
         deltas.push(json!({
             "experiment": key.experiment,
             "backend": key.backend,
+            "transport": key.transport,
             "nodes": key.nodes,
             "faulty": key.faulty,
             "batch_size": key.batch_size,
@@ -1413,9 +1446,10 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
 
     for s in summaries {
         let fingerprint = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             s.key.experiment,
             s.key.reuse_mode,
+            s.key.transport,
             s.key.nodes,
             s.key.faulty,
             s.key.batch_size,
@@ -1451,6 +1485,7 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
             deltas.push(json!({
                 "experiment": s.key.experiment,
                 "reuse_mode": s.key.reuse_mode,
+                "transport": s.key.transport,
                 "nodes": s.key.nodes,
                 "faulty": s.key.faulty,
                 "batch_size": s.key.batch_size,
@@ -1482,6 +1517,7 @@ fn summary_to_json(s: &Summary) -> Value {
     json!({
         "experiment": s.key.experiment,
         "backend": s.key.backend,
+        "transport": s.key.transport,
         "reuse_mode": s.key.reuse_mode,
         "nodes": s.key.nodes,
         "faulty": s.key.faulty,
@@ -1573,6 +1609,7 @@ fn record_to_json(r: &RunRecord, raw_result: &Value) -> Value {
     json!({
         "experiment": r.experiment,
         "backend": r.backend,
+        "transport": r.transport,
         "reuse_mode": r.reuse_mode,
         "reuse_enabled": r.reuse_enabled,
         "nodes": r.nodes,
@@ -1754,6 +1791,7 @@ fn build_manifest(
     total_runs: usize,
     runs_executed: usize,
     runs_failed: usize,
+    failed_cases: &[FailedCase],
 ) -> Value {
     let created_at = SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1784,6 +1822,13 @@ fn build_manifest(
         "planned_runs": total_runs,
         "executed_runs": runs_executed,
         "runs_failed": runs_failed,
+        "failed_cases": failed_cases.iter().map(|case| {
+            json!({
+                "experiment": case.experiment,
+                "label": case.label,
+                "error": case.error,
+            })
+        }).collect::<Vec<_>>(),
         "git": {
             "commit": run_git(&["rev-parse", "HEAD"]),
             "branch": run_git(&["rev-parse", "--abbrev-ref", "HEAD"]),
@@ -1878,7 +1923,7 @@ pub fn run_suite(suite_path: &Path, node_binary: &Path, opts: SuiteRunOpts) -> R
     let mut all_records: Vec<RunRecord> = Vec::new();
     let mut all_raw_results: Vec<Value> = Vec::new(); // parallel to all_records
     let mut runs_executed = 0usize;
-    let mut failed_cases: Vec<String> = Vec::new();
+    let mut failed_cases: Vec<FailedCase> = Vec::new();
 
     for (meta, cases) in &selected {
         let exp_dir = output_dir.join(&meta.name);
@@ -1927,7 +1972,11 @@ pub fn run_suite(suite_path: &Path, node_binary: &Path, opts: SuiteRunOpts) -> R
                     Ok(s) => s,
                     Err(e) => {
                         eprintln!("[suite] experiment={} label={label} FAILED: {e}", meta.name);
-                        failed_cases.push(label.clone());
+                        failed_cases.push(FailedCase {
+                            experiment: meta.name.clone(),
+                            label: label.clone(),
+                            error: e,
+                        });
                         continue;
                     }
                 };
@@ -1935,11 +1984,16 @@ pub fn run_suite(suite_path: &Path, node_binary: &Path, opts: SuiteRunOpts) -> R
                 let result_val: Value = match serde_json::from_str(&result_json_str) {
                     Ok(v) => v,
                     Err(e) => {
+                        let error = format!("json parse: {e}");
                         eprintln!(
-                            "[suite] experiment={} label={label} FAILED (json parse): {e}",
+                            "[suite] experiment={} label={label} FAILED ({error})",
                             meta.name
                         );
-                        failed_cases.push(label.clone());
+                        failed_cases.push(FailedCase {
+                            experiment: meta.name.clone(),
+                            label: label.clone(),
+                            error,
+                        });
                         continue;
                     }
                 };
@@ -2001,6 +2055,7 @@ pub fn run_suite(suite_path: &Path, node_binary: &Path, opts: SuiteRunOpts) -> R
         total_runs,
         runs_executed,
         failed_cases.len(),
+        &failed_cases,
     );
     fs::write(
         output_dir.join("manifest.json"),
@@ -2016,8 +2071,8 @@ pub fn run_suite(suite_path: &Path, node_binary: &Path, opts: SuiteRunOpts) -> R
     );
     if !failed_cases.is_empty() {
         eprintln!("[suite] failed cases ({}):", failed_cases.len());
-        for label in &failed_cases {
-            eprintln!("  - {label}");
+        for case in &failed_cases {
+            eprintln!("  - {}: {}", case.label, case.error);
         }
         return Err(format!(
             "{} case(s) failed; partial results written to {}",

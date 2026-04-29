@@ -1,4 +1,4 @@
-use super::acs_io::pump_acs_host;
+use super::acs_io::{AcsPumpState, pump_acs_host};
 use super::inbox::{RoundTransportInbox, drain_transport_into_round, update_queue_peaks};
 use super::metrics::RoundMetricsRecorder;
 use super::proposal::{
@@ -28,7 +28,42 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::thread;
 use std::time::{Duration, Instant};
 
+struct TimeoutStageSnapshot<'a> {
+    selected_proposal_ids: Option<&'a [String]>,
+    proposal_store: &'a ProposalStore,
+    selected_batches_ready: bool,
+    pending_fetch_count: usize,
+    inbound_acs_wire_count: usize,
+    pending_fetch_request_count: usize,
+    pending_fetch_response_count: usize,
+    pending_share_bundle_count: usize,
+    local_share_broadcasted: bool,
+    seen_share_sender_count: usize,
+}
+
 fn run_driver_round(
+    ctx: &DriverRoundCtx<'_>,
+    round_id: usize,
+    carryovers: &mut DriverCarryovers,
+    queue_peaks: &mut QueuePeaksSnapshot,
+    rust_broadcast_mempool: &mut Option<BroadcastMempool>,
+) -> DriverResult<DriverRoundOutcome> {
+    let result = run_driver_round_inner(
+        ctx,
+        round_id,
+        carryovers,
+        queue_peaks,
+        rust_broadcast_mempool,
+    );
+    ctx.transport.unregister_wakeup_waiter();
+    match ctx.host.finish_round(round_id) {
+        Ok(()) => result,
+        Err(message) if result.is_ok() => Err(DriverError::acs("finish_round", message)),
+        Err(_) => result,
+    }
+}
+
+fn run_driver_round_inner(
     ctx: &DriverRoundCtx<'_>,
     round_id: usize,
     carryovers: &mut DriverCarryovers,
@@ -148,14 +183,25 @@ fn run_driver_round(
             update_queue_peaks(ctx.transport, queue_peaks);
         }
 
+        let grace_active = post_decision_grace_active(
+            selected_proposal_ids.is_some(),
+            acs_decision_at,
+            reuse_enabled,
+            ctx.broadcast_pool_config.grace_ms,
+        );
+        let accept_inbound_acs = selected_proposal_ids.is_none() || grace_active;
+
         progressed |= pump_acs_host(
             ctx,
             round_id,
-            &mut inbound_acs_wire,
-            &mut proposal_store,
-            &mut selected_proposal_ids,
-            &mut acs_decision_at,
-            &mut metrics,
+            AcsPumpState {
+                inbound_acs_wire: &mut inbound_acs_wire,
+                proposal_store: &mut proposal_store,
+                selected_proposal_ids: &mut selected_proposal_ids,
+                acs_decision_at: &mut acs_decision_at,
+                metrics: &mut metrics,
+            },
+            accept_inbound_acs,
         )?
         .progressed;
 
@@ -286,7 +332,6 @@ fn run_driver_round(
                     }
                 }
                 metrics.round().active_sweep();
-                ctx.transport.unregister_wakeup_waiter();
                 let metrics = metrics.finish();
                 return Ok(DriverRoundOutcome {
                     build_seconds,
@@ -312,11 +357,92 @@ fn run_driver_round(
         metrics.round().active_sweep();
     }
 
-    ctx.transport.unregister_wakeup_waiter();
     Err(DriverError::Timeout {
         round_id,
         timeout_seconds: ctx.args.global_timeout,
+        stage: timeout_stage_label(TimeoutStageSnapshot {
+            selected_proposal_ids: selected_proposal_ids.as_deref(),
+            proposal_store: &proposal_store,
+            selected_batches_ready: selected_batches.is_some(),
+            pending_fetch_count: pool_fetch_tracker.pending_references.len(),
+            inbound_acs_wire_count: inbound_acs_wire.len(),
+            pending_fetch_request_count: pending_pool_fetch_requests.len(),
+            pending_fetch_response_count: pending_pool_fetch_responses.len(),
+            pending_share_bundle_count: pending_share_bundles.len(),
+            local_share_broadcasted: tpke_state.local_share_broadcasted(),
+            seen_share_sender_count: tpke_state.seen_share_sender_count(),
+        }),
     })
+}
+
+fn post_decision_grace_active(
+    has_decision: bool,
+    decision_at: Option<Instant>,
+    reuse_enabled: bool,
+    grace_ms: u64,
+) -> bool {
+    has_decision
+        && reuse_enabled
+        && grace_ms > 0
+        && decision_at.is_some_and(|instant| instant.elapsed() < Duration::from_millis(grace_ms))
+}
+
+fn timeout_stage_label(snapshot: TimeoutStageSnapshot<'_>) -> String {
+    let TimeoutStageSnapshot {
+        selected_proposal_ids,
+        proposal_store,
+        selected_batches_ready,
+        pending_fetch_count,
+        inbound_acs_wire_count,
+        pending_fetch_request_count,
+        pending_fetch_response_count,
+        pending_share_bundle_count,
+        local_share_broadcasted,
+        seen_share_sender_count,
+    } = snapshot;
+    let Some(selected_proposal_ids) = selected_proposal_ids else {
+        return format!(
+            "waiting for ACS decision (proposal_store={}, inbound_acs_wire={}, pending_fetch_requests={}, pending_fetch_responses={}, pending_share_bundles={})",
+            proposal_store.len(),
+            inbound_acs_wire_count,
+            pending_fetch_request_count,
+            pending_fetch_response_count,
+            pending_share_bundle_count,
+        );
+    };
+
+    let missing_selected = selected_proposal_ids
+        .iter()
+        .filter(|proposal_id| !proposal_store.contains_key(*proposal_id))
+        .count();
+    if missing_selected > 0 {
+        return format!(
+            "waiting for selected proposal payloads (missing={}, selected={}, proposal_store={}, inbound_acs_wire={})",
+            missing_selected,
+            selected_proposal_ids.len(),
+            proposal_store.len(),
+            inbound_acs_wire_count,
+        );
+    }
+
+    if !selected_batches_ready {
+        if pending_fetch_count > 0 {
+            return format!(
+                "waiting for pool fetch responses (pending_references={}, pending_fetch_requests={}, pending_fetch_responses={})",
+                pending_fetch_count, pending_fetch_request_count, pending_fetch_response_count,
+            );
+        }
+        return format!(
+            "resolving selected proposal payloads (selected={}, proposal_store={})",
+            selected_proposal_ids.len(),
+            proposal_store.len(),
+        );
+    }
+
+    format!(
+        "waiting for TPKE shares (local_share_broadcasted={}, seen_share_senders={}, pending_share_bundles={})",
+        local_share_broadcasted, seen_share_sender_count, pending_share_bundle_count,
+    )
 }
 
 pub(in crate::driver) fn run_driver_rounds(

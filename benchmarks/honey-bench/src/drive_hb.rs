@@ -1,6 +1,18 @@
 use super::*;
 use honey_wire::phase_stats::{aggregate_driver_phase_stats, driver_phase_stats_from_value};
 
+fn transport_label(config_json: &str) -> &'static str {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(config_json)
+        && let Some(transport) = value.get("transport").and_then(|v| v.as_str())
+    {
+        return match transport {
+            "quic" => "quic-loopback-mp",
+            _ => "tcp-loopback-mp",
+        };
+    }
+    "tcp-loopback-mp"
+}
+
 fn json_array_field<'a>(value: &'a Value, key: &str) -> Result<&'a [Value], String> {
     value
         .get(key)
@@ -77,7 +89,7 @@ fn run_drive_honeybadger_multiprocess(
         let stderr_handle = File::create(&stderr_path)
             .map_err(|err| format!("bench-driver:hb pid={pid}: stderr log: {err}"))?;
 
-        let child = Command::new(binary)
+        let child = node_command(binary)
             .arg("--pid")
             .arg(pid.to_string())
             .arg("--sid")
@@ -156,7 +168,8 @@ fn run_drive_honeybadger_multiprocess(
         };
 
         if !status.success() {
-            let stderr = read_log_file(&process.stderr_path);
+            let stderr = read_node_failure_summary(&process.result_path)
+                .unwrap_or_else(|| read_log_file(&process.stderr_path));
             errors.push(format!(
                 "pid={}: returncode={}: {}",
                 process.pid,
@@ -189,8 +202,11 @@ fn run_drive_honeybadger_multiprocess(
     }
 
     if !errors.is_empty() {
-        let _ = fs::remove_dir_all(&result_dir);
-        return Err(format!("bench-driver:hb failed: {}", errors.join("; ")));
+        return Err(format!(
+            "bench-driver:hb failed ({}): {}",
+            failed_result_dir_hint(&result_dir),
+            errors.join("; "),
+        ));
     }
 
     let node_jsons = node_jsons
@@ -210,9 +226,9 @@ fn run_drive_honeybadger_multiprocess(
             .and_then(Value::as_str)
             .unwrap_or("");
         if node_chain != canonical_chain {
-            let _ = fs::remove_dir_all(&result_dir);
             return Err(format!(
-                "bench-driver:hb: chain_digest diverged: node0={canonical_chain} vs node_other={node_chain}"
+                "bench-driver:hb: chain_digest diverged: node0={canonical_chain} vs node_other={node_chain} ({})",
+                failed_result_dir_hint(&result_dir),
             ));
         }
     }
@@ -358,7 +374,7 @@ fn run_drive_honeybadger_multiprocess(
         "protocol": "hb",
         "acs_backend": args.acs_backend.as_str(),
         "sid": args.sid,
-        "transport": "tcp-loopback-mp",
+        "transport": transport_label(&args.config_json),
         "chain_digest": canonical_chain,
         "nodes": nodes,
         "rounds": rounds,

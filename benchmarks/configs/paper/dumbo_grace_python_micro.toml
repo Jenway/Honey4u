@@ -5,6 +5,7 @@ name = "dumbo_grace_python_micro"
 rounds = 4
 repeats = 2
 global_timeout = 150.0
+transport = "quic"
 pool_reuse_limit_per_round = 4
 pool_expire_rounds = 10
 pool_mempool_max = 1024

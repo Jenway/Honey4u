@@ -24,17 +24,33 @@ fn prepend_python_paths(py: Python<'_>) -> PyResult<()> {
 
 fn venv_site_packages_candidates() -> Vec<String> {
     let mut candidates = Vec::new();
-    if let Ok(root) = std::env::current_dir() {
-        let mut direct = PathBuf::from(&root);
-        direct.push(".venv");
-        direct.push("lib");
-        direct.push("python3.14");
-        direct.push("site-packages");
-        if direct.exists() {
-            candidates.push(direct.to_string_lossy().into_owned());
+    if let Some(path) = std::env::var_os("VIRTUAL_ENV") {
+        push_venv_site_packages(PathBuf::from(path), &mut candidates);
+    }
+    if let Some(path) = std::env::var_os("PYO3_PYTHON") {
+        let path = PathBuf::from(path);
+        if let Some(root) = path.parent().and_then(|parent| parent.parent()) {
+            push_venv_site_packages(root.to_path_buf(), &mut candidates);
         }
     }
+    if let Ok(root) = std::env::current_dir() {
+        push_venv_site_packages(root.join(".venv"), &mut candidates);
+    }
     candidates
+}
+
+fn push_venv_site_packages(venv_root: PathBuf, candidates: &mut Vec<String>) {
+    let windows = venv_root.join("Lib").join("site-packages");
+    if windows.exists() {
+        candidates.push(windows.to_string_lossy().into_owned());
+    }
+    let unix = venv_root
+        .join("lib")
+        .join("python3.14")
+        .join("site-packages");
+    if unix.exists() {
+        candidates.push(unix.to_string_lossy().into_owned());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -856,6 +872,16 @@ impl PyAcsBackend {
         .map_err(|err| err.to_string())
     }
 
+    pub fn finish_round(&self, round_id: usize) -> Result<(), String> {
+        Python::attach(|py| -> PyResult<()> {
+            self.inner
+                .bind(py)
+                .call_method1("abort_round", (round_id,))?;
+            Ok(())
+        })
+        .map_err(|err| err.to_string())
+    }
+
     pub fn stats(&self) -> Result<AcsBackendStats, String> {
         Python::attach(|py| -> PyResult<AcsBackendStats> {
             let stats = self
@@ -933,6 +959,10 @@ impl AcsBackend for PyAcsBackend {
 
     fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<AcsEvent>, String> {
         PyAcsBackend::finish_pull_outbound_wire_batch(self)
+    }
+
+    fn finish_round(&self, round_id: usize) -> Result<(), String> {
+        PyAcsBackend::finish_round(self, round_id)
     }
 
     fn stats(&self) -> Result<AcsBackendStats, String> {

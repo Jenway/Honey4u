@@ -78,6 +78,7 @@ pub trait AcsBackend {
     fn outbound_ready(&self) -> Result<bool, String>;
     fn begin_pull_outbound_wire_batch(&self, limit: usize) -> Result<(), String>;
     fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<AcsEvent>, String>;
+    fn finish_round(&self, round_id: usize) -> Result<(), String>;
     fn stats(&self) -> Result<AcsBackendStats, String>;
     fn shutdown(&self) -> Result<(), String>;
 }
@@ -108,6 +109,10 @@ where
 
     fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<AcsEvent>, String> {
         (**self).finish_pull_outbound_wire_batch()
+    }
+
+    fn finish_round(&self, round_id: usize) -> Result<(), String> {
+        (**self).finish_round(round_id)
     }
 
     fn stats(&self) -> Result<AcsBackendStats, String> {

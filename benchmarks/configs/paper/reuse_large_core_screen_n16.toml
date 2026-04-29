@@ -1,0 +1,27 @@
+[suite]
+name = "reuse_large_core_screen_n16"
+
+[defaults]
+rounds = 8
+repeats = 1
+global_timeout = 120.0
+transport = "quic"
+pool_grace_ms = 0
+pool_reuse_limit_per_round = 1
+pool_expire_rounds = 3
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "rust_fin_large_core_screen_n16"
+description = "Screen larger batch sizes inside the stable 4-slow-node zero-grace strip."
+backend = ["rust_fin"]
+reuse_enabled = [true]
+nodes = [16]
+batch_size = [2560, 3072, 4096]
+network_faults = [
+  { label = "slow20p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 20 } },
+  { label = "slow25p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 25 } },
+  { label = "slow30p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 30 } },
+]

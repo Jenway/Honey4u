@@ -9,7 +9,7 @@
 1. 当前立即相关的是论文终稿、跨机复现与最终交付口径。
 2. 本文件后半部分保留的网络扰动 / 拜占庭注入方案与 Phase 计划，主要作为历史工程记录与可追溯设计说明，而不再表示“下一步还必须补完的协议功能”。
 
-当前仓库已经具备受控网络扰动实验与最小拜占庭节点注入能力，且已有正式归档结果；因此本文档不再把这些能力视为待实现目标，而是把它们作为已完成背景，服务于论文收尾与结果解释。
+当前仓库已经具备受控网络扰动实验与最小拜占庭节点注入能力；因此本文档不再把这些能力视为待实现目标，而是把它们作为已完成背景，服务于论文收尾与结果解释。注意：当前 checkout 未包含旧文档中提到的 `paper-final-*` 正式归档目录，现有 `benchmarks/results/dumbo-paper-suite-*` 目录是失败/不完整 smoke 输出，不能直接作为终稿证据。
 
 当前仓库结构重构也已完成：核心 Rust crate 已展平到仓库根目录的 `honey-crypto/`、`honey-wire/`、`honey-acs/`、`honey-node/`，Python ACS 包已迁入 `honey-acs/packages/honey-acs/`，PyO3 扩展已迁入 `honey-acs/honey-native/`，旧的根目录 `packages/` 和 `native/` 前缀不再作为源码位置使用。
 
@@ -17,7 +17,7 @@
 
 - 一句话判断：
   - 任务书的核心实现与实验主线可视为已完成，当前主要剩余工作是论文终稿、附录整合与最小跨机复现。
-- 当前没有剩余的仓库内协议阻塞项；未封口内容主要是论文终稿与仓库外收尾动作。
+- 当前没有剩余的仓库内协议阻塞项；未封口内容主要是论文终稿、结果证据恢复/重跑与仓库外收尾动作。
 - 按当前交付视角，剩余阻塞项可以压缩为三类：
   - 论文主稿正文、图表、附录与最终口径收口
   - 最小跨机器趋势复现实验
@@ -25,18 +25,18 @@
 
 - 对照任务书的当前判断：
   - 复用机制实现：已完成
-  - 安全性/活性工程验证：已完成当前范围内验证；现有正式归档结果与测试链路已足以支撑当前论文口径
-  - 高负载吞吐提升 10% 以上：已完成
-  - 稳定系统、完整文档与论文：代码与最小正式实验包已基本就绪，剩余主要是论文定稿
-- 已完成的实验主线：
-  - reuse on/off sweep
-  - Python vs Rust FIN-style backend compare
-  - N=12 高负载主结果正式归档
-  - Python Grace 参数敏感性正式归档
-  - `network_jitter_n12` 正式归档结果
-  - `network_fixed_delay_n12` 正式归档结果
-  - `slow_honest_n12` 正式归档结果
-  - 最小拜占庭节点正式归档结果：`byzantine_silent_n12`、`byzantine_invalid_fetch_response_n12`
+  - 安全性/活性工程验证：测试链路和实验配置已具备；当前 checkout 缺少可复核的正式归档结果
+  - 高负载吞吐提升 10% 以上：旧记录声称已达成，但当前 checkout 需要恢复归档或重跑后再引用
+  - 稳定系统、完整文档与论文：代码与实验配置基本就绪，剩余主要是论文定稿和结果证据重建
+- 已完成的实验能力/配置：
+  - reuse on/off sweep 入口
+  - Python vs Rust FIN-style backend compare 配置/入口
+  - N=12 高负载主结果配置
+  - Python Grace 参数敏感性配置
+  - `network_jitter_n12` 配置
+  - `network_fixed_delay_n12` 配置
+  - `slow_honest_n12` 配置
+  - 最小拜占庭节点配置：`byzantine_silent_n12`、`byzantine_invalid_fetch_response_n12`
 - 已完成的实验能力：
   - 受控网络扰动注入
   - `slow_honest` 场景 quick result
@@ -44,9 +44,10 @@
 - 已接入但尚未形成正式主结果的内容：
   - fetch request/response 统计
   - `rust_dumbo` backend compare 入口
-- 尚未完成的内容：
+- 尚未完成/当前 checkout 不可复核的内容：
   - 论文终稿收口与图表回填
-  - 已归档固定延迟压力测试的附录化整合
+  - 恢复或重跑旧文档提到的正式 `paper-final-*` 结果目录
+  - 固定延迟压力测试的附录化整合
   - 另一台机器上的最小复现实验
   - 论文封面个人信息填写：`author`、`school_id`、`grade`、`supervisor`
   - 论文最终排版、图表导出与答辩用精简表达
@@ -55,9 +56,9 @@
   - 跨机器最小复现实验：需要另一台机器或另一套环境执行
   - 论文封面个人信息：需要人工填写真实信息
 
-## 新增正式结果
+## 当前结果目录状态
 
-已新增归档目录：
+旧文档曾记录下列正式归档目录：
 
 - `benchmarks/results/paper-final-highload-20260421T182250Z`
 - `benchmarks/results/paper-final-grace-python-20260421T191900Z`
@@ -65,29 +66,27 @@
 - `benchmarks/results/paper-final-network-jitter-20260422T000021Z`
 - `benchmarks/results/paper-final-network-fixed-delay-20260422T020028Z`
 
-当前可直接利用的新增结论：
+但这些目录当前不在 `benchmarks/results/` 中。当前可见的目录是：
 
-- `highload_n12` 全部已测 Python / `rust_fin` 批大小上，复用开启后吞吐提升均保持为正，继续满足任务书 `10%` 目标
-- `grace_python_n12_micro` 中，`50/100/200 ms` 三组相近，`400 ms` 出现明显退化，可直接支持 Grace 敏感性分析
-- `network_jitter_n12` 中，`none/jitter10/jitter25` 三个标签下复用均保持正收益，且较强 jitter 下相对收益进一步放大
-- `network_fixed_delay_n12` 中，`none/fixed10/fixed25` 三个标签下复用均保持正收益，且较大固定延迟下相对收益进一步放大
-- `slow_honest_n12` 三个场景下，复用开启相对基线均保持正收益
-- `byzantine_silent_n12` 下，复用仍保持正收益，且出现了非零 fetch 观测
-- `byzantine_invalid_fetch_response_n12` 下，复用仍保持正收益，系统未因损坏 fetch 响应而失稳
-- `paper/main-codex-refer.typ` 已经按高负载、Grace、边界、jitter 与 fixed-delay 正式归档结果回填，并通过 `typst compile`
+- `benchmarks/results/dumbo-paper-suite-1777352017`
+- `benchmarks/results/dumbo-paper-suite-1777352101`
+- `benchmarks/results/dumbo-paper-suite-1777360203`
+- `benchmarks/results/dumbo-paper-suite-1777360308`
+
+其中带 `manifest.json` 的 suite 当前显示 `executed_runs == 0`，汇总 CSV/JSON 为空；它们不能直接支撑论文数值。下一步应优先恢复旧正式归档目录，或用当前 `benchmarks/configs/paper/*.toml` 重跑并形成新的 `paper-final-*` 目录。
 
 ## 任务书收尾重点
 
 当前最关键的缺口已经不是协议核心功能，而是把现有实现收敛成一套能交付、能复查、能写进论文终稿的冻结材料。具体优先级如下。
 
-1. 用现有已归档结果回填论文正文、表格、图注与有效性威胁分析。
+1. 恢复或重跑正式结果，再回填论文正文、表格、图注与有效性威胁分析。
 2. 在另一台机器上补一次最小复现实验，增强可复现性表述。
-3. 把已归档的 `network_fixed_delay_n12` 整理为附录级压力测试说明，而不是继续把它当作待补实验。
+3. 把 `network_fixed_delay_n12` 整理为附录级压力测试说明，但只能引用当前可复核的正式结果。
 4. 把论文终稿与答辩材料压缩成一套口径统一的最终版本。
 
 ### 当前建议立即执行顺序
 
-1. 在 `paper/main-codex-refer.typ` 中完成最终表格、图注、附录定位与威胁分析收口。
+1. 在 `paper/main_refer.typ` 中完成最终表格、图注、附录定位与威胁分析收口。
 2. 在另一台机器上补最小趋势复现：
    - `highload_n12`
    - `slow_honest_n12`
@@ -102,7 +101,7 @@
 
 同时满足以下四项即可视为当前课题已完成交付：
 
-1. `paper/main-codex-refer.typ` 已完成终稿级正文、表格、图注、附录与有效性威胁收口。
+1. `paper/main_refer.typ` 已完成终稿级正文、表格、图注、附录与有效性威胁收口，且精确实验数字都能追溯到当前存在的结果目录。
 2. 最小跨机器趋势复现实验已完成，并保存结果目录与运行信息。
 3. 论文封面个人信息已填写完整，终稿 PDF 可稳定编译导出。
 4. 最终文稿口径已统一：
@@ -114,7 +113,7 @@
 
 ### P0：必须先完成
 
-- 把已冻结结果整理成论文正文所需内容：
+- 恢复/重跑正式结果，并整理成论文正文所需内容：
   - 表格
   - 图表
   - 指标说明
@@ -124,7 +123,7 @@
   - 摘要与结论一致性
   - 答辩可复述的三点贡献总结
 - 收紧论文措辞，明确区分：
-  - 已实现并已归档验证的结论
+  - 已实现且可由当前结果目录验证的结论
   - 仅作为增强项或未来工作的方向
 
 已完成的 P0 子项：
@@ -143,7 +142,7 @@
   - 同一命令
   - 只比较趋势，不要求数值完全一致
   - 说明：这项同时属于“任务书可视为全部完成的判据”，不是可选增强项
-- 将已归档的附录级网络压力测试整理进论文补充：
+- 将可复核的附录级网络压力测试整理进论文补充：
   - `network_fixed_delay_n12`
 - 论文实验部分补一张“恶意行为计数/拒绝情况”小表
 
@@ -174,7 +173,7 @@
 - 检查固定延迟结果是否只出现在附录级压力测试语境，不与慢诚实主证据混写
 - 检查 `fetch` 统计是否仍保持“边界观察”口径，而未被写成主结论
 - 导出最终 PDF 前再执行一次：
-  - `typst compile paper/main-codex-refer.typ`
+  - `typst compile paper/main_refer.typ`
   - 最小跨机复现实验完成后的结果核对
 
 ## 设计原则
@@ -191,7 +190,7 @@
 
 ### A. 网络扰动能力
 
-优先在 `honey-node/src/transport/local_tcp.rs` 的发送路径加入受控扰动，而不是单独再起一个 TCP 代理程序。
+优先在 `honey-transport/src/tcp.rs` 的发送路径加入受控扰动，而不是单独再起一个 TCP 代理程序。
 
 原因：
 
@@ -202,7 +201,7 @@
 
 ### B. 拜占庭节点注入能力
 
-优先在 `rust-driver` / `honey-node/src/node_runtime/` 的外层 driver/transport 边界注入恶意行为，而不是修改 Python/Rust ACS host 内核。
+优先在 `rust-driver` / `honey-node/src/driver/` 的外层 driver/transport 边界注入恶意行为，而不是修改 Python/Rust ACS host 内核。
 
 原因：
 
@@ -212,7 +211,7 @@
 
 ## 配置扩展设计
 
-继续沿用 `bench-driver` 的 TOML 文件，在 `[config]` 下扩展嵌套字段，最终经 `config_json` 传入 `run-driver-node`。
+继续沿用 `honey-bench suite` / `honey-bench run` 的 TOML 文件，在 `[config]` 下扩展嵌套字段，最终经 `config_json` 传入 `honey-node`。
 
 建议新增两组配置：
 
@@ -282,7 +281,7 @@ behavior = "invalid_fetch_response"
 
 文件：
 
-- `honey-node/src/node_runtime/config.rs`
+- `honey-node/src/driver/config.rs`
 - `honey-node/src/cli.rs`
 
 任务：
@@ -297,8 +296,8 @@ behavior = "invalid_fetch_response"
 
 文件：
 
-- `honey-node/src/transport/local_tcp.rs`
-- `honey-node/src/node_runtime/mod.rs`
+- `honey-transport/src/tcp.rs`
+- `honey-node/src/driver/mod.rs`
 
 任务：
 
@@ -314,9 +313,9 @@ behavior = "invalid_fetch_response"
 
 文件：
 
-- `honey-node/src/node_runtime/round/driver.rs`
-- `honey-node/src/node_runtime/types.rs`
-- `honey-node/src/node_runtime/result.rs`
+- `honey-node/src/driver/round/loop.rs`
+- `honey-node/src/driver/round/state.rs`
+- `honey-node/src/driver/output.rs`
 
 任务：
 
@@ -414,7 +413,7 @@ behavior = "invalid_fetch_response"
 - 同一个 seed 的重复运行结果趋势一致
 - 输出 JSON 中能看到注入统计
 
-### Phase 2: 网络扰动实验接入论文 suite（已完成，正式结果已归档）
+### Phase 2: 网络扰动实验接入论文 suite（能力已完成，正式结果需恢复或重跑）
 
 目标：
 
@@ -447,14 +446,14 @@ behavior = "invalid_fetch_response"
 
 - `honey-bench suite` 已支持 `network_faults` 维度展开和可读标签分组
 - `benchmarks/configs/paper/dumbo_smoke.toml` 与 `benchmarks/configs/paper/dumbo_comprehensive.toml` 已补入固定延迟、抖动、慢诚实节点实验条目
-- 已形成正式网络结果目录：
+- 旧记录显示曾形成正式网络结果目录；当前 checkout 未包含这些目录：
   - `paper-final-network-jitter-20260422T000021Z`
   - `paper-final-network-fixed-delay-20260422T020028Z`
-- 与任务书最直接对应的 `slow_honest_n12` 结果已并入 `paper-final-boundary-20260421T180132Z`
+- 旧记录显示与任务书最直接对应的 `slow_honest_n12` 结果曾并入 `paper-final-boundary-20260421T180132Z`
 
 完成标准：
 
-- 能形成一套 `paper-final-network-*` 目录
+- 能形成或恢复一套 `paper-final-network-*` 目录
 - 能回答“复杂网络下复用是否仍有效”
 
 ### Phase 3: 最小拜占庭节点注入能力（第一阶段已完成）
@@ -547,7 +546,7 @@ behavior = "invalid_fetch_response"
 
 当前结果：
 
-- 已形成 `paper-final-boundary-20260421T180132Z`
+- 旧记录显示曾形成 `paper-final-boundary-20260421T180132Z`，但当前 checkout 未包含该目录
 - 已覆盖：
   - `byzantine_silent_n12`
   - `byzantine_invalid_fetch_response_n12`
@@ -561,13 +560,11 @@ behavior = "invalid_fetch_response"
 
 任务：
 
-- 已完成：
-  - 高负载主结果正式归档
-  - Grace 微实验正式归档
-  - 网络扰动核心结果正式归档
-  - 最小拜占庭核心结果正式归档
-  - `paper/main-codex-refer.typ` 一轮回填与编译检查
+- 当前已完成：
+  - 高负载、Grace、网络扰动和最小拜占庭实验配置
+  - `paper/main_refer.typ` 一轮路径/口径修正
 - 剩余：
+  - 恢复或重跑正式结果目录
   - 论文终稿图表/图注/附录整合
   - 跨机器最小复现
   - 答辩口径压缩与最终校对
@@ -637,7 +634,7 @@ behavior = "invalid_fetch_response"
 
 ## 论文可用的最小实验包
 
-当前判断：下列最小集合已经全部具备正式或可直接引用的归档结果。
+旧记录判断下列最小集合曾经具备正式或可直接引用的归档结果；当前 checkout 未包含对应目录，需要恢复或重跑后才能作为论文证据。
 
 如果时间有限，最小可交付集合应是：
 
@@ -682,12 +679,12 @@ behavior = "invalid_fetch_response"
 
 ## 当前直接实施起点
 
-按目前完成度，最应该立刻做的具体任务已经不再是补协议或补最小正式实验，而是：
+按目前完成度，最应该立刻做的具体任务已经不再是补协议，而是：
 
 1. 在另一台机器上补一次最小趋势复现：
    - `highload_n12`
    - `slow_honest_n12`
-2. 把正式归档结果完全整理进论文终稿：
+2. 恢复或重跑正式归档结果，并整理进论文终稿：
    - 高负载主表
    - Grace 表
    - 边界场景表

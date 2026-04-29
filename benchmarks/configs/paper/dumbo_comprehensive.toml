@@ -5,6 +5,7 @@ name = "dumbo_paper_suite"
 rounds = 6
 repeats = 5
 global_timeout = 180.0
+transport = "quic"
 pool_grace_ms = 100
 pool_reuse_limit_per_round = 4
 pool_expire_rounds = 10
@@ -72,6 +73,66 @@ reuse_enabled = [true]
 nodes = [12]
 batch_size = [32]
 pool_mempool_max = [128, 256, 512, 1024]
+
+[[experiments]]
+name = "reuse_grace_tune_largebatch_n16"
+description = "Tune grace under large batches with a small slow-honest tail."
+backend = ["rust_fin"]
+reuse_enabled = [true]
+nodes = [16]
+batch_size = [2048]
+rounds = 16
+repeats = 3
+global_timeout = 300.0
+pool_grace_ms = [20, 35, 50]
+pool_reuse_limit_per_round = 5
+pool_expire_rounds = 3
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+network_faults = [
+  { label = "slow25p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 25 } },
+]
+
+[[experiments]]
+name = "reuse_headline_largebatch_n16"
+description = "Large-batch reuse/off-on comparison tuned for visible benefit."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [16]
+batch_size = [1024, 2048, 4096]
+rounds = 16
+repeats = 5
+global_timeout = 300.0
+pool_grace_ms = 35
+pool_reuse_limit_per_round = 5
+pool_expire_rounds = 3
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+network_faults = [
+  { label = "slow25p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 25 } },
+]
+
+[[experiments]]
+name = "reuse_python_largebatch_n16"
+description = "Check whether Python Dumbo also benefits once batches are large enough."
+backend = ["python_dumbo"]
+reuse_enabled = [false, true]
+nodes = [16]
+batch_size = [512, 1024, 2048]
+rounds = 12
+repeats = 3
+global_timeout = 300.0
+pool_grace_ms = 35
+pool_reuse_limit_per_round = 5
+pool_expire_rounds = 3
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+network_faults = [
+  { label = "slow25p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 25 } },
+]
 
 [[experiments]]
 name = "network_fixed_delay_n12"

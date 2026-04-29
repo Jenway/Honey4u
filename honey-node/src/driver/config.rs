@@ -9,6 +9,7 @@ pub(super) struct BroadcastPoolConfig {
     pub(super) enable_reference_proposals: bool,
     pub(super) enable_fetch_fallback: bool,
     pub(super) reuse_limit_per_round: usize,
+    pub(super) grace_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +85,10 @@ pub(super) fn parse_broadcast_pool_config(config_json: &str) -> DriverResult<Bro
         .get("pool_reuse_limit_per_round")
         .and_then(Value::as_u64)
         .unwrap_or(1) as usize;
+    let grace_ms = value
+        .get("pool_grace_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(200);
     Ok(BroadcastPoolConfig {
         max_size,
         expire_rounds,
@@ -91,6 +96,7 @@ pub(super) fn parse_broadcast_pool_config(config_json: &str) -> DriverResult<Bro
         enable_reference_proposals,
         enable_fetch_fallback,
         reuse_limit_per_round,
+        grace_ms,
     })
 }
 
@@ -198,7 +204,21 @@ fn parse_slow_honest_extra_delay_ms(network_faults: &Value, pid: usize) -> Drive
 
 #[cfg(test)]
 mod tests {
-    use super::{ByzantineBehavior, parse_byzantine_node_config, parse_network_fault_config};
+    use super::{
+        ByzantineBehavior, parse_broadcast_pool_config, parse_byzantine_node_config,
+        parse_network_fault_config,
+    };
+
+    #[test]
+    fn parse_broadcast_pool_config_reads_grace_ms() {
+        let config = parse_broadcast_pool_config(
+            r#"{"enable_broadcast_pool_reuse": true, "pool_grace_ms": 75}"#,
+        )
+        .expect("config should parse");
+
+        assert!(config.enable_reuse);
+        assert_eq!(config.grace_ms, 75);
+    }
 
     #[test]
     fn parse_network_fault_config_defaults_to_disabled() {

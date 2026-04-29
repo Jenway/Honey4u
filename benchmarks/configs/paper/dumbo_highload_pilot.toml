@@ -5,6 +5,7 @@ name = "dumbo_highload_pilot"
 rounds = 8
 repeats = 2
 global_timeout = 180.0
+transport = "quic"
 pool_grace_ms = 100
 pool_reuse_limit_per_round = 4
 pool_expire_rounds = 10

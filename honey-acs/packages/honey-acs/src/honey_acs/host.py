@@ -195,6 +195,10 @@ class PersistentAcsHost:
     def _fail(self, exc: BaseException) -> None:
         self._worker_error = f"{type(exc).__name__}: {exc}"
 
+    def _raise_worker_error_if_failed(self) -> None:
+        if self._worker_error is not None:
+            raise RuntimeError(f"ACS host worker failed previously: {self._worker_error}")
+
     def _mark_outbound_ready(self) -> None:
         self._outbound_ready.set()
         if not self._outbound_signal_enabled:
@@ -312,11 +316,13 @@ class PersistentAcsHost:
         )
 
     def start_round(self, *, round_id: int, sid: str, proposal_input: bytes | str) -> None:
+        self._raise_worker_error_if_failed()
         self._command_counts["start_round"] += 1
         payload = (
             proposal_input.encode("utf-8") if isinstance(proposal_input, str) else proposal_input
         )
         self._submit_command("start_round", (round_id, sid, payload))
+        self._raise_worker_error_if_failed()
 
     def push_inbound_decoded_batch(self, items: list[tuple]) -> int:
         """Accept pre-decoded (sender, round_id, channel, instance_id, message) tuples.
@@ -324,6 +330,7 @@ class PersistentAcsHost:
         The wire-format decoding is now done on the Rust side before this
         method is called, so no codec call is needed here.
         """
+        self._raise_worker_error_if_failed()
         self._command_counts["push_inbound_wire_batch"] += 1
         self._batch_item_counts["push_inbound_wire_batch_items"] += len(items)
         if not items:
@@ -332,10 +339,13 @@ class PersistentAcsHost:
         return len(items)
 
     def abort_round(self, round_id: int) -> None:
+        self._raise_worker_error_if_failed()
         self._command_counts["abort_round"] += 1
         self._submit_command("abort_round", round_id)
+        self._raise_worker_error_if_failed()
 
     def begin_pull_outbound_wire_batch(self, limit: int = 128) -> None:
+        self._raise_worker_error_if_failed()
         self._command_counts["pull_outbound_wire_batch"] += 1
         if self._pending_pull is not None:
             raise RuntimeError("pull_outbound_wire_batch is already pending")
@@ -355,10 +365,12 @@ class PersistentAcsHost:
         except Exception as exc:
             self._fail(exc)
             raise
+        self._raise_worker_error_if_failed()
         self._batch_item_counts["pull_outbound_wire_batch_items"] += len(drained)
         return drained
 
     def stats(self) -> dict[str, object]:
+        self._raise_worker_error_if_failed()
         self._command_counts["stats"] += 1
         return self.kernel_stats()
 
@@ -379,6 +391,7 @@ class PersistentAcsHost:
         return stats
 
     def outbound_ready(self) -> bool:
+        self._raise_worker_error_if_failed()
         return self._outbound_ready.is_set()
 
     def outbound_wait_fd(self) -> int:

@@ -1,0 +1,21 @@
+mode = "dumbo"
+sid = "bench:dumbo:quic:transport:fault:smoke:n4:b16:slow20p3"
+nodes = 4
+faulty = 1
+rounds = 1
+batch_size = 16
+global_timeout = 60
+result_path = "benchmarks/results/quic-transport-fault-smoke-n4-20260429.json"
+
+[config]
+acs_backend = "rust_fin"
+transport = "quic"
+enable_broadcast_pool_reuse = false
+enable_pool_reference_proposals = false
+enable_pool_fetch_fallback = false
+pool_grace_ms = 0
+pool_reuse_limit_per_round = 0
+pool_expire_rounds = 3
+pool_mempool_max = 256
+network_faults = { enabled = true, seed = 20260429, slow_honest = { extra_delay_ms = 20, pids = [3] } }
+byzantine_nodes = []

@@ -146,9 +146,6 @@ impl RustAcsBackend {
         sender: usize,
         message: RustAcsMessage,
     ) -> Result<(), String> {
-        if round.decision_emitted {
-            return Ok(());
-        }
         match message {
             RustAcsMessage::PrbcVal {
                 leader,
@@ -186,62 +183,97 @@ impl RustAcsBackend {
                 signature,
             } => self.handle_prbc_ready(round, sender, leader as usize, roothash, signature),
             RustAcsMessage::WrbcSend { proposer, value } => {
+                if round.decision_emitted {
+                    return Ok(());
+                }
                 self.handle_wrbc_send(round, sender, proposer as usize, value)
             }
             RustAcsMessage::WrbcEcho { proposer, digest } => {
+                if round.decision_emitted {
+                    return Ok(());
+                }
                 self.handle_wrbc_echo(round, sender, proposer as usize, digest)
             }
             RustAcsMessage::WrbcReady { proposer, digest } => {
+                if round.decision_emitted {
+                    return Ok(());
+                }
                 self.handle_wrbc_ready(round, sender, proposer as usize, digest)
             }
             RustAcsMessage::WrbcValue { proposer, value } => {
+                if round.decision_emitted {
+                    return Ok(());
+                }
                 self.handle_wrbc_value(round, sender, proposer as usize, value)
             }
             RustAcsMessage::RabaVal {
                 iteration,
                 loop_index,
                 value,
-            } => self.buffer_or_handle_raba_message(
-                round,
-                iteration as usize,
-                BufferedRabaMessage::Val {
-                    sender,
-                    loop_index: loop_index as usize,
-                    value,
-                },
-            ),
+            } => {
+                if round.decision_emitted {
+                    return Ok(());
+                }
+                self.buffer_or_handle_raba_message(
+                    round,
+                    iteration as usize,
+                    BufferedRabaMessage::Val {
+                        sender,
+                        loop_index: loop_index as usize,
+                        value,
+                    },
+                )
+            }
             RustAcsMessage::RabaAux {
                 iteration,
                 loop_index,
                 value,
-            } => self.buffer_or_handle_raba_message(
-                round,
-                iteration as usize,
-                BufferedRabaMessage::Aux {
-                    sender,
-                    loop_index: loop_index as usize,
-                    value,
-                },
-            ),
+            } => {
+                if round.decision_emitted {
+                    return Ok(());
+                }
+                self.buffer_or_handle_raba_message(
+                    round,
+                    iteration as usize,
+                    BufferedRabaMessage::Aux {
+                        sender,
+                        loop_index: loop_index as usize,
+                        value,
+                    },
+                )
+            }
             RustAcsMessage::RabaConf {
                 iteration,
                 loop_index,
                 values,
-            } => self.buffer_or_handle_raba_message(
-                round,
-                iteration as usize,
-                BufferedRabaMessage::Conf {
-                    sender,
-                    loop_index: loop_index as usize,
-                    values,
-                },
-            ),
-            RustAcsMessage::RabaFinish { iteration, value } => self.buffer_or_handle_raba_message(
-                round,
-                iteration as usize,
-                BufferedRabaMessage::Finish { sender, value },
-            ),
+            } => {
+                if round.decision_emitted {
+                    return Ok(());
+                }
+                self.buffer_or_handle_raba_message(
+                    round,
+                    iteration as usize,
+                    BufferedRabaMessage::Conf {
+                        sender,
+                        loop_index: loop_index as usize,
+                        values,
+                    },
+                )
+            }
+            RustAcsMessage::RabaFinish { iteration, value } => {
+                if round.decision_emitted {
+                    return Ok(());
+                }
+                self.buffer_or_handle_raba_message(
+                    round,
+                    iteration as usize,
+                    BufferedRabaMessage::Finish { sender, value },
+                )
+            }
             RustAcsMessage::CoinShare { scope, share } => {
+                if round.decision_emitted {
+                    return Ok(());
+                }
                 self.handle_coin_share(round, sender, scope, share)
             }
         }
@@ -374,12 +406,28 @@ impl AcsBackend for RustAcsBackend {
         }
         let finished = round.decision_emitted && round.outbound.is_empty();
         let drained_len = drained.len();
-        let _ = round;
         state.batch_item_counts.pull_outbound_wire_batch_items += drained_len;
         if finished {
             state.rounds_finished = state.rounds_finished.max(rounds_started);
         }
         Ok(drained)
+    }
+
+    fn finish_round(&self, round_id: usize) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust ACS state poisoned"))?;
+        if state
+            .current_round
+            .as_ref()
+            .is_some_and(|round| round.round_id == round_id)
+        {
+            state.current_round = None;
+            state.pending_pull_limit = None;
+            state.rounds_finished = state.rounds_finished.max(state.rounds_started);
+        }
+        Ok(())
     }
 
     fn stats(&self) -> Result<AcsBackendStats, String> {

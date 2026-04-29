@@ -172,9 +172,6 @@ impl RustDumboAcsBackend {
         sender: usize,
         message: RustDumboMessage,
     ) -> Result<bool, String> {
-        if round.decision_emitted {
-            return Ok(false);
-        }
         match message {
             RustDumboMessage::PrbcVal {
                 leader,
@@ -233,6 +230,9 @@ impl RustDumboAcsBackend {
                 Ok(changed)
             }
             RustDumboMessage::ProofDiffuse { leader, proof } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed = self.handle_proof_diffuse(round, sender, leader as usize, proof)?;
                 if changed {
                     round.mark_mvba_dirty();
@@ -245,6 +245,9 @@ impl RustDumboAcsBackend {
                 stripe,
                 merkle_proof,
             } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed = self.process_pd_store(
                     round,
                     sender,
@@ -263,6 +266,9 @@ impl RustDumboAcsBackend {
                 roothash,
                 share,
             } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed =
                     self.process_pd_stored(round, sender, leader as usize, roothash, share)?;
                 if changed {
@@ -271,6 +277,9 @@ impl RustDumboAcsBackend {
                 Ok(changed)
             }
             RustDumboMessage::PdLock { leader, proof } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed = self.process_pd_lock(round, sender, leader as usize, proof)?;
                 if changed {
                     round.mark_mvba_dirty();
@@ -282,6 +291,9 @@ impl RustDumboAcsBackend {
                 roothash,
                 share,
             } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed =
                     self.process_pd_locked(round, sender, leader as usize, roothash, share)?;
                 if changed {
@@ -290,6 +302,9 @@ impl RustDumboAcsBackend {
                 Ok(changed)
             }
             RustDumboMessage::PdDone { leader, proof } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed = self.process_pd_done(round, sender, leader as usize, proof)?;
                 if changed {
                     round.mark_mvba_dirty();
@@ -301,6 +316,9 @@ impl RustDumboAcsBackend {
                 leader,
                 proof,
             } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed = self.handle_rc_prepare(
                     round,
                     sender,
@@ -318,6 +336,9 @@ impl RustDumboAcsBackend {
                 leader,
                 proof,
             } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed = self.handle_rc_lock(
                     round,
                     sender,
@@ -335,6 +356,9 @@ impl RustDumboAcsBackend {
                 leader,
                 store,
             } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed = self.handle_rc_store(
                     round,
                     sender,
@@ -352,6 +376,9 @@ impl RustDumboAcsBackend {
                 epoch,
                 value,
             } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed =
                     self.handle_aba_est(round, sender, mvba_round as usize, epoch as usize, value)?;
                 if changed {
@@ -364,6 +391,9 @@ impl RustDumboAcsBackend {
                 epoch,
                 value,
             } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed =
                     self.handle_aba_aux(round, sender, mvba_round as usize, epoch as usize, value)?;
                 if changed {
@@ -376,6 +406,9 @@ impl RustDumboAcsBackend {
                 epoch,
                 values,
             } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed = self.handle_aba_conf(
                     round,
                     sender,
@@ -389,6 +422,9 @@ impl RustDumboAcsBackend {
                 Ok(changed)
             }
             RustDumboMessage::CoinShare { scope, share } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 let changed = self.handle_coin_share(round, sender, scope, share)?;
                 if changed {
                     round.mark_mvba_dirty();
@@ -535,6 +571,23 @@ impl AcsBackend for RustDumboAcsBackend {
             state.rounds_finished = state.rounds_finished.max(rounds_started);
         }
         Ok(drained)
+    }
+
+    fn finish_round(&self, round_id: usize) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust Dumbo ACS state poisoned"))?;
+        if state
+            .current_round
+            .as_ref()
+            .is_some_and(|round| round.round_id == round_id)
+        {
+            state.current_round = None;
+            state.pending_pull_limit = None;
+            state.rounds_finished = state.rounds_finished.max(state.rounds_started);
+        }
+        Ok(())
     }
 
     fn stats(&self) -> Result<AcsBackendStats, String> {

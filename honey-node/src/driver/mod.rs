@@ -4,7 +4,8 @@ use crate::driver::output::write_output;
 use honey_acs::build_acs_backend;
 #[cfg(feature = "quic")]
 use honey_transport::QuicTransport;
-use honey_transport::{LocalTcpTransport, TransportHandle};
+use honey_transport::{FaultInjectedTransport, LocalTcpTransport, TransportHandle};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub(crate) mod args;
@@ -21,7 +22,7 @@ use config::{
 };
 use error::{DriverError, DriverResult};
 use frame::parse_addresses_json;
-use output::build_node_result_json;
+use output::{build_node_failure_json, build_node_result_json};
 use round::run_driver_rounds;
 
 pub(super) const DRIVER_NETWORK_BATCH_LIMIT: usize = 512;
@@ -55,33 +56,64 @@ pub(crate) fn run_driver_node(args: NodeRuntimeArgs) -> DriverResult<()> {
         &broadcast_pool_config,
         byzantine_node_config,
     );
-    let host_stats = host.stats();
-    let host_shutdown = host.shutdown();
-    let rendered = match result {
-        Ok((run_result, queue_peaks)) => {
-            let host_stats = host_stats.map_err(|message| DriverError::acs("stats", message))?;
-            build_node_result_json(
+    let host_stats = host
+        .stats()
+        .map_err(|message| DriverError::acs("stats", message));
+    let host_shutdown = host
+        .shutdown()
+        .map_err(|message| DriverError::acs("shutdown", message));
+
+    match (result, host_stats, host_shutdown) {
+        (Ok((run_result, queue_peaks)), Ok(host_stats), Ok(())) => {
+            let rendered = build_node_result_json(
                 args.pid,
                 args.batch_size,
                 run_result,
                 host_stats,
                 &*transport,
                 &queue_peaks,
-            )?
+            )?;
+            write_output(args.result_path.as_deref(), &rendered)
         }
-        Err(err) => {
-            if let Err(shutdown_err) = host_shutdown {
-                return Err(DriverError::acs(
-                    "shutdown",
-                    format!("{err}; driver host shutdown failed: {shutdown_err}"),
-                ));
-            }
-            return Err(err);
-        }
-    };
+        (result, host_stats, host_shutdown) => {
+            let (primary_error, host_stats, host_stats_error, shutdown_error) =
+                match (result, host_stats, host_shutdown) {
+                    (Err(err), Ok(host_stats), Ok(())) => (err, Some(host_stats), None, None),
+                    (Err(err), Ok(host_stats), Err(shutdown_err)) => {
+                        (err, Some(host_stats), None, Some(shutdown_err.to_string()))
+                    }
+                    (Err(err), Err(stats_err), Ok(())) => {
+                        (err, None, Some(stats_err.to_string()), None)
+                    }
+                    (Err(err), Err(stats_err), Err(shutdown_err)) => (
+                        err,
+                        None,
+                        Some(stats_err.to_string()),
+                        Some(shutdown_err.to_string()),
+                    ),
+                    (Ok(_), Err(stats_err), Ok(())) => (stats_err, None, None, None),
+                    (Ok(_), Err(stats_err), Err(shutdown_err)) => {
+                        (stats_err, None, None, Some(shutdown_err.to_string()))
+                    }
+                    (Ok(_), Ok(host_stats), Err(shutdown_err)) => {
+                        (shutdown_err, Some(host_stats), None, None)
+                    }
+                    (Ok(_), Ok(_), Ok(())) => unreachable!(),
+                };
 
-    host_shutdown.map_err(|message| DriverError::acs("shutdown", message))?;
-    write_output(args.result_path.as_deref(), &rendered)
+            let rendered = build_node_failure_json(
+                args.pid,
+                args.batch_size,
+                &primary_error,
+                host_stats.as_ref(),
+                host_stats_error.as_deref(),
+                shutdown_error.as_deref(),
+                &*transport,
+            )?;
+            let _ = write_output(args.result_path.as_deref(), &rendered);
+            Err(primary_error)
+        }
+    }
 }
 
 fn resolve_transport_backend(config_json: &str) -> String {
@@ -100,18 +132,35 @@ fn create_transport(
     network_fault_config: honey_transport::NetworkFaultConfig,
 ) -> DriverResult<Box<dyn TransportHandle>> {
     let backend = resolve_transport_backend(config_json);
-    match backend.as_str() {
-        #[cfg(feature = "quic")]
-        "quic" => Ok(Box::new(QuicTransport::new(
-            pid,
-            addresses,
+    let base_transport: Box<dyn TransportHandle> = match backend.as_str() {
+        "tcp" => Box::new(LocalTcpTransport::new(pid, addresses, Default::default())?),
+        "quic" => {
+            #[cfg(feature = "quic")]
+            {
+                Box::new(QuicTransport::new(pid, addresses, Default::default())?)
+            }
+            #[cfg(not(feature = "quic"))]
+            {
+                return Err(DriverError::config(
+                    "transport=quic requested, but this honey-node binary was built without the quic feature",
+                ));
+            }
+        }
+        other => {
+            return Err(DriverError::config(format!(
+                "unsupported transport backend: {other}"
+            )));
+        }
+    };
+    if network_fault_config.is_active() {
+        let inner: Arc<dyn TransportHandle> = Arc::from(base_transport);
+        Ok(Box::new(FaultInjectedTransport::new(
+            inner,
             network_fault_config,
-        )?)),
-        _ => Ok(Box::new(LocalTcpTransport::new(
             pid,
-            addresses,
-            network_fault_config,
-        )?)),
+        )))
+    } else {
+        Ok(base_transport)
     }
 }
 

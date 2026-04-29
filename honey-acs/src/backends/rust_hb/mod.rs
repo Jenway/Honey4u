@@ -166,9 +166,6 @@ impl RustHbAcsBackend {
         sender: usize,
         message: RustHbMessage,
     ) -> Result<bool, String> {
-        if round.decision_emitted {
-            return Ok(false);
-        }
         match message {
             RustHbMessage::RbcVal {
                 leader,
@@ -242,18 +239,36 @@ impl RustHbAcsBackend {
                 instance,
                 epoch,
                 value,
-            } => self.handle_aba_est(round, sender, instance as usize, epoch as usize, value),
+            } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
+                self.handle_aba_est(round, sender, instance as usize, epoch as usize, value)
+            }
             RustHbMessage::AbaAux {
                 instance,
                 epoch,
                 value,
-            } => self.handle_aba_aux(round, sender, instance as usize, epoch as usize, value),
+            } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
+                self.handle_aba_aux(round, sender, instance as usize, epoch as usize, value)
+            }
             RustHbMessage::AbaConf {
                 instance,
                 epoch,
                 values,
-            } => self.handle_aba_conf(round, sender, instance as usize, epoch as usize, values),
+            } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
+                self.handle_aba_conf(round, sender, instance as usize, epoch as usize, values)
+            }
             RustHbMessage::CoinShare { scope, share } => {
+                if round.decision_emitted {
+                    return Ok(false);
+                }
                 self.handle_coin_share(round, sender, scope, share)
             }
         }
@@ -407,6 +422,23 @@ impl AcsBackend for RustHbAcsBackend {
             state.rounds_finished = state.rounds_finished.max(rounds_started);
         }
         Ok(drained)
+    }
+
+    fn finish_round(&self, round_id: usize) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| String::from("Rust HB ACS state poisoned"))?;
+        if state
+            .current_round
+            .as_ref()
+            .is_some_and(|round| round.round_id == round_id)
+        {
+            state.current_round = None;
+            state.pending_pull_limit = None;
+            state.rounds_finished = state.rounds_finished.max(state.rounds_started);
+        }
+        Ok(())
     }
 
     fn stats(&self) -> Result<AcsBackendStats, String> {

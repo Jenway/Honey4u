@@ -17,6 +17,16 @@ pub(super) struct TpkeRoundState {
     local_share_broadcasted: bool,
 }
 
+impl TpkeRoundState {
+    pub(super) fn local_share_broadcasted(&self) -> bool {
+        self.local_share_broadcasted
+    }
+
+    pub(super) fn seen_share_sender_count(&self) -> usize {
+        self.seen_share_senders.len()
+    }
+}
+
 pub(super) struct TpkeStepOutcome {
     pub(super) progressed: bool,
     pub(super) block_payload: Option<Vec<u8>>,

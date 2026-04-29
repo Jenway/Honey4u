@@ -10,6 +10,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+const STARTUP_READY_TIMEOUT: Duration = Duration::from_secs(5);
+const SOCKET_BIND_RETRIES: usize = 50;
+const CONNECT_RETRY_LIMIT: usize = 500;
+const SEND_RETRY_LIMIT: usize = 500;
+const RETRY_BACKOFF: Duration = Duration::from_millis(10);
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 pub struct QuicTransport {
     stop: Arc<AtomicBool>,
     inbound_rx: Receiver<Vec<u8>>,
@@ -18,8 +25,12 @@ pub struct QuicTransport {
     outbound_len: Arc<AtomicUsize>,
     sent_frames: Arc<AtomicUsize>,
     recv_frames: Arc<AtomicUsize>,
+    connect_retries: Arc<AtomicUsize>,
+    send_retries: Arc<AtomicUsize>,
     wakeup_counter: Arc<WakeupCounter>,
-    _rt_guard: Option<thread::JoinHandle<()>>,
+    runtime_error: Arc<Mutex<Option<String>>>,
+    rt_guard: Mutex<Option<thread::JoinHandle<()>>>,
+    peer_count: usize,
     network_faults: NetworkFaultConfig,
     rng_seed: u64,
 }
@@ -61,7 +72,10 @@ impl QuicTransport {
         let outbound_len = Arc::new(AtomicUsize::new(0));
         let sent_frames = Arc::new(AtomicUsize::new(0));
         let recv_frames = Arc::new(AtomicUsize::new(0));
+        let connect_retries = Arc::new(AtomicUsize::new(0));
+        let send_retries = Arc::new(AtomicUsize::new(0));
         let wakeup_counter = Arc::new(WakeupCounter::new());
+        let runtime_error = Arc::new(Mutex::new(None));
         let rng_seed = network_faults.mixed_seed(pid);
 
         let peer_addrs: Vec<SocketAddr> = addresses
@@ -74,64 +88,100 @@ impl QuicTransport {
             .collect::<io::Result<Vec<_>>>()?;
 
         let (cert_der, key_der) = generate_self_signed_cert()?;
+        let (ready_tx, ready_rx) = unbounded::<io::Result<()>>();
 
         let rt_stop = Arc::clone(&stop);
+        let rt_runtime_error = Arc::clone(&runtime_error);
         let rt_inbound_tx = inbound_tx;
         let rt_inbound_len = Arc::clone(&inbound_len);
         let rt_recv_frames = Arc::clone(&recv_frames);
         let rt_wakeup_counter = Arc::clone(&wakeup_counter);
         let rt_sent_frames = Arc::clone(&sent_frames);
-        let rt_pid = pid;
-        let rt_socket_addr = socket_addr;
-
+        let rt_connect_retries = Arc::clone(&connect_retries);
+        let rt_send_retries = Arc::clone(&send_retries);
         let rt_outbound_len = Arc::clone(&outbound_len);
         let rt_guard = thread::spawn(move || {
-            let rt = match tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(4)
-                .enable_all()
-                .build()
-            {
-                Ok(rt) => rt,
-                Err(_e) => {
-                    return;
+            let result = run_quic_runtime(
+                Arc::clone(&rt_stop),
+                pid,
+                socket_addr,
+                peer_addrs,
+                cert_der,
+                key_der,
+                rt_inbound_tx,
+                rt_inbound_len,
+                rt_recv_frames,
+                rt_wakeup_counter,
+                outbound_rx,
+                rt_outbound_len,
+                rt_sent_frames,
+                rt_connect_retries,
+                rt_send_retries,
+                ready_tx,
+            );
+            match result {
+                Ok(()) if !rt_stop.load(Ordering::Relaxed) => {
+                    set_runtime_error(
+                        &rt_runtime_error,
+                        "quic transport runtime exited unexpectedly",
+                    );
                 }
-            };
-            let _ = rt.block_on(async move {
-                run_quic_node(
-                    rt_stop,
-                    rt_pid,
-                    rt_socket_addr,
-                    peer_addrs,
-                    cert_der,
-                    key_der,
-                    rt_inbound_tx,
-                    rt_inbound_len,
-                    rt_recv_frames,
-                    rt_wakeup_counter,
-                    outbound_rx,
-                    rt_outbound_len,
-                    rt_sent_frames,
-                )
-                .await
-            });
+                Err(err) if !rt_stop.load(Ordering::Relaxed) => {
+                    set_runtime_error(&rt_runtime_error, err.to_string());
+                }
+                _ => {}
+            }
         });
 
-        Ok(Self {
-            stop,
-            inbound_rx,
-            inbound_len,
-            outbound_tx,
-            outbound_len,
-            sent_frames,
-            recv_frames,
-            wakeup_counter,
-            _rt_guard: Some(rt_guard),
-            network_faults,
-            rng_seed,
-        })
+        match ready_rx.recv_timeout(STARTUP_READY_TIMEOUT) {
+            Ok(Ok(())) => Ok(Self {
+                stop,
+                inbound_rx,
+                inbound_len,
+                outbound_tx,
+                outbound_len,
+                sent_frames,
+                recv_frames,
+                connect_retries,
+                send_retries,
+                wakeup_counter,
+                runtime_error,
+                rt_guard: Mutex::new(Some(rt_guard)),
+                peer_count: addresses.len(),
+                network_faults,
+                rng_seed,
+            }),
+            Ok(Err(err)) => {
+                stop.store(true, Ordering::Relaxed);
+                let _ = rt_guard.join();
+                Err(err)
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                stop.store(true, Ordering::Relaxed);
+                let _ = rt_guard.join();
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "quic transport runtime did not become ready within 5s",
+                ))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                stop.store(true, Ordering::Relaxed);
+                let _ = rt_guard.join();
+                Err(io::Error::other(
+                    "quic transport runtime exited before reporting readiness",
+                ))
+            }
+        }
     }
 
     pub fn send(&self, recipient: usize, payload: &[u8]) -> io::Result<()> {
+        self.check_runtime_error()?;
+        if recipient >= self.peer_count {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("recipient {recipient} out of range"),
+            ));
+        }
         self.outbound_len.fetch_add(1, Ordering::Relaxed);
         self.outbound_tx
             .send((recipient, payload.to_vec()))
@@ -150,7 +200,13 @@ impl QuicTransport {
                     messages.push(payload);
                 }
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.check_runtime_error()?;
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "transport receiver disconnected",
+                    ));
+                }
             }
         }
         Ok(messages)
@@ -168,8 +224,8 @@ impl QuicTransport {
         TransportStats {
             sent_frames: self.sent_frames.load(Ordering::Relaxed),
             recv_frames: self.recv_frames.load(Ordering::Relaxed),
-            connect_retries: 0,
-            send_retries: 0,
+            connect_retries: self.connect_retries.load(Ordering::Relaxed),
+            send_retries: self.send_retries.load(Ordering::Relaxed),
             delayed_frames: 0,
             total_injected_delay_ms: 0,
             network_fault_seed: self.rng_seed,
@@ -181,6 +237,21 @@ impl QuicTransport {
 
     pub fn close(&self) -> io::Result<()> {
         self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self
+            .rt_guard
+            .lock()
+            .map_err(|_| io::Error::other("failed to lock quic runtime handle"))?
+            .take()
+        {
+            let _ = handle.join();
+        }
+        Ok(())
+    }
+
+    fn check_runtime_error(&self) -> io::Result<()> {
+        if let Some(message) = runtime_error_snapshot(&self.runtime_error) {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, message));
+        }
         Ok(())
     }
 }
@@ -246,6 +317,50 @@ fn build_client_crypto(cert_der: &CertificateDer<'static>) -> io::Result<QuicCli
     QuicClientConfig::try_from(client_crypto).map_err(io::Error::other)
 }
 
+fn run_quic_runtime(
+    stop: Arc<AtomicBool>,
+    pid: usize,
+    socket_addr: SocketAddr,
+    peer_addrs: Vec<SocketAddr>,
+    cert_der: CertificateDer<'static>,
+    key_der: PrivateKeyDer<'static>,
+    inbound_tx: Sender<Vec<u8>>,
+    inbound_len: Arc<AtomicUsize>,
+    recv_frames: Arc<AtomicUsize>,
+    wakeup_counter: Arc<WakeupCounter>,
+    outbound_rx: Receiver<(usize, Vec<u8>)>,
+    outbound_len: Arc<AtomicUsize>,
+    sent_frames: Arc<AtomicUsize>,
+    connect_retries: Arc<AtomicUsize>,
+    send_retries: Arc<AtomicUsize>,
+    ready_tx: Sender<io::Result<()>>,
+) -> io::Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .map_err(io::Error::other)?;
+    rt.block_on(run_quic_node(
+        stop,
+        pid,
+        socket_addr,
+        peer_addrs,
+        cert_der,
+        key_der,
+        inbound_tx,
+        inbound_len,
+        recv_frames,
+        wakeup_counter,
+        outbound_rx,
+        outbound_len,
+        sent_frames,
+        connect_retries,
+        send_retries,
+        ready_tx,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn run_quic_node(
     stop: Arc<AtomicBool>,
     pid: usize,
@@ -260,192 +375,292 @@ async fn run_quic_node(
     outbound_rx: Receiver<(usize, Vec<u8>)>,
     outbound_len: Arc<AtomicUsize>,
     sent_frames: Arc<AtomicUsize>,
-) {
-    let server_crypto = match build_server_crypto(cert_der.clone(), key_der.clone_key()) {
-        Ok(c) => c,
-        Err(_e) => {
-            return;
-        }
-    };
+    connect_retries: Arc<AtomicUsize>,
+    send_retries: Arc<AtomicUsize>,
+    ready_tx: Sender<io::Result<()>>,
+) -> io::Result<()> {
+    let server_crypto = build_server_crypto(cert_der.clone(), key_der.clone_key())?;
     let server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
+    let socket = bind_socket_with_retry(socket_addr).await?;
+    let endpoint = Arc::new(
+        quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(server_config),
+            socket,
+            Arc::new(quinn::TokioRuntime),
+        )
+        .map_err(io::Error::other)?,
+    );
+    let client_crypto = build_client_crypto(&cert_der)?;
+    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
 
-    let mut socket = None;
-    for i in 0..50 {
+    let accept_handle = tokio::spawn(run_accept_loop(
+        Arc::clone(&endpoint),
+        Arc::clone(&stop),
+        inbound_tx.clone(),
+        Arc::clone(&inbound_len),
+        Arc::clone(&recv_frames),
+        Arc::clone(&wakeup_counter),
+    ));
+
+    ready_tx
+        .send(Ok(()))
+        .map_err(|_| io::Error::other("failed to report quic transport readiness"))?;
+
+    let send_result = run_send_loop(
+        stop,
+        pid,
+        endpoint.clone(),
+        client_config,
+        peer_addrs,
+        inbound_tx,
+        inbound_len,
+        recv_frames,
+        wakeup_counter,
+        outbound_rx,
+        outbound_len,
+        sent_frames,
+        connect_retries,
+        send_retries,
+    )
+    .await;
+
+    endpoint.close(0u32.into(), b"shutdown");
+    let _ = accept_handle.await;
+    send_result
+}
+
+async fn bind_socket_with_retry(socket_addr: SocketAddr) -> io::Result<UdpSocket> {
+    let mut last_error = None;
+    for _attempt in 0..SOCKET_BIND_RETRIES {
         match UdpSocket::bind(socket_addr) {
-            Ok(s) => {
-                socket = Some(s);
-                break;
-            }
-            Err(_) => {
+            Ok(socket) => return Ok(socket),
+            Err(err) => {
+                last_error = Some(err);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
     }
-    let socket = match socket {
-        Some(s) => s,
-        None => {
-            return;
-        }
-    };
+    Err(last_error.unwrap_or_else(|| io::Error::other("failed to bind quic socket")))
+}
 
-    let endpoint = match quinn::Endpoint::new(
-        quinn::EndpointConfig::default(),
-        Some(server_config),
-        socket,
-        Arc::new(quinn::TokioRuntime),
-    ) {
-        Ok(ep) => Arc::new(ep),
-        Err(_e) => {
-            return;
-        }
-    };
-
-    let client_crypto = match build_client_crypto(&cert_der) {
-        Ok(c) => c,
-        Err(_e) => {
-            return;
-        }
-    };
-    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
-
-    let connections: Arc<Mutex<Vec<Option<quinn::Connection>>>> =
-        Arc::new(Mutex::new(vec![None; peer_addrs.len()]));
-
-    // ── Accept task (runs while we connect) ────────────────────────────
-    let accept_ep = Arc::clone(&endpoint);
-    let accept_stop = Arc::clone(&stop);
-    tokio::spawn(async move {
-        while let Some(incoming) = accept_ep.accept().await {
-            let tx = inbound_tx.clone();
-            let len = Arc::clone(&inbound_len);
-            let frames = Arc::clone(&recv_frames);
-            let waker = Arc::clone(&wakeup_counter);
-            tokio::spawn(async move {
-                let Ok(conn) = incoming.await else { return };
-                loop {
-                    match conn.accept_uni().await {
-                        Ok(stream) => {
-                            let tx = tx.clone();
-                            let len = Arc::clone(&len);
-                            let frames = Arc::clone(&frames);
-                            let waker = Arc::clone(&waker);
-                            tokio::spawn(async move {
-                                if let Ok(data) = read_stream_to_end(stream).await {
-                                    len.fetch_add(1, Ordering::Relaxed);
-                                    frames.fetch_add(1, Ordering::Relaxed);
-                                    waker.notify();
-                                    let _ = tx.send(data);
-                                }
-                            });
-                        }
-                        Err(quinn::ConnectionError::ApplicationClosed { .. }) => break,
-                        Err(_) => continue,
+async fn run_accept_loop(
+    endpoint: Arc<quinn::Endpoint>,
+    stop: Arc<AtomicBool>,
+    inbound_tx: Sender<Vec<u8>>,
+    inbound_len: Arc<AtomicUsize>,
+    recv_frames: Arc<AtomicUsize>,
+    wakeup_counter: Arc<WakeupCounter>,
+) {
+    while !stop.load(Ordering::Relaxed) {
+        let Some(incoming) = endpoint.accept().await else {
+            break;
+        };
+        let tx = inbound_tx.clone();
+        let len = Arc::clone(&inbound_len);
+        let frames = Arc::clone(&recv_frames);
+        let waker = Arc::clone(&wakeup_counter);
+        tokio::spawn(async move {
+            let Ok(conn) = incoming.await else { return };
+            loop {
+                match conn.accept_uni().await {
+                    Ok(stream) => {
+                        let tx = tx.clone();
+                        let len = Arc::clone(&len);
+                        let frames = Arc::clone(&frames);
+                        let waker = Arc::clone(&waker);
+                        tokio::spawn(async move {
+                            if let Ok(data) = read_stream_to_end(stream).await {
+                                len.fetch_add(1, Ordering::Relaxed);
+                                frames.fetch_add(1, Ordering::Relaxed);
+                                waker.notify();
+                                let _ = tx.send(data);
+                            }
+                        });
                     }
+                    Err(quinn::ConnectionError::ApplicationClosed { .. }) => break,
+                    Err(_) => break,
                 }
-            });
-        }
-    });
-    tokio::task::yield_now().await;
-    // ── Connect to every peer (with retry) ─────────────────────────────
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let mut client_endpoints: Vec<quinn::Endpoint> = Vec::with_capacity(peer_addrs.len());
+            }
+        });
+    }
+}
 
-    for (target_pid, addr) in peer_addrs.iter().enumerate() {
-        if target_pid == pid {
+#[allow(clippy::too_many_arguments)]
+async fn run_send_loop(
+    stop: Arc<AtomicBool>,
+    pid: usize,
+    endpoint: Arc<quinn::Endpoint>,
+    client_config: quinn::ClientConfig,
+    peer_addrs: Vec<SocketAddr>,
+    inbound_tx: Sender<Vec<u8>>,
+    inbound_len: Arc<AtomicUsize>,
+    recv_frames: Arc<AtomicUsize>,
+    wakeup_counter: Arc<WakeupCounter>,
+    outbound_rx: Receiver<(usize, Vec<u8>)>,
+    outbound_len: Arc<AtomicUsize>,
+    sent_frames: Arc<AtomicUsize>,
+    connect_retries: Arc<AtomicUsize>,
+    send_retries: Arc<AtomicUsize>,
+) -> io::Result<()> {
+    let mut connections: Vec<Option<quinn::Connection>> = vec![None; peer_addrs.len()];
+    loop {
+        let (recipient, payload) = match outbound_rx.recv_timeout(POLL_INTERVAL) {
+            Ok(item) => item,
+            Err(RecvTimeoutError::Timeout) => {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        outbound_len.fetch_sub(1, Ordering::Relaxed);
+
+        if recipient == pid {
+            sent_frames.fetch_add(1, Ordering::Relaxed);
+            recv_frames.fetch_add(1, Ordering::Relaxed);
+            inbound_len.fetch_add(1, Ordering::Relaxed);
+            wakeup_counter.notify();
+            inbound_tx.send(payload).map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "loopback receiver disconnected")
+            })?;
             continue;
         }
-        let client_socket = match UdpSocket::bind("127.0.0.1:0") {
-            Ok(s) => s,
-            Err(_e) => {
-                continue;
-            }
-        };
-        let client_ep = match quinn::Endpoint::new(
-            quinn::EndpointConfig::default(),
-            None,
-            client_socket,
-            Arc::new(quinn::TokioRuntime),
-        ) {
-            Ok(ep) => ep,
-            Err(_e) => {
-                continue;
-            }
-        };
 
-        let mut connected = false;
-        for attempt in 0..100 {
-            match client_ep.connect_with(client_config.clone(), *addr, "localhost") {
-                Ok(connecting) => match connecting.await {
-                    Ok(conn) => {
-                        if let Ok(mut guard) = connections.lock() {
-                            guard[target_pid] = Some(conn);
-                        }
-                        connected = true;
-                        break;
-                    }
-                    Err(_e) => {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                },
-                Err(_e) => {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            }
-        }
-        if connected {
-            client_endpoints.push(client_ep);
-        }
+        send_payload_with_retry(
+            endpoint.as_ref(),
+            &client_config,
+            &peer_addrs,
+            &mut connections,
+            recipient,
+            &payload,
+            stop.as_ref(),
+            connect_retries.as_ref(),
+            send_retries.as_ref(),
+        )
+        .await?;
+        sent_frames.fetch_add(1, Ordering::Relaxed);
     }
+    Ok(())
+}
 
-    // ── Send task ──────────────────────────────────────────────────────
-    let send_conns = Arc::clone(&connections);
-    let send_stop = Arc::clone(&stop);
-    tokio::spawn(async move {
-        loop {
-            let (recipient, payload) = match outbound_rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(item) => item,
-                Err(RecvTimeoutError::Timeout) => {
-                    if send_stop.load(Ordering::Relaxed) {
-                        break;
+async fn send_payload_with_retry(
+    endpoint: &quinn::Endpoint,
+    client_config: &quinn::ClientConfig,
+    peer_addrs: &[SocketAddr],
+    connections: &mut [Option<quinn::Connection>],
+    recipient: usize,
+    payload: &[u8],
+    stop: &AtomicBool,
+    connect_retries: &AtomicUsize,
+    send_retries: &AtomicUsize,
+) -> io::Result<()> {
+    let mut attempts = 0usize;
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let conn = ensure_connection(
+            endpoint,
+            client_config,
+            peer_addrs,
+            connections,
+            recipient,
+            stop,
+            connect_retries,
+        )
+        .await?;
+        match conn.open_uni().await {
+            Ok(mut send) => {
+                if let Err(err) = send.write_all(payload).await {
+                    attempts += 1;
+                    send_retries.fetch_add(1, Ordering::Relaxed);
+                    connections[recipient] = None;
+                    if attempts >= SEND_RETRY_LIMIT {
+                        return Err(io::Error::other(format!(
+                            "failed to write quic frame to recipient {recipient}: {err}"
+                        )));
                     }
+                    tokio::time::sleep(RETRY_BACKOFF).await;
                     continue;
                 }
-                Err(RecvTimeoutError::Disconnected) => break,
-            };
-            outbound_len.fetch_sub(1, Ordering::Relaxed);
-
-            let conn = {
-                let guard = send_conns.lock().unwrap();
-                guard.get(recipient).and_then(|c| c.as_ref()).cloned()
-            };
-            if let Some(conn) = conn {
-                match conn.open_uni().await {
-                    Ok(mut send) => {
-                        if send.write_all(&payload).await.is_ok() {
-                            let _ = send.finish();
-                            sent_frames.fetch_add(1, Ordering::Relaxed);
-                        }
+                if let Err(err) = send.finish() {
+                    attempts += 1;
+                    send_retries.fetch_add(1, Ordering::Relaxed);
+                    connections[recipient] = None;
+                    if attempts >= SEND_RETRY_LIMIT {
+                        return Err(io::Error::other(format!(
+                            "failed to finish quic frame for recipient {recipient}: {err}"
+                        )));
                     }
-                    Err(_e) => {}
+                    tokio::time::sleep(RETRY_BACKOFF).await;
+                    continue;
                 }
-            } else {
+                return Ok(());
             }
-
-            if send_stop.load(Ordering::Relaxed) {
-                break;
+            Err(err) => {
+                attempts += 1;
+                send_retries.fetch_add(1, Ordering::Relaxed);
+                connections[recipient] = None;
+                if attempts >= SEND_RETRY_LIMIT {
+                    return Err(io::Error::other(format!(
+                        "failed to open quic stream for recipient {recipient}: {err}"
+                    )));
+                }
+                tokio::time::sleep(RETRY_BACKOFF).await;
             }
         }
-    });
+    }
+}
 
-    // ── Wait until stopped ─────────────────────────────────────────────
-    loop {
-        tokio::time::sleep(Duration::from_millis(200)).await;
+async fn ensure_connection(
+    endpoint: &quinn::Endpoint,
+    client_config: &quinn::ClientConfig,
+    peer_addrs: &[SocketAddr],
+    connections: &mut [Option<quinn::Connection>],
+    recipient: usize,
+    stop: &AtomicBool,
+    connect_retries: &AtomicUsize,
+) -> io::Result<quinn::Connection> {
+    if let Some(conn) = connections.get(recipient).and_then(|conn| conn.as_ref()) {
+        return Ok(conn.clone());
+    }
+
+    for _attempt in 0..CONNECT_RETRY_LIMIT {
         if stop.load(Ordering::Relaxed) {
-            break;
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "quic transport stopped while connecting",
+            ));
+        }
+        let connecting = endpoint
+            .connect_with(client_config.clone(), peer_addrs[recipient], "localhost")
+            .map_err(io::Error::other);
+        match connecting {
+            Ok(connecting) => match connecting.await {
+                Ok(conn) => {
+                    connections[recipient] = Some(conn.clone());
+                    return Ok(conn);
+                }
+                Err(err) => {
+                    connect_retries.fetch_add(1, Ordering::Relaxed);
+                    tokio::time::sleep(RETRY_BACKOFF).await;
+                    if stop.load(Ordering::Relaxed) {
+                        return Err(io::Error::other(err));
+                    }
+                }
+            },
+            Err(_err) => {
+                connect_retries.fetch_add(1, Ordering::Relaxed);
+                tokio::time::sleep(RETRY_BACKOFF).await;
+            }
         }
     }
 
-    endpoint.close(0u32.into(), b"shutdown");
+    Err(io::Error::other(format!(
+        "failed to connect to recipient {recipient} after {CONNECT_RETRY_LIMIT} attempts"
+    )))
 }
 
 async fn read_stream_to_end(mut recv: quinn::RecvStream) -> io::Result<Vec<u8>> {
@@ -468,6 +683,18 @@ async fn read_stream_to_end(mut recv: quinn::RecvStream) -> io::Result<Vec<u8>> 
         }
     }
     Ok(buf)
+}
+
+fn set_runtime_error(runtime_error: &Arc<Mutex<Option<String>>>, message: impl Into<String>) {
+    if let Ok(mut guard) = runtime_error.lock()
+        && guard.is_none()
+    {
+        *guard = Some(message.into());
+    }
+}
+
+fn runtime_error_snapshot(runtime_error: &Arc<Mutex<Option<String>>>) -> Option<String> {
+    runtime_error.lock().ok().and_then(|guard| guard.clone())
 }
 
 #[derive(Debug)]
@@ -508,5 +735,68 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
             rustls::SignatureScheme::RSA_PKCS1_SHA256,
             rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QuicTransport;
+    use crate::handle::NetworkFaultConfig;
+    use std::net::UdpSocket;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn immediate_send_after_startup_reaches_receiver() {
+        let reserved = (0..2)
+            .map(|_| UdpSocket::bind("127.0.0.1:0").expect("should reserve loopback udp port"))
+            .collect::<Vec<_>>();
+        let addresses = reserved
+            .iter()
+            .map(|socket| {
+                let addr = socket
+                    .local_addr()
+                    .expect("socket should expose local addr");
+                (String::from("127.0.0.1"), addr.port())
+            })
+            .collect::<Vec<_>>();
+        drop(reserved);
+
+        let sender = QuicTransport::new(0, addresses.clone(), NetworkFaultConfig::default())
+            .expect("sender transport should bind");
+        let receiver = QuicTransport::new(1, addresses, NetworkFaultConfig::default())
+            .expect("receiver transport should bind");
+
+        for payload in [b"one".as_slice(), b"two".as_slice(), b"three".as_slice()] {
+            sender
+                .send(1, payload)
+                .expect("quic frame should enqueue successfully");
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut received = Vec::new();
+        while Instant::now() < deadline && received.len() < 3 {
+            for payload in receiver
+                .recv_batch(3 - received.len())
+                .expect("receiver should stay connected")
+            {
+                received.push(payload);
+            }
+            if received.len() < 3 {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        assert_eq!(
+            received.len(),
+            3,
+            "receiver should collect all queued frames"
+        );
+        assert_eq!(received[0], b"one");
+        assert_eq!(received[1], b"two");
+        assert_eq!(received[2], b"three");
+
+        sender.close().expect("sender should close cleanly");
+        receiver.close().expect("receiver should close cleanly");
     }
 }

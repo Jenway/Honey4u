@@ -23,6 +23,10 @@ enum WorkerCommand {
         limit: usize,
         response: Sender<Result<Vec<AcsEvent>, String>>,
     },
+    FinishRound {
+        round_id: usize,
+        response: Sender<Result<(), String>>,
+    },
     OutboundReady {
         response: Sender<Result<bool, String>>,
     },
@@ -126,6 +130,23 @@ where
         }
     }
 
+    fn worker_error_snapshot(&self) -> Result<Option<String>, String> {
+        self.state
+            .worker_error
+            .lock()
+            .map(|slot| slot.clone())
+            .map_err(|_| String::from("threaded ACS host worker error poisoned"))
+    }
+
+    fn ensure_worker_healthy(&self) -> Result<(), String> {
+        if let Some(error) = self.worker_error_snapshot()? {
+            return Err(format!(
+                "threaded ACS host worker failed previously: {error}"
+            ));
+        }
+        Ok(())
+    }
+
     fn send_sync<T>(
         &self,
         build: impl FnOnce(Sender<Result<T, String>>) -> WorkerCommand,
@@ -156,6 +177,7 @@ where
     }
 
     fn start_round(&self, round_id: usize, sid: &str, proposal_input: &[u8]) -> Result<(), String> {
+        self.ensure_worker_healthy()?;
         self.record_processed_command();
         self.state
             .command_counts
@@ -166,10 +188,12 @@ where
             sid: sid.to_owned(),
             proposal_input: proposal_input.to_vec(),
             response,
-        })
+        })?;
+        self.ensure_worker_healthy()
     }
 
     fn push_inbound_wire_batch(&self, items: &[Vec<u8>]) -> Result<usize, String> {
+        self.ensure_worker_healthy()?;
         self.record_processed_command();
         self.state
             .command_counts
@@ -191,10 +215,14 @@ where
     }
 
     fn outbound_ready(&self) -> Result<bool, String> {
-        self.send_sync(|response| WorkerCommand::OutboundReady { response })
+        self.ensure_worker_healthy()?;
+        let ready = self.send_sync(|response| WorkerCommand::OutboundReady { response })?;
+        self.ensure_worker_healthy()?;
+        Ok(ready)
     }
 
     fn begin_pull_outbound_wire_batch(&self, limit: usize) -> Result<(), String> {
+        self.ensure_worker_healthy()?;
         self.record_processed_command();
         self.state
             .command_counts
@@ -227,6 +255,7 @@ where
                     .batch_item_counts
                     .pull_outbound_wire_batch_items
                     .fetch_add(events.len(), Ordering::Relaxed);
+                self.ensure_worker_healthy()?;
                 Ok(events)
             }
             Ok(Err(error)) => {
@@ -237,6 +266,10 @@ where
                 "threaded ACS host worker stopped unexpectedly",
             )),
         }
+    }
+
+    fn finish_round(&self, round_id: usize) -> Result<(), String> {
+        self.send_sync(|response| WorkerCommand::FinishRound { round_id, response })
     }
 
     fn stats(&self) -> Result<AcsBackendStats, String> {
@@ -331,6 +364,11 @@ where
                 update_worker_error(&state, result.as_ref().err().cloned());
                 let _ = response.send(result);
             }
+            WorkerCommand::FinishRound { round_id, response } => {
+                let result = inner.finish_round(round_id);
+                update_worker_error(&state, result.as_ref().err().cloned());
+                let _ = response.send(result);
+            }
             WorkerCommand::OutboundReady { response } => {
                 let result = inner.outbound_ready();
                 update_worker_error(&state, result.as_ref().err().cloned());
@@ -367,4 +405,110 @@ fn thread_id_u64(thread_id: thread::ThreadId) -> u64 {
         .and_then(|rest| rest.strip_suffix(')'))
         .and_then(|digits| digits.parse::<u64>().ok())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct AsyncFailBackend {
+        failed_inbound: AtomicBool,
+    }
+
+    impl AsyncFailBackend {
+        fn new() -> Self {
+            Self {
+                failed_inbound: AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl AcsBackend for AsyncFailBackend {
+        fn pid(&self) -> usize {
+            0
+        }
+
+        fn start_round(
+            &self,
+            _round_id: usize,
+            _sid: &str,
+            _proposal_input: &[u8],
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn push_inbound_wire_batch(&self, items: &[Vec<u8>]) -> Result<usize, String> {
+            if !items.is_empty() {
+                self.failed_inbound.store(true, Ordering::Relaxed);
+                return Err(String::from("synthetic inbound failure"));
+            }
+            Ok(0)
+        }
+
+        fn outbound_ready(&self) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn begin_pull_outbound_wire_batch(&self, _limit: usize) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn finish_pull_outbound_wire_batch(&self) -> Result<Vec<AcsEvent>, String> {
+            Ok(Vec::new())
+        }
+
+        fn finish_round(&self, _round_id: usize) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn stats(&self) -> Result<AcsBackendStats, String> {
+            Ok(AcsBackendStats {
+                worker_ident: 0,
+                rounds_started: 0,
+                rounds_finished: 0,
+                processed_commands: 0,
+                bridge_queue_size: 0,
+                worker_running: true,
+                worker_error: None,
+                start_round_calls: 0,
+                push_inbound_wire_batch_calls: 0,
+                push_inbound_wire_batch_items: 0,
+                pull_outbound_wire_batch_calls: 0,
+                pull_outbound_wire_batch_items: 0,
+                stats_calls: 0,
+            })
+        }
+
+        fn shutdown(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn async_inbound_failure_surfaces_on_next_sync_call() {
+        let backend = ThreadedAcsBackend::new(AsyncFailBackend::new());
+        backend
+            .push_inbound_wire_batch(&[vec![1, 2, 3]])
+            .expect("async push should still enqueue");
+
+        let error = backend
+            .outbound_ready()
+            .expect_err("next sync call should surface stored worker error");
+        assert!(error.contains("synthetic inbound failure"));
+
+        backend.shutdown().expect("shutdown should still succeed");
+    }
+
+    #[test]
+    fn shutdown_still_works_after_async_inbound_failure() {
+        let backend = ThreadedAcsBackend::new(AsyncFailBackend::new());
+        backend
+            .push_inbound_wire_batch(&[vec![9]])
+            .expect("async push should still enqueue");
+
+        backend
+            .shutdown()
+            .expect("shutdown must bypass prior worker error state");
+    }
 }

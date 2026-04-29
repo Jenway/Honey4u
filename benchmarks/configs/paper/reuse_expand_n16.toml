@@ -1,0 +1,53 @@
+[suite]
+name = "reuse_expand_n16"
+
+[defaults]
+rounds = 12
+repeats = 1
+global_timeout = 150.0
+transport = "quic"
+pool_grace_ms = 0
+pool_reuse_limit_per_round = 1
+pool_expire_rounds = 3
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "rust_fin_core_delay_batch_n16"
+description = "Expand the 4-slow-node core band by sweeping delay magnitude and batch size."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [16]
+batch_size = [1024, 1536, 2048]
+network_faults = [
+  { label = "slow15p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 15 } },
+  { label = "slow20p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 20 } },
+  { label = "slow25p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 25 } },
+  { label = "slow30p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 30 } },
+]
+
+[[experiments]]
+name = "rust_fin_boundary_delay_batch_n16"
+description = "Compare the core band against a heavier 5-slow-node boundary."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [16]
+batch_size = [1024, 1536, 2048]
+network_faults = [
+  { label = "slow20p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 20 } },
+  { label = "slow25p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 25 } },
+]
+
+[[experiments]]
+name = "python_dumbo_probe_n16"
+description = "Small Python Dumbo probe inside the safer 4-slow-node band."
+backend = ["python_dumbo"]
+reuse_enabled = [false, true]
+nodes = [16]
+batch_size = [512, 768]
+rounds = 6
+global_timeout = 180.0
+network_faults = [
+  { label = "slow20p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 20 } },
+]

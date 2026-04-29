@@ -13,19 +13,31 @@ pub(super) struct AcsPumpOutcome {
     pub(super) progressed: bool,
 }
 
+pub(super) struct AcsPumpState<'a> {
+    pub(super) inbound_acs_wire: &'a mut Vec<Vec<u8>>,
+    pub(super) proposal_store: &'a mut ProposalStore,
+    pub(super) selected_proposal_ids: &'a mut Option<Vec<String>>,
+    pub(super) acs_decision_at: &'a mut Option<Instant>,
+    pub(super) metrics: &'a mut RoundMetricsRecorder,
+}
+
 pub(super) fn pump_acs_host(
     ctx: &DriverRoundCtx<'_>,
     round_id: usize,
-    inbound_acs_wire: &mut Vec<Vec<u8>>,
-    proposal_store: &mut ProposalStore,
-    selected_proposal_ids: &mut Option<Vec<String>>,
-    acs_decision_at: &mut Option<Instant>,
-    metrics: &mut RoundMetricsRecorder,
+    state: AcsPumpState<'_>,
+    accept_inbound_acs: bool,
 ) -> DriverResult<AcsPumpOutcome> {
+    let AcsPumpState {
+        inbound_acs_wire,
+        proposal_store,
+        selected_proposal_ids,
+        acs_decision_at,
+        metrics,
+    } = state;
     let mut progressed = false;
     let mut pushed_inbound = false;
 
-    if selected_proposal_ids.is_none() && !inbound_acs_wire.is_empty() {
+    if accept_inbound_acs && !inbound_acs_wire.is_empty() {
         let batch = std::mem::take(inbound_acs_wire);
         let push_start = Instant::now();
         ctx.host
@@ -142,6 +154,9 @@ fn handle_acs_event(
             selected_proposal_ids: event_selected_proposal_ids,
         } => {
             require_event_round(round_id, event_round_id, "decision")?;
+            if selected_proposal_ids.is_some() {
+                return Ok(());
+            }
             if acs_decision_at.is_none() {
                 *acs_decision_at = Some(Instant::now());
             }

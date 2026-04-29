@@ -1,0 +1,44 @@
+[suite]
+name = "reuse_broad_range_n16"
+
+[defaults]
+rounds = 8
+repeats = 1
+global_timeout = 120.0
+transport = "quic"
+pool_grace_ms = 0
+pool_reuse_limit_per_round = 1
+pool_expire_rounds = 3
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "reuse_band_core_n16"
+description = "Focused band scan around the promising high-pressure region after excluding known timeout-prone low-pressure cases."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [16]
+batch_size = [768, 1024, 1536, 2048]
+network_faults = [
+  { label = "slow20p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 20 } },
+  { label = "slow30p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 30 } },
+  { label = "slow20p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 20 } },
+  { label = "slow25p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 25 } },
+]
+
+[[experiments]]
+name = "reuse_band_long_n16"
+description = "Longer-window confirmation to separate warm-up effects from true steady-state reuse benefit."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [16]
+batch_size = [768, 1024, 1536, 2048]
+rounds = 16
+repeats = 1
+global_timeout = 180.0
+network_faults = [
+  { label = "slow20p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 20 } },
+  { label = "slow30p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 30 } },
+  { label = "slow20p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 20 } },
+]

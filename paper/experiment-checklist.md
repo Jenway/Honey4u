@@ -7,22 +7,22 @@
 ## 任务书完成度判断
 
 - 一句话判断：
-  - 任务书的协议实现与实验主线可视为已完成，当前剩余工作主要是论文终稿收口、图表附录整理与最小跨机复现。
+  - 任务书的协议实现主线可视为已完成；当前 checkout 需要恢复或重跑正式结果后，才能把实验主线作为终稿证据封口。
 
 | 条件 | 当前判断 | 说明 |
 | --- | --- | --- |
 | 跨轮次复用模块实现 | 已完成 | Python/Rust 双侧的提案编码、复用池、引用与 fetch 边界都已落地 |
-| 安全性与活性不退化 | 当前范围内已验证 | 现有 runtime/integration/benchmark 检查未观察到已支持场景下的一致性或活性回归，但最终定稿仍应以冻结版本重跑留档 |
-| 高负载吞吐提升至少 10% | 已完成 | `paper-final-highload-20260421T182250Z` 中 Python 路径约 `+38%` 至 `+43%`，Rust FIN 风格路径约 `+21%` 至 `+28%` |
-| 稳定系统、完整文档与论文 | 部分完成 | 代码与最小正式实验包基本齐备，剩余工作是论文终稿、图表回填与措辞收口 |
+| 安全性与活性不退化 | 需要冻结结果复核 | runtime/integration/benchmark 检查链路存在，但最终定稿仍应以当前 checkout 的成功结果目录留档 |
+| 高负载吞吐提升至少 10% | 待恢复/重跑确认 | 旧稿记录了正收益，但当前 checkout 未包含对应 `paper-final-*` 目录 |
+| 稳定系统、完整文档与论文 | 部分完成 | 代码与实验配置基本齐备，剩余工作是结果证据重建、论文终稿、图表回填与措辞收口 |
 
-按当前仓库状态看，任务书的核心代码目标已经基本完成。真正还没有封口的是“最终论文成稿”和结果整合，而不是协议核心缺功能或最小正式实验缺口。
+按当前仓库状态看，任务书的核心代码目标已经基本完成。真正还没有封口的是“最终论文成稿”和结果证据重建，而不是协议核心缺功能。
 
 ### 任务书可视为全部完成的判据
 
 同时满足以下四项时，可以把当前课题视为完成交付：
 
-1. `paper/main-codex-refer.typ` 已收敛为终稿级正文，表格、图注、附录位置与有效性威胁表述都已定稿。
+1. `paper/main_refer.typ` 已收敛为终稿级正文，表格、图注、附录位置与有效性威胁表述都已定稿，且精确实验数字都能追溯到当前存在的结果目录。
 2. 至少完成一次最小跨机器趋势复现，并保留结果目录、配置文件与运行元信息。
 3. 论文封面人工信息已经填写完整，终稿 PDF 可以稳定编译导出。
 4. 最终论文口径已经统一：
@@ -47,25 +47,24 @@
 
 ### P0：封版必需
 
-- 将 `paper-final-highload-20260421T182250Z`、`paper-final-grace-python-20260421T191900Z` 与
-  `paper-final-boundary-20260421T180132Z` 回填进论文图表与正文论证
-- 收紧论文措辞，明确哪些结论来自已归档结果，哪些只是增强项或未来工作
+- 恢复或重跑 `paper-final-highload-*`、`paper-final-grace-python-*` 与边界场景结果，并回填进论文图表与正文论证
+- 收紧论文措辞，明确哪些结论来自当前可复核结果，哪些只是增强项或未来工作
 
-当前最小正式实验包已经齐备：`highload_n12`、`grace_python_n12_micro`、`slow_honest_n12`、
-`byzantine_silent_n12` 与 `byzantine_invalid_fetch_response_n12` 都已有归档结果。现在真正的 P0
-已经从“继续补冻结实验”转成“把现有结果准确、克制地写进论文”。没有必要在这些工作之前继续扩协议版图或网络系统复杂度。
+当前最小正式实验包的配置已经齐备：`highload_n12`、`grace_python_n12_micro`、`slow_honest_n12`、
+`byzantine_silent_n12` 与 `byzantine_invalid_fetch_response_n12` 都能从现有 TOML suite 展开。现在真正的 P0
+是恢复旧归档或重跑冻结实验，并把可复核结果准确、克制地写进论文。没有必要在这些工作之前继续扩协议版图或网络系统复杂度。
 
 ### P1：交付前应完成
 
 - 一次跨机器最小复现
 - 基于冻结结果补论文图表和“恶意行为计数”摘要表
-- 把已归档的 `network_fixed_delay_n12` 整理成附录级压力测试说明
+- 把可复核的 `network_fixed_delay_n12` 整理成附录级压力测试说明
 
 其中，跨机器最小复现同时属于最终交付判据；后两项更接近论文说明力增强，但仍建议在终稿前一并完成。
 
 ### 当前建议执行顺序
 
-1. 先把现有五组正式归档结果完整回填到正文与附录。
+1. 先恢复或重跑五组正式结果，并完整回填到正文与附录。
 2. 再做一次最小跨机器趋势复现，而不是额外扩展实验矩阵。
 3. 最后填写封面信息、检查图注/交叉引用并导出终稿 PDF。
 
@@ -83,45 +82,39 @@
 
 这些方向都可能有研究价值，但在论文结果与终稿没有锁定之前，它们只会增加工作面，而不会提高当前任务书的完成度。
 
-## 当前可直接引用的已归档结果
+## 当前结果目录状态
 
-- 高负载主结果正式归档：
-  `benchmarks/results/paper-final-highload-20260421T182250Z/`
-- Python Grace 微实验正式归档：
-  `benchmarks/results/paper-final-grace-python-20260421T191900Z/`
-- 随机抖动正式归档：
-  `benchmarks/results/paper-final-network-jitter-20260422T000021Z/`
-- 固定延迟压力测试正式归档：
-  `benchmarks/results/paper-final-network-fixed-delay-20260422T020028Z/`
-- 边界场景 focused rerun：
-  `benchmarks/results/paper-final-boundary-20260421T180132Z/`
-- 大规模 reuse sweep：
-  `benchmarks/results/dumbo_reuse_sweep_20260408_large/`
-- Python vs Rust FIN-style 后端比较：
-  `benchmarks/results/dumbo-backend-reuse-20260410T093234Z/`
+旧清单曾引用 `paper-final-highload-*`、`paper-final-grace-python-*`、`paper-final-network-*`、`paper-final-boundary-*`、reuse sweep 和 backend compare 目录。但这些目录当前不在 `benchmarks/results/` 中。
 
-这些结果已经足够支撑当前论文主稿的主结论。正式定稿前，应以这五组正式归档目录为主更新正文与附录，把更早的历史结果仅作为补充趋势材料引用。
+当前可见目录为：
+
+- `benchmarks/results/dumbo-paper-suite-1777352017/`
+- `benchmarks/results/dumbo-paper-suite-1777352101/`
+- `benchmarks/results/dumbo-paper-suite-1777360203/`
+- `benchmarks/results/dumbo-paper-suite-1777360308/`
+
+其中带 `manifest.json` 的目录显示 `executed_runs == 0`，汇总 CSV/JSON 为空，不能直接作为终稿正式图表来源。正式定稿前，应恢复旧正式归档或用当前 TOML 配置重新生成可复核结果。
 
 当前状态补充：
 
-- `paper/main-codex-refer.typ` 已经按高负载、Grace、边界、jitter 与 fixed-delay 正式目录完成一轮正文回填
-- `typst compile paper/main-codex-refer.typ /tmp/honey4u-paper-check.pdf` 已通过
+- `paper/main_refer.typ` 已按当前源码结构修正了一轮路径和结果口径
+- `typst compile paper/main_refer.typ <output.pdf>` 应作为论文检查命令
 - 论文中的内部写作计划/样稿式附录文字已移除，当前剩余工作重点是图表导出、图注/威胁分析补强、跨机器最小复现、封面信息填写与措辞收口，而不是继续补最小正式实验包
 
-## 当前最新的统一重跑结果
+## 旧统一重跑记录
 
-- 高负载主结果正式归档：
+- 旧记录中的高负载主结果目录：
   `benchmarks/results/paper-final-highload-20260421T182250Z/`
-- Python Grace 微实验正式归档：
+- 旧记录中的 Python Grace 微实验目录：
   `benchmarks/results/paper-final-grace-python-20260421T191900Z/`
-- 随机抖动正式归档：
+- 旧记录中的随机抖动目录：
   `benchmarks/results/paper-final-network-jitter-20260422T000021Z/`
-- 固定延迟压力测试正式归档：
+- 旧记录中的固定延迟压力测试目录：
   `benchmarks/results/paper-final-network-fixed-delay-20260422T020028Z/`
-- 边界场景正式归档：
+- 旧记录中的边界场景目录：
   `benchmarks/results/paper-final-boundary-20260421T180132Z/`
 
-这五次归档当前都可以按正式材料看待，原因是：
+这些目录当前不在 checkout 中，不能按当前正式材料看待。旧记录曾给出的判断是：
 
 1. 四个目录的 `manifest.json` 都满足 `planned_runs == executed_runs`
 2. 四次运行的 `git.status_short` 都只包含文档或论文文件改动
@@ -131,7 +124,7 @@
 6. `paper-final-network-fixed-delay-20260422T020028Z` 中，`none/fixed10/fixed25` 三个标签下复用均保持正收益
 7. `paper-final-boundary-20260421T180132Z` 中，`slow_honest_n12` 三个标签均保持正收益，且两组最小拜占庭场景均完成归档
 
-因此，当前真正还缺的已经不是最小正式冻结实验，而是把这些结果稳妥地回填进论文，并补跨机器最小复现与固定延迟附录整理。
+因此，当前真正还缺的是恢复这些目录或重新生成等价正式结果，再把可复核结果稳妥地回填进论文，并补跨机器最小复现与固定延迟附录整理。
 
 ## 当前仍只适合趋势核对的预备网络结果
 
@@ -144,13 +137,13 @@
 
 1. 运行时工作树并非冻结状态。
 2. 部分网络 quick 结果只有单次重复。
-3. 其中固定延迟 quick 已被正式归档的 `paper-final-network-fixed-delay-20260422T020028Z/` 覆盖；若正文或附录需要引用固定延迟结果，应优先使用正式目录，而不是 quick 目录。
+3. 固定延迟 quick 只能作为趋势核对；若正文或附录需要引用固定延迟结果，应优先恢复或重跑正式目录，而不是引用 quick 目录。
 
 因此，这些目录适合用于当前论文主稿的趋势核对与实验方向确认，不应直接作为终稿正式图表来源。
 
 ## 当前最小拜占庭正式结果与边界
 
-当前已经有一组最小节点级恶意行为正式归档结果：
+旧记录中曾有一组最小节点级恶意行为正式归档结果：
 
 - `benchmarks/results/paper-final-boundary-20260421T180132Z/`
   - `byzantine_silent_n12`
@@ -195,7 +188,7 @@
 ```bash
 uv sync --dev --locked
 cargo build --release -p honey-node -p honey-bench
-typst compile paper/main-codex-refer.typ /tmp/honey4u-paper-check.pdf
+typst compile paper/main_refer.typ /tmp/honey4u-paper-check.pdf
 ```
 
 建议在正式跑实验前，再执行一次轻量 dry-run：
@@ -210,7 +203,7 @@ target/release/honey-bench suite \
 
 ### 阶段 A：正文必需结果
 
-这一阶段的结果已经具备正式归档目录。以下命令保留为“如需重新执行或在另一台机器复现时使用”的标准流程。
+这一阶段的旧结果目录当前缺失。以下命令保留为“重新执行或在另一台机器复现时使用”的标准流程。
 
 #### 1. 高负载主结果
 
@@ -285,7 +278,7 @@ target/release/honey-bench suite \
 用途：支撑“中大规模、高负载区间稳定受益”的叙述。
 
 当前仓库已有历史结果：
-`benchmarks/results/dumbo_reuse_sweep_20260408_large/`
+旧记录曾引用 `benchmarks/results/dumbo_reuse_sweep_20260408_large/`，但当前 checkout 未包含该目录。
 
 如果需要在冻结版本上重跑，使用：
 
@@ -307,7 +300,7 @@ uv run python benchmarks/cli/dumbo_reuse_sweep.py \
 用途：对应论文“后端比较结果”部分。
 
 当前仓库已有历史结果：
-`benchmarks/results/dumbo-backend-reuse-20260410T093234Z/`
+旧记录曾引用 `benchmarks/results/dumbo-backend-reuse-20260410T093234Z/`，但当前 checkout 未包含该目录。
 
 如果需要在冻结版本上重跑，使用：
 
@@ -348,7 +341,7 @@ target/release/honey-bench suite \
 配置文件：
 `benchmarks/configs/paper/dumbo_comprehensive.toml`
 
-当前已存在正式归档目录：
+旧记录中的正式归档目录：
 `benchmarks/results/paper-final-network-fixed-delay-20260422T020028Z/`
 
 ```bash
@@ -450,14 +443,14 @@ target/release/honey-bench suite \
 | 实验 | 建议数据源 | 对应论文部分 | 当前建议 |
 | --- | --- | --- | --- |
 | 高负载主结果 | `dumbo_comprehensive.toml` 中 `highload_n12` | 高负载主结果表 | 必跑 |
-| Grace 窗口敏感性 | `dumbo_grace_python_micro.toml` | Grace 窗口敏感性表 | 已归档 |
-| 慢诚实节点实验 | `dumbo_comprehensive.toml` 中 `slow_honest_n12` | “诚实但迟到”增强实验 | 已归档 |
+| Grace 窗口敏感性 | `dumbo_grace_python_micro.toml` | Grace 窗口敏感性表 | 配置已在，结果需重跑/恢复 |
+| 慢诚实节点实验 | `dumbo_comprehensive.toml` 中 `slow_honest_n12` | “诚实但迟到”增强实验 | 配置已在，结果需重跑/恢复 |
 | reuse_scale | `dumbo_comprehensive.toml` 中 `reuse_scale` | 规模趋势补充分析 | 建议跑，非阻塞 |
 | backend_compare | `dumbo_comprehensive.toml` 中 `backend_compare` 或专用 compare CLI | 后端比较结果 | 建议跑，非阻塞 |
-| network_jitter_n12 | `dumbo_comprehensive.toml` 中 `network_jitter_n12` | 网络扰动补充分析 | 已归档 |
-| network_fixed_delay_n12 | `dumbo_comprehensive.toml` 中 `network_fixed_delay_n12` | 压力测试/附录 | 已归档 |
-| byzantine_silent_n12 | `dumbo_comprehensive.toml` 中 `byzantine_silent_n12` | 运行时边界/鲁棒性补充 | 已归档 |
-| byzantine_invalid_fetch_response_n12 | `dumbo_comprehensive.toml` 中 `byzantine_invalid_fetch_response_n12` | 运行时边界/鲁棒性补充 | 已归档 |
+| network_jitter_n12 | `dumbo_comprehensive.toml` 中 `network_jitter_n12` | 网络扰动补充分析 | 配置已在，结果需重跑/恢复 |
+| network_fixed_delay_n12 | `dumbo_comprehensive.toml` 中 `network_fixed_delay_n12` | 压力测试/附录 | 配置已在，结果需重跑/恢复 |
+| byzantine_silent_n12 | `dumbo_comprehensive.toml` 中 `byzantine_silent_n12` | 运行时边界/鲁棒性补充 | 配置已在，结果需重跑/恢复 |
+| byzantine_invalid_fetch_response_n12 | `dumbo_comprehensive.toml` 中 `byzantine_invalid_fetch_response_n12` | 运行时边界/鲁棒性补充 | 配置已在，结果需重跑/恢复 |
 | Rust 参数敏感性 | `dumbo_comprehensive.toml` 中 `sensitivity_*` | 仅在 fetch 叙事稳定后考虑入正文 | 条件执行 |
 | 跨机器最小复现 | 复用已冻结配置与命令 | 可复现性补充说明 | 交付前应完成 |
 
@@ -466,10 +459,10 @@ target/release/honey-bench suite \
 在以下条件未满足前，不建议把相关数据写成论文主结果。
 
 1. Rust fetch 指标尚未在冻结版本的正式 benchmark 中形成稳定、可复现的非零观测。
-2. `rust_dumbo` 尚未形成与 `python`、`rust_fin` 同等成熟的已归档正式结果。
+2. `rust_dumbo` 尚未形成与 `python`、`rust_fin` 同等成熟的当前可复核正式结果。
 3. 当前 smoke/quick 网络结果来自未冻结工作树，不能直接写成正式图表。
 4. 固定延迟更适合作为压力测试，不应替代“诚实但迟到”主场景。
-5. 拜占庭节点注入当前仍处于最小能力阶段；虽然已有 `paper-final-boundary-20260421T180132Z/`，但仍不应写成“已全面验证拜占庭鲁棒性”。
+5. 拜占庭节点注入当前仍处于最小能力阶段；即使恢复旧 `paper-final-boundary-*` 结果，也不应写成“已全面验证拜占庭鲁棒性”。
 
 ## 每次正式运行后的验收清单
 
@@ -494,22 +487,22 @@ target/release/honey-bench suite \
 
 建议提交内容：
 
-- `honey-node/src/transport/`
-- `honey-node/src/driver_node/`
+- `honey-transport/src/`
+- `honey-node/src/driver/`
 - `benchmarks/honey-bench/src/drive_dumbo.rs`
 - `tests/runtime/test_network_local_nodes.py`
 
 按当前工作树，可直接归入这一提交的文件包括：
 
 - `benchmarks/honey-bench/src/drive_dumbo.rs`
-- `honey-node/src/driver_node/mod.rs`
-- `honey-node/src/driver_node/config/mod.rs`
-- `honey-node/src/driver_node/output.rs`
-- `honey-node/src/driver_node/round/loop.rs`
-- `honey-node/src/driver_node/round/state.rs`
-- `honey-node/src/driver_node/wire/fetch.rs`
-- `honey-node/src/transport/local_tcp.rs`
-- `honey-node/src/transport/mod.rs`
+- `honey-node/src/driver/mod.rs`
+- `honey-node/src/driver/config.rs`
+- `honey-node/src/driver/output.rs`
+- `honey-node/src/driver/round/loop.rs`
+- `honey-node/src/driver/round/state.rs`
+- `honey-node/src/driver/mempool/fetch.rs`
+- `honey-transport/src/tcp.rs`
+- `honey-transport/src/lib.rs`
 - `tests/runtime/test_network_local_nodes.py`
 
 建议提交说明：
@@ -556,7 +549,7 @@ feat(bench): add paper suite support for network perturbation experiments
 
 建议提交内容：
 
-- `paper/main-codex-refer.typ`
+- `paper/main_refer.typ`
 - `paper/experiment-checklist.md`
 - `AGENTS.md`
 - `TODO.md`
@@ -567,7 +560,7 @@ feat(bench): add paper suite support for network perturbation experiments
 - `TARGET.md`
 - `TODO.md`
 - `mid-term.md`
-- `paper/main-codex-refer.typ`
+- `paper/main_refer.typ`
 - `paper/experiment-checklist.md`
 
 建议提交说明：

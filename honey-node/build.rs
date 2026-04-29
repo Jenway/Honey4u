@@ -21,9 +21,9 @@ fn copy_python_dlls() {
         .as_ref()
         .and_then(|d| {
             Path::new(d)
-                .parent()  // out/
-                .and_then(|p| p.parent())  // build/<hash>/
-                .and_then(|p| p.parent())  // build/
+                .parent() // out/
+                .and_then(|p| p.parent()) // build/<hash>/
+                .and_then(|p| p.parent()) // build/
                 .map(|p| p.to_path_buf())
         })
         .unwrap_or_else(|| PathBuf::from("target").join(&profile));
@@ -51,15 +51,18 @@ fn find_python_dir() -> Option<PathBuf> {
     if let Some(exe) = env::var("PYO3_PYTHON").ok().or_else(|| {
         // pyo3-build-config may have set this during build
         env::var("DEP_PYTHON3_PYTHON_EXECUTABLE").ok()
-    }) {
-        if let Some(parent) = Path::new(&exe).parent() {
-            if parent.join("python314.dll").exists() {
-                return Some(parent.to_path_buf());
-            }
-            // uv places python.exe in the base dir, not Scripts/
-            if parent.parent().map(|p| p.join("python314.dll").exists()).unwrap_or(false) {
-                return Some(parent.parent().unwrap().to_path_buf());
-            }
+    }) && let Some(parent) = Path::new(&exe).parent()
+    {
+        if parent.join("python314.dll").exists() {
+            return Some(parent.to_path_buf());
+        }
+        // uv places python.exe in the base dir, not Scripts/
+        if parent
+            .parent()
+            .map(|p| p.join("python314.dll").exists())
+            .unwrap_or(false)
+        {
+            return Some(parent.parent().unwrap().to_path_buf());
         }
     }
 

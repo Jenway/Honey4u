@@ -1,0 +1,40 @@
+[suite]
+name = "reuse_sweep_safe_n16"
+
+[defaults]
+rounds = 16
+repeats = 2
+global_timeout = 120.0
+transport = "quic"
+pool_grace_ms = 0
+pool_reuse_limit_per_round = 1
+pool_expire_rounds = 3
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "reuse_sweep_core_n16"
+description = "Main stable sweep band: 4 delayed honest nodes, moderate delay, medium-to-large batches."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [16]
+batch_size = [1024, 1536, 2048]
+network_faults = [
+  { label = "slow15p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 15 } },
+  { label = "slow20p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 20 } },
+  { label = "slow25p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 25 } },
+  { label = "slow30p12_15", enabled = true, seed = 20260429, slow_honest = { pids = [12, 13, 14, 15], extra_delay_ms = 30 } },
+]
+
+[[experiments]]
+name = "reuse_sweep_boundary_n16"
+description = "Optional comparison boundary: heavier pressure with 5 delayed honest nodes."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [16]
+batch_size = [1024, 1536, 2048]
+network_faults = [
+  { label = "slow20p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 20 } },
+  { label = "slow25p11_15", enabled = true, seed = 20260429, slow_honest = { pids = [11, 12, 13, 14, 15], extra_delay_ms = 25 } },
+]

@@ -23,6 +23,112 @@ fn timing_summary_json(samples: &[f64]) -> Value {
     })
 }
 
+fn transport_stats_json(transport: &dyn TransportHandle) -> Value {
+    let transport_stats = transport.stats();
+    json!({
+        "sent_frames": transport_stats.sent_frames,
+        "recv_frames": transport_stats.recv_frames,
+        "connect_retries": transport_stats.connect_retries,
+        "send_retries": transport_stats.send_retries,
+        "delayed_frames": transport_stats.delayed_frames,
+        "total_injected_delay_ms": transport_stats.total_injected_delay_ms,
+        "network_fault_seed": transport_stats.network_fault_seed,
+        "configured_fixed_delay_ms": transport_stats.configured_fixed_delay_ms,
+        "configured_jitter_ms": transport_stats.configured_jitter_ms,
+        "configured_slow_honest_extra_delay_ms": transport_stats.configured_slow_honest_extra_delay_ms,
+    })
+}
+
+fn host_stats_json(host_stats: &AcsBackendStats) -> Value {
+    json!({
+        "worker_ident": host_stats.worker_ident,
+        "rounds_started": host_stats.rounds_started,
+        "rounds_finished": host_stats.rounds_finished,
+        "processed_commands": host_stats.processed_commands,
+        "bridge_queue_size": host_stats.bridge_queue_size,
+        "worker_running": host_stats.worker_running,
+        "worker_error": host_stats.worker_error.clone(),
+        "start_round_calls": host_stats.start_round_calls,
+        "push_inbound_wire_batch_calls": host_stats.push_inbound_wire_batch_calls,
+        "push_inbound_wire_batch_items": host_stats.push_inbound_wire_batch_items,
+        "pull_outbound_wire_batch_calls": host_stats.pull_outbound_wire_batch_calls,
+        "pull_outbound_wire_batch_items": host_stats.pull_outbound_wire_batch_items,
+        "stats_calls": host_stats.stats_calls,
+    })
+}
+
+fn driver_error_json(error: &DriverError) -> Value {
+    match error {
+        DriverError::Timeout {
+            round_id,
+            timeout_seconds,
+            stage,
+        } => json!({
+            "kind": "timeout",
+            "message": error.to_string(),
+            "round_id": round_id,
+            "timeout_seconds": timeout_seconds,
+            "stage": stage,
+        }),
+        DriverError::Acs { operation, message } => json!({
+            "kind": "acs",
+            "message": error.to_string(),
+            "operation": operation,
+            "detail": message,
+        }),
+        DriverError::Config(message) => json!({
+            "kind": "config",
+            "message": error.to_string(),
+            "detail": message,
+        }),
+        DriverError::Clock(message) => json!({
+            "kind": "clock",
+            "message": error.to_string(),
+            "detail": message,
+        }),
+        DriverError::Transport(err) => json!({
+            "kind": "transport",
+            "message": error.to_string(),
+            "detail": err.to_string(),
+        }),
+        DriverError::Wire(message) => json!({
+            "kind": "wire",
+            "message": error.to_string(),
+            "detail": message,
+        }),
+        DriverError::PoolFetch(message) => json!({
+            "kind": "pool_fetch",
+            "message": error.to_string(),
+            "detail": message,
+        }),
+        DriverError::ProposalResolution(err) => json!({
+            "kind": "proposal_resolution",
+            "message": error.to_string(),
+            "detail": err.to_string(),
+        }),
+        DriverError::HoneyBadgerCrypto(message) => json!({
+            "kind": "honey_badger_crypto",
+            "message": error.to_string(),
+            "detail": message,
+        }),
+        DriverError::Serialization(message) => json!({
+            "kind": "serialization",
+            "message": error.to_string(),
+            "detail": message,
+        }),
+        DriverError::Invariant(message) => json!({
+            "kind": "invariant",
+            "message": error.to_string(),
+            "detail": message,
+        }),
+        DriverError::Output(message) => json!({
+            "kind": "output",
+            "message": error.to_string(),
+            "detail": message,
+        }),
+    }
+}
+
 pub(in crate::driver) fn build_node_result_json(
     pid: usize,
     batch_size: usize,
@@ -64,7 +170,6 @@ pub(in crate::driver) fn build_node_result_json(
         .collect::<Vec<_>>();
     let delivered_total = round_delivered_counts.iter().sum::<usize>();
     let node_run_total = round_wall_latencies.iter().sum::<f64>();
-    let transport_stats = transport.stats();
     let round_details_json = run_result
         .round_details
         .iter()
@@ -134,18 +239,7 @@ pub(in crate::driver) fn build_node_result_json(
             "transport_outbound": queue_peaks.transport_outbound,
             "mailbox_round_inbox": 0usize,
         },
-        "transport_stats": {
-            "sent_frames": transport_stats.sent_frames,
-            "recv_frames": transport_stats.recv_frames,
-            "connect_retries": transport_stats.connect_retries,
-            "send_retries": transport_stats.send_retries,
-            "delayed_frames": transport_stats.delayed_frames,
-            "total_injected_delay_ms": transport_stats.total_injected_delay_ms,
-            "network_fault_seed": transport_stats.network_fault_seed,
-            "configured_fixed_delay_ms": transport_stats.configured_fixed_delay_ms,
-            "configured_jitter_ms": transport_stats.configured_jitter_ms,
-            "configured_slow_honest_extra_delay_ms": transport_stats.configured_slow_honest_extra_delay_ms,
-        },
+        "transport_stats": transport_stats_json(transport),
         "driver_stats": {
             "acs_pull_calls": acs_pull_calls.iter().sum::<usize>(),
             "acs_empty_pull_calls": acs_empty_pull_calls.iter().sum::<usize>(),
@@ -167,21 +261,7 @@ pub(in crate::driver) fn build_node_result_json(
                 .filter(|used| *used)
                 .count(),
         },
-        "host_stats": {
-            "worker_ident": host_stats.worker_ident,
-            "rounds_started": host_stats.rounds_started,
-            "rounds_finished": host_stats.rounds_finished,
-            "processed_commands": host_stats.processed_commands,
-            "bridge_queue_size": host_stats.bridge_queue_size,
-            "worker_running": host_stats.worker_running,
-            "worker_error": host_stats.worker_error,
-            "start_round_calls": host_stats.start_round_calls,
-            "push_inbound_wire_batch_calls": host_stats.push_inbound_wire_batch_calls,
-            "push_inbound_wire_batch_items": host_stats.push_inbound_wire_batch_items,
-            "pull_outbound_wire_batch_calls": host_stats.pull_outbound_wire_batch_calls,
-            "pull_outbound_wire_batch_items": host_stats.pull_outbound_wire_batch_items,
-            "stats_calls": host_stats.stats_calls,
-        },
+        "host_stats": host_stats_json(&host_stats),
         "byzantine_behavior": run_result.byzantine_behavior,
         "batch_size": batch_size,
         "per_round_selected_pids": run_result.per_round_selected_pids,
@@ -199,6 +279,28 @@ pub(in crate::driver) fn build_node_result_json(
                 .filter(|used| *used)
                 .count(),
         },
+    }))
+    .map_err(|err| DriverError::output(err.to_string()))
+}
+
+pub(in crate::driver) fn build_node_failure_json(
+    pid: usize,
+    batch_size: usize,
+    error: &DriverError,
+    host_stats: Option<&AcsBackendStats>,
+    host_stats_error: Option<&str>,
+    shutdown_error: Option<&str>,
+    transport: &dyn TransportHandle,
+) -> DriverResult<String> {
+    serde_json::to_string(&json!({
+        "pid": pid,
+        "status": "error",
+        "batch_size": batch_size,
+        "error": driver_error_json(error),
+        "host_stats": host_stats.map(host_stats_json),
+        "host_stats_error": host_stats_error,
+        "shutdown_error": shutdown_error,
+        "transport_stats": transport_stats_json(transport),
     }))
     .map_err(|err| DriverError::output(err.to_string()))
 }

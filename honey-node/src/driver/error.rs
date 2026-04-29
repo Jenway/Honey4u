@@ -27,10 +27,11 @@ pub(crate) enum DriverError {
     Serialization(String),
     #[error("driver invariant violated: {0}")]
     Invariant(String),
-    #[error("driver round {round_id}: timed out after {timeout_seconds:.3}s")]
+    #[error("driver round {round_id}: timed out after {timeout_seconds:.3}s while {stage}")]
     Timeout {
         round_id: usize,
         timeout_seconds: f64,
+        stage: String,
     },
     #[error("output error: {0}")]
     Output(String),
