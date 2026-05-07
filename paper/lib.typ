@@ -15,7 +15,7 @@
   grade: "",
   supervisor: "",
   date: "",
-  cover_logo: none,
+  cover_logo: "imgs/logo.svg",
   abstract_zh: [],
   keywords_zh: (),
   abstract_en: [],
@@ -85,8 +85,8 @@
   render-cover(info)
   pagebreak()
 
-  render-score-sheet(info)
-  pagebreak()
+  // render-score-sheet(info)
+  // pagebreak()
 
   // 4. 前置内容 (摘要)
   set page(header: [], footer: [])
@@ -98,14 +98,14 @@
   set page(header: [], footer: centered-page-number-fullwidth-roman)
   counter(page).update(1)
   front-title([目#h(2em)录])
-  set text(font: (..song,), size: 12pt)
+  set text(font: 宋体, size: fontsize.小四)
   set par(first-line-indent: 0em, justify: false)
   outline(title: none)
 
   // 6. 正文 (阿拉伯数字页码，带页眉)
   let body-header = context [
     #set align(center)
-    #set text(font: (..song,), size: 9pt)
+    #set text(font: 宋体, size: fontsize.小五)
     山东大学本科毕业论文（设计）
     #v(-0.55em)
     #line(length: 100%, stroke: 0.5pt)
@@ -114,8 +114,8 @@
   counter(page).update(1)
 
   // 正文样式设定
-  set text(font: (..song, en), size: 12pt)
-  set par(first-line-indent: (amount: 2em, all: true), leading: 6pt, justify: true)
+  set text(font: (宋体, en), size: fontsize.小四, top-edge: "ascender", bottom-edge: "descender")
+  set par(first-line-indent: (amount: 2em, all: true), leading: 23pt - 1em, spacing: 23pt - 1em, justify: true)
   set heading(numbering: "1.1")
 
   let heading-is-cjk(body) = {
@@ -131,30 +131,30 @@
 
   show heading.where(level: 1): it => {
     pagebreak(weak: true)
-    v(14.4pt)
+    v(18.4pt)
     align(center)[
-      #set text(font: (..hei,), size: if heading-is-cjk(it.body) { 16pt } else { 15pt }, weight: "bold")
+      #set text(font: 黑体, size: if heading-is-cjk(it.body) { fontsize.三号 } else { 15pt }, weight: "bold")
       #it
     ]
-    v(9pt)
+    v(11.5pt)
   }
 
   show heading.where(level: 2): it => {
-    v(9pt)
-    set text(font: (..hei,), size: if heading-is-cjk(it.body) { 14pt } else { 14pt }, weight: "bold")
+    v(11.5pt)
+    set text(font: 黑体, size: fontsize.四号, weight: "bold")
     it
-    v(9pt)
+    v(11.5pt)
   }
 
   show heading.where(level: 3): it => {
-    set text(font: (..hei,), size: if heading-is-cjk(it.body) { 12pt } else { 13pt }, weight: "bold")
+    set text(font: 黑体, size: if heading-is-cjk(it.body) { fontsize.小四 } else { 13pt }, weight: "bold")
     it
     v(0.35em)
   }
 
   show figure.caption: it => block(width: 100%)[
     #set align(center)
-    #set text(font: (..song,), size: 10.5pt, weight: "bold")
+    #set text(font: 宋体, size: fontsize.五号, weight: "bold")
     #it.supplement
     #context it.counter.display(it.numbering)
     #h(0.6em)
@@ -169,7 +169,7 @@
     show heading.where(level: 1): it => {
       v(0.8em)
       align(center)[
-        #set text(font: (..hei,), size: 18pt, weight: "bold")
+        #set text(font: 黑体, size: fontsize.小二, weight: "bold")
         #it
       ]
       v(0.5em)
@@ -181,7 +181,7 @@
     show heading.where(level: 1): it => {
       v(0.8em)
       align(center)[
-        #set text(font: (..hei,), size: 18pt, weight: "bold")
+        #set text(font: 黑体, size: fontsize.小二, weight: "bold")
         #it
       ]
       v(0.5em)
@@ -193,7 +193,7 @@
     show heading.where(level: 1): it => {
       v(0.8em)
       align(center)[
-        #set text(font: (..hei,), size: 18pt, weight: "bold")
+        #set text(font: 黑体, size: fontsize.小二, weight: "bold")
         #it
       ]
       v(0.5em)
@@ -205,7 +205,7 @@
     show heading.where(level: 1): it => {
       v(0.8em)
       align(center)[
-        #set text(font: (..hei,), size: 18pt, weight: "bold")
+        #set text(font: 黑体, size: fontsize.小二, weight: "bold")
         #it
       ]
       v(0.5em)
@@ -218,7 +218,7 @@
     show heading.where(level: 1): it => {
       v(0.8em)
       align(center)[
-        #set text(font: (..hei,), size: 18pt, weight: "bold")
+        #set text(font: 黑体, size: fontsize.小二, weight: "bold")
         #it
       ]
       v(0.5em)

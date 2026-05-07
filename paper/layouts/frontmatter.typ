@@ -4,24 +4,24 @@
 
 #let render-zh-abstract(info) = {
   front-title([摘#h(2em)要])
-  set text(font: (..song, en), size: 12pt)
-  set par(first-line-indent: (amount: 2em, all: true), leading: 6pt, justify: true)
+  set text(font: (宋体, en), size: fontsize.小四, top-edge: "ascender", bottom-edge: "descender")
+  set par(first-line-indent: (amount: 2em, all: true), leading: 23pt - 1em, spacing: 23pt - 1em, justify: true)
   info.abstract_zh
   v(1em)
   set par(first-line-indent: 0em)
-  text(font: (..hei,), size: 12pt, weight: "bold")[关键字]
+  text(font: 黑体, size: fontsize.小四, weight: "bold")[关键词]
   h(0.5em)
-  text(font: (..song,), size: 12pt)[#info.keywords_zh.join("；")]
+  text(font: 宋体, size: fontsize.小四)[#info.keywords_zh.join("；")]
 }
 
 #let render-en-abstract(info) = {
   front-title([ABSTRACT])
-  set text(font: (en, ..song), size: 12pt)
-  set par(first-line-indent: (amount: 2em, all: true), leading: 6pt, justify: true)
+  set text(font: (en, 宋体), size: fontsize.小四, top-edge: "ascender", bottom-edge: "descender")
+  set par(first-line-indent: (amount: 2em, all: true), leading: 23pt - 1em, spacing: 23pt - 1em, justify: true)
   info.abstract_en
   v(1em)
   set par(first-line-indent: 0em)
-  text(font: en, size: 12pt, weight: "bold")[Key Words]
+  text(font: en, size: fontsize.小四, weight: "bold")[Key Words]
   h(0.5em)
-  text(font: en, size: 12pt)[#info.keywords_en.join(", ")]
+  text(font: en, size: fontsize.小四)[#info.keywords_en.join(", ")]
 }

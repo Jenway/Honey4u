@@ -2,14 +2,14 @@
 #import "../fonts.typ": *
 
 #let section-text(body) = {
-  set text(font: (..song, en), size: 12pt)
-  set par(first-line-indent: (amount: 2em, all: true), leading: 6pt, justify: true)
+  set text(font: (宋体, en), size: fontsize.小四, top-edge: "ascender", bottom-edge: "descender")
+  set par(first-line-indent: (amount: 2em, all: true), leading: 23pt - 1em, spacing: 23pt - 1em, justify: true)
   body
 }
 
 #let render-references(info) = {
   heading(level: 1, numbering: none)[参考文献]
-  set text(font: (..song, en), size: 10.5pt)
+  set text(font: (宋体, en), size: fontsize.五号, top-edge: "ascender", bottom-edge: "descender")
   set par(first-line-indent: 0em, leading: 0.3em, justify: false)
 
   if info.bibliography_content != none {
@@ -40,7 +40,7 @@
 
 #let render-translation-en(info) = {
   heading(level: 1, numbering: none)[外文原文]
-  set text(font: (en, ..song), size: 12pt)
-  set par(first-line-indent: (amount: 2em, all: true), leading: 6pt, justify: true)
+  set text(font: (en, 宋体), size: fontsize.小四, top-edge: "ascender", bottom-edge: "descender")
+  set par(first-line-indent: (amount: 2em, all: true), leading: 23pt - 1em, spacing: 23pt - 1em, justify: true)
   info.translation_en
 }

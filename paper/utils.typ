@@ -2,22 +2,20 @@
 #import "@preview/cuti:0.3.0": fakebold
 #import "fonts.typ": *
 
-// 内部辅助函数
+// ─── Internal helpers ──────────────────────────────────────────────────────
+
 #let chapter-number() = {
   counter(heading.where(level: 1)).get().at(0, default: 0)
 }
 
 #let centered-page-number(pattern: "1") = context [
   #set align(center)
-  #set text(font: en, size: 9pt)
+  #set text(font: en, size: fontsize.小五)
   #counter(page).display(pattern)
 ]
 
 #let centered-page-number-fullwidth-roman = context {
   let n = counter(page).get().first()
-  let chars = (
-    "M", "Ⅿ", "D", "Ⅾ", "C", "Ⅽ", "L", "Ⅼ", "X", "Ⅹ", "V", "Ⅴ", "I", "Ⅰ",
-  )
   let roman = numbering("I", n)
   let result = ""
   for c in roman {
@@ -35,14 +33,14 @@
     if not found { result += c }
   }
   set align(center)
-  set text(font: en, size: 9pt)
+  set text(font: en, size: fontsize.小五)
   result
 }
 
 #let front-title(body) = {
   v(0.8em)
   align(center)[
-    #set text(font: (..hei,), size: 18pt, weight: "bold")
+    #set text(font: 黑体, size: fontsize.小二, weight: "bold")
     #fakebold[#body]
   ]
   v(0.5em)
@@ -58,7 +56,8 @@
   )
 }
 
-// 供用户调用的组件
+// ─── User-facing components ────────────────────────────────────────────────
+
 #let codeblock(caption: "", body) = {
   figure(
     rect(width: 100%, stroke: 0.5pt, inset: 10pt, align(left, body)),
@@ -90,45 +89,53 @@
         stroke: none,
         inset: (x: 0.35em, y: 0.3em),
         align: center + horizon,
-        table.hline(y: 0, stroke: 0.8pt),
-        table.hline(y: 1, stroke: 0.5pt),
+        table.hline(y: 0, stroke: 1.5pt),
+        table.hline(y: 1, stroke: 0.75pt),
         table.header(..header),
         ..rows,
-        table.hline(y: auto, stroke: 0.8pt),
+        table.hline(y: auto, stroke: 1.5pt),
       ),
     )#(if label-name != "" { new-label } else { [] })
   ]
 }
 
-#let algox(body, caption: "", label-name: "algox-ref") = {
-  figure(
-    kind: "code",
-    supplement: [代码],
-    caption: none,
-  )[
-    #context {
-      table(
-        columns: 1fr,
-        align: (left,),
-        stroke: none,
-        table.header(
-          table.cell(
-            colspan: 1,
-            [
-              #set align(center)
-              #set text(font: (..hei,), size: 10.5pt, weight: "bold")
-              #line(start: (-5pt, 0pt), length: 100% + 10pt, stroke: 0.5pt)
-              #v(-0.5em)
-              #text(font: (..hei,), size: 10.5pt, weight: "bold", fill: rgb("C00000"))[#ref(label(label-name))#h(1em)]
-              #caption
-            ],
-          ),
-          table.hline(stroke: 0.5pt),
+#let algox(..lines, caption: "", label-name: "algox-ref") = {
+  let nxt = state("algox-" + label-name, false)
+  [
+    #let new-label = label(label-name)
+    #figure(kind: "code", supplement: [代码], [])#new-label
+    #v(-1.25em)
+
+    #table(
+      columns: 1fr,
+      align: (left,),
+      stroke: none,
+      table.header(
+        table.cell(
+          colspan: 1,
+          {
+            context if nxt.get() {
+              set align(center)
+              set text(font: 黑体, size: fontsize.五号, weight: "bold", fill: rgb("C00000"))
+              [续#ref(new-label) ]
+              set text(fill: black)
+              caption
+              nxt.update(false)
+            } else {
+              set align(center)
+              set text(font: 黑体, size: fontsize.五号, weight: "bold")
+              line(start: (-5pt, 0pt), length: 100% + 10pt, stroke: 0.5pt)
+              v(-0.5em)
+              text(font: 黑体, size: fontsize.五号, weight: "bold", fill: rgb("C00000"))[#ref(new-label)#h(1em)]
+              caption
+              nxt.update(true)
+            }
+          },
         ),
-        body,
         table.hline(stroke: 0.5pt),
-      )
-    }
+      ),
+      ..lines.pos(),
+      table.hline(stroke: 0.5pt),
+    )
   ]
-}
 }
