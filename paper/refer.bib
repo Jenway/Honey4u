@@ -240,3 +240,94 @@ coin-tossing also play an important role.},
 	keywords = {atomic broadcast, Byzantine agreement, distributed cryptography, reliable broadcast},
 	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\UDWTQPFT\\Cachin 等 - 2001 - Secure and Efficient Asynchronous Broadcast Protocols.pdf:application/pdf;Full Text PS:C\:\\Users\\jenway\\Zotero\\storage\\XWHMCGNL\\Cachin 等 - 2001 - Secure and Efficient Asynchronous Broadcast Protocols.ps:application/postscript},
 }
+
+@misc{lu_dumbo-mvba_2020,
+	title = {Dumbo-{MVBA}: Optimal Multi-valued Validated Asynchronous Byzantine Agreement, Revisited},
+	url = {https://eprint.iacr.org/2020/842},
+	shorttitle = {Dumbo-{MVBA}},
+	abstract = {Multi-valued validated asynchronous Byzantine agreement ({MVBA}), proposed in the elegant work of Cachin et al. ({CRYPTO} '01), is fundamental for critical fault-tolerant services such as atomic broadcast in the asynchronous network. It was left as an open problem to asymptotically reduce the \$O(ln{\textasciicircum}2+n{\textasciicircum}2*lambda+n{\textasciicircum}3)\$ communication (where \$n\$ is the number of parties, \$l\$ is the input length, and \$lambda\$ is the security parameter). Recently, Abraham et al. ({PODC} '19) removed the \$n{\textasciicircum}3\$ term to partially answer the question when input is small. However, in other typical cases, e.g., building atomic broadcast through {MVBA}, the input length \$l {\textgreater}= n*lambda\$, and thus the communication is dominated by the \$ln{\textasciicircum}2\$ term and the problem raised by Cachin et al. remains open.
+
+We fill the gap and answer the remaining part of the above open problem. In particular, we present two {MVBA} protocols with \$O(ln+n{\textasciicircum}2*lambda)\$ communicated bits, which is optimal when \$l {\textgreater}= n*lambda\$. We also maintain other benefits including optimal resilience to tolerate up to \$n/3\$ adaptive Byzantine corruptions, optimal expected constant running time, and optimal \$O(n{\textasciicircum}2)\$ messages.
+
+At the core of our design, we propose asynchronous provable dispersal broadcast ({APDB}) in which each input can be split and dispersed to every party and later recovered in an efficient way. Leveraging {APDB} and asynchronous binary agreement, we design an optimal {MVBA} protocol, Dumbo-{MVBA}; we also present a general self-bootstrap framework Dumbo-{MVBA}* to reduce the communication of any existing {MVBA} protocols.
+
+Finally, we demonstrate an enticing application of our \${\textbackslash}mathsf\{{MVBA}\}\$ protocols to construct expected constant-round asynchronous common subset (\${\textbackslash}mathsf\{{ACS}\}\$) with only \${\textbackslash}mathcal\{O\}({\textbackslash}ell n{\textasciicircum}2 +{\textbackslash}lambda n{\textasciicircum}2)\$ communication complexity in expect, where \${\textbackslash}ell\$ is the input length of \${\textbackslash}mathsf\{{ACS}\}\$ represented in bits. The resulting \${\textbackslash}mathsf\{{ACS}\}\$ has asymptotically optimal communication cost when \${\textbackslash}ell{\textbackslash}geq{\textbackslash}lambda\$ and might have a broad array of applications like asynchronous atomic broadcasts or asynchronous multi-party computation.},
+	number = {2020/842},
+	author = {Lu, Yuan and Lu, Zhenliang and Tang, Qiang and Wang, Guiling},
+	urldate = {2026-04-09},
+	date = {2020},
+	note = {Publication info: Published elsewhere. Major revision. {ACM} {PODC} 2020},
+	keywords = {Byzantine agreement, asynchronous network, external validity, optimal protocol},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\TAEDGX7X\\Lu 等 - 2020 - Dumbo-MVBA Optimal Multi-valued Validated Asynchronous Byzantine Agreement, Revisited.pdf:application/pdf},
+}
+
+@misc{das_practical_2021,
+	title = {Practical Asynchronous Distributed Key Generation},
+	url = {https://eprint.iacr.org/2021/1591},
+	abstract = {Distributed Key Generation ({DKG}) is a technique to bootstrap threshold cryptosystems without a trusted third party and is a building block to decentralized protocols such as randomness beacons, threshold signatures, and general multiparty computation. Until recently, {DKG} protocols have assumed the synchronous model and thus are vulnerable when their underlying network assumptions do not hold. The recent advancements in asynchronous {DKG} protocols are insufficient as they either have poor efficiency or limited functionality, resulting in a lack of concrete implementations.
+
+In this paper, we present a simple and concretely efficient asynchronous {DKG} ({ADKG}) protocol. In a network of n nodes, our {ADKG} protocol can tolerate up to t{\textless}n/3 malicious nodes and have an expected O(κn3) communication cost, where κ is the security parameter. Our {ADKG} protocol produces a field element as the secret and is thus compatible with off-the-shelf threshold cryptosystems. We implement our {ADKG} protocol and evaluate it using a network of up to 128 nodes in geographically distributed {AWS} instances. Our evaluation shows that our protocol takes as low as 3 and 9.5 seconds to terminate for 32 and 64 nodes, respectively. Also, each node sends only 0.7 Megabytes and 2.9 Megabytes of data during the two experiments, respectively.},
+	number = {2021/1591},
+	author = {Das, Sourav and Yurek, Thomas and Xiang, Zhuolun and Miller, Andrew and Kokoris-Kogias, Lefteris and Ren, Ling},
+	urldate = {2026-04-09},
+	date = {2021},
+	note = {Publication info: Published elsewhere. {IEEE} S\&P 2022},
+	keywords = {Asynchronous Networks, Distributed Cryptography, Distributed Key Generation, Threshold Cryptography},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\I5C2V4EA\\Das 等 - 2021 - Practical Asynchronous Distributed Key Generation.pdf:application/pdf},
+}
+
+@article{zhang__2024,
+	title = {异步共识协议研究综述},
+	volume = {11},
+	issn = {2095-7025},
+	url = {https://research.buaa.edu.cn/zh/publications/%E5%BC%82%E6%AD%A5%E5%85%B1%E8%AF%86%E5%8D%8F%E8%AE%AE%E7%A0%94%E7%A9%B6%E7%BB%BC%E8%BF%B0/},
+	doi = {10.13868/j.cnki.jcr.000707},
+	pages = {740--770},
+	number = {4},
+	journaltitle = {Journal of Cryptologic Research},
+	publisher = {Chinese Association for Cryptologic Research},
+	author = {Zhang, Ling Yue and Zhang, Zong Yang and Zhou, You and Wang, Zhuo and Liu, Jian Wei},
+	urldate = {2026-04-28},
+	date = {2024},
+	file = {Snapshot:C\:\\Users\\jenway\\Zotero\\storage\\KFLPNKZ3\\异步共识协议研究综述.html:text/html},
+}
+
+@online{noauthor__nodate,
+	title = {异步共识协议研究综述},
+	url = {http://www.jcr.cacrnet.org.cn/CN/Y2024/V11/I4/740},
+	urldate = {2026-04-28},
+	file = {异步共识协议研究综述:C\:\\Users\\jenway\\Zotero\\storage\\3VFJY3RB\\740.html:text/html},
+}
+
+@article{castro_practical_2002,
+	title = {Practical byzantine fault tolerance and proactive recovery},
+	volume = {20},
+	issn = {0734-2071},
+	url = {https://dl.acm.org/doi/10.1145/571637.571640},
+	doi = {10.1145/571637.571640},
+	abstract = {Our growing reliance on online services accessible on the Internet demands highly available systems that provide correct service without interruptions. Software bugs, operator mistakes, and malicious attacks are a major cause of service interruptions and they can cause arbitrary behavior, that is, Byzantine faults. This article describes a new replication algorithm, {BFT}, that can be used to build highly available systems that tolerate Byzantine faults. {BFT} can be used in practice to implement real services: it performs well, it is safe in asynchronous environments such as the Internet, it incorporates mechanisms to defend against Byzantine-faulty clients, and it recovers replicas proactively. The recovery mechanism allows the algorithm to tolerate any number of faults over the lifetime of the system provided fewer than 1/3 of the replicas become faulty within a small window of vulnerability. {BFT} has been implemented as a generic program library with a simple interface. We used the library to implement the first Byzantine-fault-tolerant {NFS} file system, {BFS}. The {BFT} library and {BFS} perform well because the library incorporates several important optimizations, the most important of which is the use of symmetric cryptography to authenticate messages. The performance results show that {BFS} performs 2\% faster to 24\% slower than production implementations of the {NFS} protocol that are not replicated. This supports our claim that the {BFT} library can be used to build practical systems that tolerate Byzantine faults.},
+	pages = {398--461},
+	number = {4},
+	journaltitle = {{ACM} Trans. Comput. Syst.},
+	author = {Castro, Miguel and Liskov, Barbara},
+	urldate = {2026-05-07},
+	date = {2002-11-01},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\I9N483TM\\Castro和Liskov - 2002 - Practical byzantine fault tolerance and proactive recovery.pdf:application/pdf},
+}
+
+@inproceedings{keidar_all_2021,
+	location = {New York, {NY}, {USA}},
+	title = {All You Need is {DAG}},
+	isbn = {978-1-4503-8548-0},
+	url = {https://dl.acm.org/doi/10.1145/3465084.3467905},
+	doi = {10.1145/3465084.3467905},
+	series = {{PODC}'21},
+	abstract = {We present {DAG}-Rider, the first asynchronous Byzantine Atomic Broadcast protocol that achieves optimal resilience, optimal amortized communication complexity, and optimal time complexity. {DAG}-Rider is post-quantum safe and ensures that all values proposed by correct processes eventually get delivered. We construct {DAG}-Rider in two layers: In the first layer, processes reliably broadcast their proposals and build a structured Directed Acyclic Graph ({DAG}) of the communication among them. In the second layer, processes locally observe their {DAGs} and totally order all proposals with no extra communication.},
+	pages = {165--175},
+	booktitle = {Proceedings of the 2021 {ACM} Symposium on Principles of Distributed Computing},
+	publisher = {Association for Computing Machinery},
+	author = {Keidar, Idit and Kokoris-Kogias, Eleftherios and Naor, Oded and Spiegelman, Alexander},
+	urldate = {2026-05-06},
+	date = {2021-07-23},
+	file = {Full Text PDF:C\:\\Users\\jenway\\Zotero\\storage\\825VFBGD\\Keidar 等 - 2021 - All You Need is DAG.pdf:application/pdf},
+}
