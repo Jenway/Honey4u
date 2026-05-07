@@ -1024,6 +1024,9 @@ fn extract_run_record(
         proposal_available_proof_bytes_total += prcb;
     }
 
+    // Keep this aligned with `CommunicationStats::from_rounds`: it is a
+    // driver-observed byte surface for relative comparison, not literal
+    // end-to-end wire traffic.
     let tracked_driver_bytes_total = send_payload_bytes_total
         + proposal_available_payload_bytes_total
         + proposal_available_proof_bytes_total;

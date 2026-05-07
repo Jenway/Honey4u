@@ -206,6 +206,10 @@ impl CommunicationStats {
                 .and_then(Value::as_u64)
                 .unwrap_or(0) as usize;
         }
+        // This is an implementation-level composite metric, not a wire capture.
+        // It combines outbound ACS payload bytes with the payload/proof material
+        // surfaced by `ProposalAvailable` events so thesis tooling can compare
+        // runs under one stable driver-owned accounting rule.
         let total_tracked_bytes =
             send_payload_bytes + proposal_available_payload_bytes + proposal_available_proof_bytes;
         Self {

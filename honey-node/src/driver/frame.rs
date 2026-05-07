@@ -4,18 +4,17 @@ use crate::driver::error::{DriverError, DriverResult};
 use honey_wire::api::{decode_result, encode_result};
 use rkyv::{Archive, Deserialize, Serialize};
 
-#[derive(Archive, Serialize, Deserialize)]
+#[derive(Archive, Debug, Serialize, Deserialize)]
 pub(in crate::driver) enum DriverWireFrame {
     AcsEnvelope {
         round_id: usize,
         payload: Vec<u8>,
     },
-    HbShareBundle {
+    HbShare {
         sender: usize,
         round_id: usize,
-        selected_proposal_ids: Vec<String>,
-        selected_digests: Vec<Vec<u8>>,
-        shares: Vec<Option<Vec<u8>>>,
+        payload_digest: Vec<u8>,
+        share: Vec<u8>,
     },
 }
 
@@ -207,6 +206,32 @@ mod tests {
                 assert_eq!(sender, 5);
                 assert_eq!(item_id, "item-2");
                 assert_eq!(payload, b"payload");
+            }
+            other => panic!("unexpected wire variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_hb_share_round_trip() {
+        let encoded = encode_driver_frame(&DriverWireFrame::HbShare {
+            sender: 2,
+            round_id: 7,
+            payload_digest: vec![1, 2, 3],
+            share: vec![4, 5, 6],
+        })
+        .expect("share frame should encode");
+        let decoded = decode_driver_frame(&encoded).expect("share frame should decode");
+        match decoded {
+            DriverWireFrame::HbShare {
+                sender,
+                round_id,
+                payload_digest,
+                share,
+            } => {
+                assert_eq!(sender, 2);
+                assert_eq!(round_id, 7);
+                assert_eq!(payload_digest, vec![1, 2, 3]);
+                assert_eq!(share, vec![4, 5, 6]);
             }
             other => panic!("unexpected wire variant: {other:?}"),
         }

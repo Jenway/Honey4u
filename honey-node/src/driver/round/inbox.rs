@@ -1,4 +1,4 @@
-use super::state::{DriverCarryovers, InboundShareBundle, QueuePeaksSnapshot};
+use super::state::{DriverCarryovers, InboundTpkeShare, QueuePeaksSnapshot};
 use crate::driver::DRIVER_NETWORK_BATCH_LIMIT;
 use crate::driver::error::DriverResult;
 use crate::driver::frame::{
@@ -23,7 +23,7 @@ pub(in crate::driver) struct RoundTransportInbox<'a> {
     pub(in crate::driver) inbound_acs_wire: &'a mut Vec<Vec<u8>>,
     pub(in crate::driver) pending_pool_fetch_requests: &'a mut Vec<PendingPoolFetchRequest>,
     pub(in crate::driver) pending_pool_fetch_responses: &'a mut Vec<PoolFetchWire>,
-    pub(in crate::driver) pending_share_bundles: &'a mut Vec<InboundShareBundle>,
+    pub(in crate::driver) pending_tpke_shares: &'a mut Vec<InboundTpkeShare>,
 }
 
 pub(in crate::driver) fn drain_transport_into_round(
@@ -72,27 +72,25 @@ pub(in crate::driver) fn drain_transport_into_round(
                         .push(payload);
                 }
             }
-            DriverWireFrame::HbShareBundle {
+            DriverWireFrame::HbShare {
                 sender,
                 round_id: frame_round_id,
-                selected_proposal_ids,
-                selected_digests,
-                shares,
+                payload_digest,
+                share,
             } => {
-                let bundle = InboundShareBundle {
+                let frame = InboundTpkeShare {
                     sender,
-                    selected_proposal_ids,
-                    selected_digests,
-                    shares,
+                    payload_digest,
+                    share,
                 };
                 if frame_round_id == round_id {
-                    inbox.pending_share_bundles.push(bundle);
+                    inbox.pending_tpke_shares.push(frame);
                 } else if frame_round_id > round_id {
                     carryovers
-                        .share_bundles
+                        .tpke_shares
                         .entry(frame_round_id)
                         .or_default()
-                        .push(bundle);
+                        .push(frame);
                 }
             }
         }

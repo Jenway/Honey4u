@@ -10,10 +10,23 @@ use honey_crypto::merkle;
 use honey_transport::TransportHandle;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[allow(dead_code)]
 pub(in crate::driver) struct ResolvedSelectedProposals {
     pub(in crate::driver) sealed_batches: Vec<Vec<u8>>,
     pub(in crate::driver) selected_digests: Vec<Vec<u8>>,
     pub(in crate::driver) consumed_reference_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::driver) struct ResolvedPayloadItem {
+    pub(in crate::driver) sealed_batch: Vec<u8>,
+    pub(in crate::driver) payload_digest: Vec<u8>,
+}
+
+pub(in crate::driver) struct ProposalResolutionProgress {
+    pub(in crate::driver) newly_resolved_items: Vec<ResolvedPayloadItem>,
+    pub(in crate::driver) missing_references: Vec<PoolReference>,
+    pub(in crate::driver) complete: bool,
 }
 
 pub(in crate::driver) struct PendingPoolFetchRequest {
@@ -33,12 +46,170 @@ pub(crate) enum ProposalResolutionError {
     #[error("invalid selected proposal payload: {0}")]
     Invalid(String),
     #[error("missing reusable entry {0:?} during payload resolution")]
+    #[allow(dead_code)]
     MissingReusableEntry(PoolReference),
 }
 
 #[derive(Default)]
 pub(in crate::driver) struct PoolFetchTracker {
     pub(in crate::driver) pending_references: BTreeMap<String, PoolReference>,
+}
+
+pub(in crate::driver) struct IncrementalProposalResolver {
+    allow_fetch_fallback: bool,
+    seen_digests: BTreeSet<Vec<u8>>,
+    completed_selected_proposals: BTreeSet<String>,
+    resolved_reference_ids: BTreeSet<String>,
+    consumed_reference_ids: Vec<String>,
+    consumed_reference_set: BTreeSet<String>,
+}
+
+impl IncrementalProposalResolver {
+    pub(in crate::driver) fn new(allow_fetch_fallback: bool) -> Self {
+        Self {
+            allow_fetch_fallback,
+            seen_digests: BTreeSet::new(),
+            completed_selected_proposals: BTreeSet::new(),
+            resolved_reference_ids: BTreeSet::new(),
+            consumed_reference_ids: Vec::new(),
+            consumed_reference_set: BTreeSet::new(),
+        }
+    }
+
+    pub(in crate::driver) fn step(
+        &mut self,
+        selected_proposal_ids: &[String],
+        proposal_store: &BTreeMap<String, AvailableProposal>,
+        pool: &mut BroadcastMempool,
+    ) -> Result<ProposalResolutionProgress, ProposalResolutionError> {
+        let mut newly_resolved_items = Vec::new();
+        let mut missing_references = Vec::new();
+        for proposal_id in selected_proposal_ids {
+            if self.completed_selected_proposals.contains(proposal_id) {
+                continue;
+            }
+            let Some(proposal) = proposal_store.get(proposal_id) else {
+                continue;
+            };
+            let mut visiting_references = BTreeSet::new();
+            let proposal_missing = self.resolve_payload_bytes(
+                &proposal.payload,
+                &proposal.digest,
+                pool,
+                &mut newly_resolved_items,
+                &mut visiting_references,
+            )?;
+            if proposal_missing.is_empty() {
+                self.completed_selected_proposals
+                    .insert(proposal_id.clone());
+            } else {
+                missing_references.extend(proposal_missing);
+            }
+        }
+        let complete = selected_proposal_ids
+            .iter()
+            .all(|proposal_id| self.completed_selected_proposals.contains(proposal_id));
+        Ok(ProposalResolutionProgress {
+            newly_resolved_items,
+            missing_references,
+            complete,
+        })
+    }
+
+    pub(in crate::driver) fn consumed_reference_ids(&self) -> &[String] {
+        &self.consumed_reference_ids
+    }
+
+    fn resolve_payload_bytes(
+        &mut self,
+        payload: &[u8],
+        payload_digest: &[u8],
+        pool: &mut BroadcastMempool,
+        newly_resolved_items: &mut Vec<ResolvedPayloadItem>,
+        visiting_references: &mut BTreeSet<String>,
+    ) -> Result<Vec<PoolReference>, ProposalResolutionError> {
+        match decode_acs_payload(payload)
+            .map_err(|err| ProposalResolutionError::Invalid(err.to_string()))?
+        {
+            AcsPayload::Inline(data) => {
+                if !data.is_empty() && self.seen_digests.insert(payload_digest.to_vec()) {
+                    newly_resolved_items.push(ResolvedPayloadItem {
+                        sealed_batch: data,
+                        payload_digest: payload_digest.to_vec(),
+                    });
+                }
+                Ok(Vec::new())
+            }
+            AcsPayload::Bundle {
+                inline_payload,
+                references,
+            } => {
+                if !inline_payload.is_empty() && self.seen_digests.insert(payload_digest.to_vec()) {
+                    newly_resolved_items.push(ResolvedPayloadItem {
+                        sealed_batch: inline_payload,
+                        payload_digest: payload_digest.to_vec(),
+                    });
+                }
+
+                let mut missing_references = Vec::new();
+                for reference in references {
+                    if self.resolved_reference_ids.contains(&reference.item_id)
+                        || !visiting_references.insert(reference.item_id.clone())
+                    {
+                        continue;
+                    }
+
+                    let nested_missing = match pool.get_reusable(&reference.item_id) {
+                        Some(entry) => {
+                            if entry.round_no != reference.origin_round
+                                || entry.sender_id != reference.origin_sender
+                                || entry.roothash != reference.roothash
+                            {
+                                return Err(ProposalResolutionError::Invalid(format!(
+                                    "reusable entry {} metadata mismatch during payload resolution",
+                                    reference.item_id
+                                )));
+                            }
+                            if entry.consumed_in_round.is_some() {
+                                Vec::new()
+                            } else {
+                                if self
+                                    .consumed_reference_set
+                                    .insert(reference.item_id.clone())
+                                {
+                                    self.consumed_reference_ids.push(reference.item_id.clone());
+                                }
+                                let nested_payload = entry.payload.clone();
+                                self.resolve_payload_bytes(
+                                    &nested_payload,
+                                    &reference.roothash,
+                                    pool,
+                                    newly_resolved_items,
+                                    visiting_references,
+                                )?
+                            }
+                        }
+                        None if self.allow_fetch_fallback => vec![reference.clone()],
+                        None => {
+                            return Err(ProposalResolutionError::Invalid(format!(
+                                "missing reusable entry {} during payload resolution",
+                                reference.item_id
+                            )));
+                        }
+                    };
+
+                    if nested_missing.is_empty() {
+                        self.resolved_reference_ids
+                            .insert(reference.item_id.clone());
+                    } else {
+                        missing_references.extend(nested_missing);
+                    }
+                    visiting_references.remove(&reference.item_id);
+                }
+                Ok(missing_references)
+            }
+        }
+    }
 }
 
 impl PoolFetchTracker {
@@ -223,102 +394,41 @@ fn validate_fetched_reusable_payload(
     encoded.root.as_slice() == reference.roothash.as_slice()
 }
 
+#[allow(dead_code)]
 pub(in crate::driver) fn resolve_selected_proposals(
     selected_proposals: &[&AvailableProposal],
     pool: &mut BroadcastMempool,
     allow_fetch_fallback: bool,
 ) -> Result<ResolvedSelectedProposals, ProposalResolutionError> {
-    let mut sealed_batches = Vec::new();
-    let mut selected_digests = Vec::new();
-    let mut seen_digests = BTreeSet::new();
-    let mut consumed_reference_ids = Vec::new();
-    let mut visited_reference_ids = BTreeSet::new();
-    let mut state = PayloadResolutionState {
-        pool,
-        allow_fetch_fallback,
-        sealed_batches: &mut sealed_batches,
-        selected_digests: &mut selected_digests,
-        seen_digests: &mut seen_digests,
-        consumed_reference_ids: &mut consumed_reference_ids,
-        visited_reference_ids: &mut visited_reference_ids,
-    };
-    for proposal in selected_proposals {
-        resolve_payload_bytes(&proposal.payload, &proposal.digest, &mut state)?;
+    let proposal_store = selected_proposals
+        .iter()
+        .map(|proposal| (proposal.proposal_id.clone(), (*proposal).clone()))
+        .collect::<BTreeMap<_, _>>();
+    let selected_proposal_ids = selected_proposals
+        .iter()
+        .map(|proposal| proposal.proposal_id.clone())
+        .collect::<Vec<_>>();
+    let mut resolver = IncrementalProposalResolver::new(allow_fetch_fallback);
+    let progress = resolver.step(&selected_proposal_ids, &proposal_store, pool)?;
+    if !progress.complete {
+        if let Some(reference) = progress.missing_references.into_iter().next() {
+            return Err(ProposalResolutionError::MissingReusableEntry(reference));
+        }
+        return Err(ProposalResolutionError::Invalid(
+            "selected proposal payload resolution incomplete".to_string(),
+        ));
     }
     Ok(ResolvedSelectedProposals {
-        sealed_batches,
-        selected_digests,
-        consumed_reference_ids,
+        sealed_batches: progress
+            .newly_resolved_items
+            .iter()
+            .map(|item| item.sealed_batch.clone())
+            .collect(),
+        selected_digests: progress
+            .newly_resolved_items
+            .iter()
+            .map(|item| item.payload_digest.clone())
+            .collect(),
+        consumed_reference_ids: resolver.consumed_reference_ids().to_vec(),
     })
-}
-
-struct PayloadResolutionState<'a> {
-    pool: &'a mut BroadcastMempool,
-    allow_fetch_fallback: bool,
-    sealed_batches: &'a mut Vec<Vec<u8>>,
-    selected_digests: &'a mut Vec<Vec<u8>>,
-    seen_digests: &'a mut BTreeSet<Vec<u8>>,
-    consumed_reference_ids: &'a mut Vec<String>,
-    visited_reference_ids: &'a mut BTreeSet<String>,
-}
-
-fn resolve_payload_bytes(
-    payload: &[u8],
-    payload_digest: &[u8],
-    state: &mut PayloadResolutionState<'_>,
-) -> Result<(), ProposalResolutionError> {
-    match decode_acs_payload(payload)
-        .map_err(|err| ProposalResolutionError::Invalid(err.to_string()))?
-    {
-        AcsPayload::Inline(data) => {
-            if !data.is_empty() && state.seen_digests.insert(payload_digest.to_vec()) {
-                state.sealed_batches.push(data);
-                state.selected_digests.push(payload_digest.to_vec());
-            }
-            Ok(())
-        }
-        AcsPayload::Bundle {
-            inline_payload,
-            references,
-        } => {
-            if !inline_payload.is_empty() && state.seen_digests.insert(payload_digest.to_vec()) {
-                state.sealed_batches.push(inline_payload);
-                state.selected_digests.push(payload_digest.to_vec());
-            }
-            for reference in references {
-                if !state
-                    .visited_reference_ids
-                    .insert(reference.item_id.clone())
-                {
-                    continue;
-                }
-                let nested_payload =
-                    if let Some(entry) = state.pool.get_reusable(&reference.item_id) {
-                        if entry.round_no != reference.origin_round
-                            || entry.sender_id != reference.origin_sender
-                            || entry.roothash != reference.roothash
-                        {
-                            return Err(ProposalResolutionError::Invalid(format!(
-                                "reusable entry {} metadata mismatch during payload resolution",
-                                reference.item_id
-                            )));
-                        }
-                        if entry.consumed_in_round.is_some() {
-                            continue;
-                        }
-                        entry.payload.clone()
-                    } else if state.allow_fetch_fallback {
-                        return Err(ProposalResolutionError::MissingReusableEntry(reference));
-                    } else {
-                        return Err(ProposalResolutionError::Invalid(format!(
-                            "missing reusable entry {} during payload resolution",
-                            reference.item_id
-                        )));
-                    };
-                state.consumed_reference_ids.push(reference.item_id.clone());
-                resolve_payload_bytes(&nested_payload, &reference.roothash, state)?;
-            }
-            Ok(())
-        }
-    }
 }

@@ -18,7 +18,7 @@ use crate::driver::encryption::{
 };
 use crate::driver::error::{DriverError, DriverResult};
 use crate::driver::mempool::fetch::{
-    FetchRequestAction, PoolFetchTracker, ProposalResolutionError, resolve_selected_proposals,
+    FetchRequestAction, IncrementalProposalResolver, PoolFetchTracker,
 };
 use crate::driver::mempool::pool::{BroadcastMempool, encode_bundle_acs_payload};
 use honey_acs::AcsBackend;
@@ -31,14 +31,15 @@ use std::time::{Duration, Instant};
 struct TimeoutStageSnapshot<'a> {
     selected_proposal_ids: Option<&'a [String]>,
     proposal_store: &'a ProposalStore,
-    selected_batches_ready: bool,
+    payload_resolution_complete: bool,
     pending_fetch_count: usize,
     inbound_acs_wire_count: usize,
     pending_fetch_request_count: usize,
     pending_fetch_response_count: usize,
-    pending_share_bundle_count: usize,
-    local_share_broadcasted: bool,
-    seen_share_sender_count: usize,
+    pending_tpke_share_count: usize,
+    known_tpke_item_count: usize,
+    ready_local_share_count: usize,
+    verified_share_count: usize,
 }
 
 fn run_driver_round(
@@ -98,9 +99,9 @@ fn run_driver_round_inner(
     let deadline = Instant::now() + Duration::from_secs_f64(ctx.args.global_timeout);
     let mut proposal_store: ProposalStore = BTreeMap::new();
     let mut selected_proposal_ids: Option<Vec<String>> = None;
-    let mut selected_batches: Option<Vec<Vec<u8>>> = None;
-    let mut selected_digests: Option<Vec<Vec<u8>>> = None;
-    let mut consumed_reference_ids: Vec<String> = Vec::new();
+    let mut selected_pids: Option<Vec<usize>> = None;
+    let mut proposal_resolver: Option<IncrementalProposalResolver> = None;
+    let mut payload_resolution_complete = false;
     let mut tpke_state = TpkeRoundState::default();
     let mut inbound_acs_wire = carryovers
         .acs_wire_payloads
@@ -111,18 +112,14 @@ fn run_driver_round_inner(
         .pool_fetch_responses
         .remove(&round_id)
         .unwrap_or_default();
-    let mut pending_share_bundles = carryovers
-        .share_bundles
-        .remove(&round_id)
-        .unwrap_or_default();
+    let mut pending_tpke_shares = carryovers.tpke_shares.remove(&round_id).unwrap_or_default();
     let mut pool_fetch_tracker = PoolFetchTracker::default();
     let mut acs_decision_at: Option<Instant> = None;
-    let mut reused_reference_count = 0usize;
 
     ctx.transport.register_wakeup_waiter(thread::current());
     while Instant::now() < deadline {
         let pending_deliveries =
-            ctx.transport.pending_inbound() + inbound_acs_wire.len() + pending_share_bundles.len();
+            ctx.transport.pending_inbound() + inbound_acs_wire.len() + pending_tpke_shares.len();
         metrics.round().sweep(pending_deliveries);
         let mut progressed = false;
         let frame_count = {
@@ -130,7 +127,7 @@ fn run_driver_round_inner(
                 inbound_acs_wire: &mut inbound_acs_wire,
                 pending_pool_fetch_requests: &mut pending_pool_fetch_requests,
                 pending_pool_fetch_responses: &mut pending_pool_fetch_responses,
-                pending_share_bundles: &mut pending_share_bundles,
+                pending_tpke_shares: &mut pending_tpke_shares,
             };
             drain_transport_into_round(ctx.transport, round_id, carryovers, &mut inbox)?
         };
@@ -213,82 +210,50 @@ fn run_driver_round_inner(
         update_queue_peaks(ctx.transport, queue_peaks);
 
         if let Some(selected_proposal_ids) = selected_proposal_ids.as_ref() {
-            let Some(selected_proposals) =
-                collect_selected_proposals(selected_proposal_ids, &proposal_store)
-            else {
-                if !progressed {
-                    metrics.round().idle_backoff();
-                    thread::park_timeout(DRIVER_IDLE_BACKOFF);
-                    continue;
-                }
-                metrics.round().active_sweep();
-                continue;
-            };
-            let selected_pids = selected_pids_from_proposals(&selected_proposals);
-
-            let mut waiting_for_fetch = false;
-            if selected_batches.is_none() {
-                let pool = rust_broadcast_mempool.as_mut().ok_or_else(|| {
-                    DriverError::invariant("missing Rust mempool for proposal resolution")
-                })?;
-                match resolve_selected_proposals(
-                    &selected_proposals,
-                    pool,
+            if proposal_resolver.is_none() {
+                proposal_resolver = Some(IncrementalProposalResolver::new(
                     reuse_enabled && ctx.broadcast_pool_config.enable_fetch_fallback,
-                ) {
-                    Ok(resolved) => {
-                        reused_reference_count = resolved.consumed_reference_ids.len();
-                        consumed_reference_ids = resolved.consumed_reference_ids;
-                        selected_digests = Some(resolved.selected_digests);
-                        selected_batches = Some(resolved.sealed_batches);
-                    }
-                    Err(ProposalResolutionError::MissingReusableEntry(reference)) => {
-                        if !(reuse_enabled && ctx.broadcast_pool_config.enable_fetch_fallback) {
-                            return Err(DriverError::pool_fetch(format!(
-                                "missing reusable entry {} during payload resolution",
-                                reference.item_id
-                            )));
-                        }
-                        let requested = pool_fetch_tracker.request_reference(
-                            ctx.transport,
-                            round_id,
-                            ctx.args.pid,
-                            ctx.args.nodes,
-                            &reference,
-                        )?;
-                        metrics.fetch().request_sent(requested);
-                        progressed |= requested;
-                        waiting_for_fetch = true;
-                    }
-                    Err(err @ ProposalResolutionError::Invalid(_)) => return Err(err.into()),
-                }
+                ));
             }
-
-            if waiting_for_fetch {
-                if !progressed {
-                    metrics.round().idle_backoff();
-                    thread::park_timeout(DRIVER_IDLE_BACKOFF);
-                } else {
-                    metrics.round().active_sweep();
-                }
-                continue;
+            let pool = rust_broadcast_mempool.as_mut().ok_or_else(|| {
+                DriverError::invariant("missing Rust mempool for proposal resolution")
+            })?;
+            let resolution_progress = proposal_resolver
+                .as_mut()
+                .expect("resolver must exist")
+                .step(selected_proposal_ids, &proposal_store, pool)
+                .map_err(DriverError::from)?;
+            for reference in resolution_progress.missing_references {
+                let requested = pool_fetch_tracker.request_reference(
+                    ctx.transport,
+                    round_id,
+                    ctx.args.pid,
+                    ctx.args.nodes,
+                    &reference,
+                )?;
+                metrics.fetch().request_sent(requested);
+                progressed |= requested;
             }
-
-            let round_selected_batches = selected_batches.clone().ok_or_else(|| {
-                DriverError::invariant(format!("driver round {round_id}: missing selected batches"))
-            })?;
-            let round_selected_digests = selected_digests.clone().ok_or_else(|| {
-                DriverError::invariant(format!("driver round {round_id}: missing selected digests"))
-            })?;
+            payload_resolution_complete = resolution_progress.complete;
+            if payload_resolution_complete && selected_pids.is_none() {
+                let selected_proposals =
+                    collect_selected_proposals(selected_proposal_ids, &proposal_store).ok_or_else(
+                        || {
+                            DriverError::invariant(format!(
+                                "driver round {round_id}: missing selected proposals at resolution completion"
+                            ))
+                        },
+                    )?;
+                selected_pids = Some(selected_pids_from_proposals(&selected_proposals));
+            }
 
             let tpke_outcome = run_tpke_step(
                 TpkeStepContext {
                     ctx,
                     round_id,
-                    selected_proposal_ids,
-                    selected_batches: &round_selected_batches,
-                    selected_digests: &round_selected_digests,
-                    pending_share_bundles: &mut pending_share_bundles,
+                    newly_resolved_items: &resolution_progress.newly_resolved_items,
+                    resolution_complete: payload_resolution_complete,
+                    pending_tpke_shares: &mut pending_tpke_shares,
                     metrics: &mut metrics,
                     queue_peaks,
                 },
@@ -307,6 +272,11 @@ fn run_driver_round_inner(
                     .unwrap_or(0.0);
                 let protocol_seconds = (wall_seconds - build_seconds).max(0.0);
                 let tpke_seconds = (protocol_seconds - acs_seconds).max(0.0);
+                let consumed_reference_ids = proposal_resolver
+                    .as_ref()
+                    .map(|resolver| resolver.consumed_reference_ids().to_vec())
+                    .unwrap_or_default();
+                let reused_reference_count = consumed_reference_ids.len();
                 if let Some(pool) = rust_broadcast_mempool.as_mut() {
                     if reuse_enabled {
                         let selected_id_set = selected_proposal_ids
@@ -341,7 +311,7 @@ fn run_driver_round_inner(
                     wall_seconds,
                     metrics,
                     selected_proposal_ids: selected_proposal_ids.clone(),
-                    selected_pids: selected_pids.clone(),
+                    selected_pids: selected_pids.clone().unwrap_or_default(),
                     reused_reference_count,
                     delivered_count,
                     block_payload,
@@ -363,14 +333,15 @@ fn run_driver_round_inner(
         stage: timeout_stage_label(TimeoutStageSnapshot {
             selected_proposal_ids: selected_proposal_ids.as_deref(),
             proposal_store: &proposal_store,
-            selected_batches_ready: selected_batches.is_some(),
+            payload_resolution_complete,
             pending_fetch_count: pool_fetch_tracker.pending_references.len(),
             inbound_acs_wire_count: inbound_acs_wire.len(),
             pending_fetch_request_count: pending_pool_fetch_requests.len(),
             pending_fetch_response_count: pending_pool_fetch_responses.len(),
-            pending_share_bundle_count: pending_share_bundles.len(),
-            local_share_broadcasted: tpke_state.local_share_broadcasted(),
-            seen_share_sender_count: tpke_state.seen_share_sender_count(),
+            pending_tpke_share_count: pending_tpke_shares.len(),
+            known_tpke_item_count: tpke_state.known_item_count(),
+            ready_local_share_count: tpke_state.local_share_broadcasted_count(),
+            verified_share_count: tpke_state.verified_share_count(),
         }),
     })
 }
@@ -391,23 +362,24 @@ fn timeout_stage_label(snapshot: TimeoutStageSnapshot<'_>) -> String {
     let TimeoutStageSnapshot {
         selected_proposal_ids,
         proposal_store,
-        selected_batches_ready,
+        payload_resolution_complete,
         pending_fetch_count,
         inbound_acs_wire_count,
         pending_fetch_request_count,
         pending_fetch_response_count,
-        pending_share_bundle_count,
-        local_share_broadcasted,
-        seen_share_sender_count,
+        pending_tpke_share_count,
+        known_tpke_item_count,
+        ready_local_share_count,
+        verified_share_count,
     } = snapshot;
     let Some(selected_proposal_ids) = selected_proposal_ids else {
         return format!(
-            "waiting for ACS decision (proposal_store={}, inbound_acs_wire={}, pending_fetch_requests={}, pending_fetch_responses={}, pending_share_bundles={})",
+            "waiting for ACS decision (proposal_store={}, inbound_acs_wire={}, pending_fetch_requests={}, pending_fetch_responses={}, pending_tpke_shares={})",
             proposal_store.len(),
             inbound_acs_wire_count,
             pending_fetch_request_count,
             pending_fetch_response_count,
-            pending_share_bundle_count,
+            pending_tpke_share_count,
         );
     };
 
@@ -425,7 +397,7 @@ fn timeout_stage_label(snapshot: TimeoutStageSnapshot<'_>) -> String {
         );
     }
 
-    if !selected_batches_ready {
+    if !payload_resolution_complete {
         if pending_fetch_count > 0 {
             return format!(
                 "waiting for pool fetch responses (pending_references={}, pending_fetch_requests={}, pending_fetch_responses={})",
@@ -433,15 +405,19 @@ fn timeout_stage_label(snapshot: TimeoutStageSnapshot<'_>) -> String {
             );
         }
         return format!(
-            "resolving selected proposal payloads (selected={}, proposal_store={})",
+            "resolving selected proposal payloads (selected={}, proposal_store={}, pending_tpke_shares={})",
             selected_proposal_ids.len(),
             proposal_store.len(),
+            pending_tpke_share_count,
         );
     }
 
     format!(
-        "waiting for TPKE shares (local_share_broadcasted={}, seen_share_senders={}, pending_share_bundles={})",
-        local_share_broadcasted, seen_share_sender_count, pending_share_bundle_count,
+        "waiting for TPKE shares (local_share_items={}/{}, verified_shares={}, pending_tpke_shares={})",
+        ready_local_share_count,
+        known_tpke_item_count,
+        verified_share_count,
+        pending_tpke_share_count,
     )
 }
 

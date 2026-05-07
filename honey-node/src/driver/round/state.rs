@@ -7,17 +7,16 @@ use honey_acs::AcsBackend;
 use honey_transport::TransportHandle;
 use std::collections::BTreeMap;
 
-pub(in crate::driver) struct InboundShareBundle {
+pub(in crate::driver) struct InboundTpkeShare {
     pub(in crate::driver) sender: usize,
-    pub(in crate::driver) selected_proposal_ids: Vec<String>,
-    pub(in crate::driver) selected_digests: Vec<Vec<u8>>,
-    pub(in crate::driver) shares: Vec<Option<Vec<u8>>>,
+    pub(in crate::driver) payload_digest: Vec<u8>,
+    pub(in crate::driver) share: Vec<u8>,
 }
 
 #[derive(Default)]
 pub(in crate::driver) struct DriverCarryovers {
     pub(in crate::driver) acs_wire_payloads: BTreeMap<usize, Vec<Vec<u8>>>,
-    pub(in crate::driver) share_bundles: BTreeMap<usize, Vec<InboundShareBundle>>,
+    pub(in crate::driver) tpke_shares: BTreeMap<usize, Vec<InboundTpkeShare>>,
     pub(in crate::driver) pool_fetch_responses: BTreeMap<usize, Vec<PoolFetchWire>>,
 }
 

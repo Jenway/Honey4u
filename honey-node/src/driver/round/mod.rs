@@ -15,8 +15,8 @@ mod tests {
         DriverWireFrame, PoolFetchWire, decode_driver_frame, decode_pool_fetch_from_wire,
     };
     use super::super::mempool::fetch::{
-        FetchRequestAction, PoolFetchTracker, ProposalResolutionError, ResolvedSelectedProposals,
-        resolve_selected_proposals,
+        FetchRequestAction, IncrementalProposalResolver, PoolFetchTracker, ProposalResolutionError,
+        ResolvedSelectedProposals, resolve_selected_proposals,
     };
     use super::super::mempool::pool::{BroadcastMempool, PoolReference, encode_bundle_acs_payload};
     use honey_acs::proposal::AvailableProposal;
@@ -100,6 +100,75 @@ mod tests {
         assert_eq!(resolved.sealed_batches, vec![b"sealed-batch-b".to_vec()]);
         assert_eq!(resolved.selected_digests, vec![root_b]);
         assert_eq!(resolved.consumed_reference_ids, vec![reference_b.item_id]);
+    }
+
+    #[test]
+    fn test_incremental_resolver_emits_ready_payloads_before_missing_reference_returns() {
+        let ready_root = vec![1; 32];
+        let ready_payload = encode_bundle_acs_payload(b"sealed-batch-ready", &[]);
+        let ready_item_id = BroadcastMempool::compute_item_id(0, 0, &ready_root);
+        let ready_reference = PoolReference {
+            item_id: ready_item_id.clone(),
+            origin_round: 0,
+            origin_sender: 0,
+            roothash: ready_root.clone(),
+            proof_payload: vec![10; 8],
+        };
+
+        let missing_root = vec![2; 32];
+        let missing_reference = PoolReference {
+            item_id: BroadcastMempool::compute_item_id(0, 1, &missing_root),
+            origin_round: 0,
+            origin_sender: 1,
+            roothash: missing_root.clone(),
+            proof_payload: vec![11; 8],
+        };
+
+        let proposal = AvailableProposal {
+            proposal_id: String::from("3:2:root"),
+            proposer: 2,
+            payload: encode_bundle_acs_payload(
+                b"sealed-inline-root",
+                &[ready_reference.clone(), missing_reference.clone()],
+            ),
+            digest: vec![9; 32],
+            availability_proof: vec![12; 8],
+        };
+        let proposal_store = [(proposal.proposal_id.clone(), proposal.clone())]
+            .into_iter()
+            .collect::<_>();
+
+        let mut pool = BroadcastMempool::new(8, 4);
+        pool.add_reusable(ready_payload, ready_root.clone(), vec![10; 8], 0, 0);
+
+        let mut resolver = IncrementalProposalResolver::new(true);
+        let progress = resolver
+            .step(
+                std::slice::from_ref(&proposal.proposal_id),
+                &proposal_store,
+                &mut pool,
+            )
+            .expect("resolution step should succeed");
+
+        assert!(!progress.complete);
+        assert_eq!(progress.missing_references.len(), 1);
+        assert_eq!(
+            progress.missing_references[0].item_id,
+            missing_reference.item_id
+        );
+        assert_eq!(
+            progress.missing_references[0].roothash,
+            missing_reference.roothash
+        );
+        assert_eq!(
+            progress
+                .newly_resolved_items
+                .iter()
+                .map(|item| item.payload_digest.clone())
+                .collect::<Vec<_>>(),
+            vec![proposal.digest.clone(), ready_root],
+        );
+        assert_eq!(resolver.consumed_reference_ids(), &[ready_item_id]);
     }
 
     #[test]
