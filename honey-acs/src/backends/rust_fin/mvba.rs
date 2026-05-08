@@ -83,6 +83,10 @@ impl RustAcsBackend {
     }
 
     pub(super) fn drive_wrbc(&self, round: &mut RoundState) -> Result<bool, String> {
+        if !round.wrbc_dirty {
+            return Ok(false);
+        }
+        round.wrbc_dirty = false;
         let mut changed = false;
         let threshold = self.threshold(round);
         for proposer in 0..round.nodes() {
@@ -823,25 +827,26 @@ impl RustAcsBackend {
         sender: usize,
         proposer: usize,
         value: Vec<u8>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if proposer >= round.nodes() || sender != proposer {
-            return Ok(());
+            return Ok(false);
         }
         if Self::decode_completion_vector(&value, round.nodes()).is_err() {
-            return Ok(());
+            return Ok(false);
         }
         let digest = Self::payload_digest(&value);
         let instance = &mut round.mvba.wrbc[proposer];
         if let Some(existing) = instance.send_digest {
             if existing != digest {
-                return Ok(());
+                return Ok(false);
             }
-            return Ok(());
+            return Ok(false);
         }
         instance.send_digest = Some(digest);
         instance.send_value = Some(value.clone());
         instance.known_values.entry(digest).or_insert(value);
-        self.drive_round(round)
+        round.mark_wrbc_dirty();
+        Ok(true)
     }
 
     pub(super) fn handle_wrbc_echo(
@@ -850,19 +855,20 @@ impl RustAcsBackend {
         sender: usize,
         proposer: usize,
         digest: [u8; 32],
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if proposer >= round.nodes() {
-            return Ok(());
+            return Ok(false);
         }
         let instance = &mut round.mvba.wrbc[proposer];
         if let Some(existing) = instance.echo_by_sender.get(&sender) {
             if *existing != digest {
-                return Ok(());
+                return Ok(false);
             }
-            return Ok(());
+            return Ok(false);
         }
         instance.echo_by_sender.insert(sender, digest);
-        self.drive_round(round)
+        round.mark_wrbc_dirty();
+        Ok(true)
     }
 
     pub(super) fn handle_wrbc_ready(
@@ -871,19 +877,20 @@ impl RustAcsBackend {
         sender: usize,
         proposer: usize,
         digest: [u8; 32],
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if proposer >= round.nodes() {
-            return Ok(());
+            return Ok(false);
         }
         let instance = &mut round.mvba.wrbc[proposer];
         if let Some(existing) = instance.ready_by_sender.get(&sender) {
             if *existing != digest {
-                return Ok(());
+                return Ok(false);
             }
-            return Ok(());
+            return Ok(false);
         }
         instance.ready_by_sender.insert(sender, digest);
-        self.drive_round(round)
+        round.mark_wrbc_dirty();
+        Ok(true)
     }
 
     pub(super) fn handle_wrbc_value(
@@ -892,9 +899,9 @@ impl RustAcsBackend {
         _sender: usize,
         proposer: usize,
         value: Vec<u8>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if proposer >= round.nodes() {
-            return Ok(());
+            return Ok(false);
         }
         let digest = Self::payload_digest(&value);
         let instance = &mut round.mvba.wrbc[proposer];
@@ -902,7 +909,8 @@ impl RustAcsBackend {
         if instance.delivered_digest == Some(digest) && instance.delivered_value.is_none() {
             instance.delivered_value = Some(value);
         }
-        self.drive_round(round)
+        round.mark_wrbc_dirty();
+        Ok(true)
     }
 
     pub(super) fn buffer_or_handle_raba_message(
@@ -910,7 +918,7 @@ impl RustAcsBackend {
         round: &mut RoundState,
         iteration: usize,
         message: BufferedRabaMessage,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let current = round
             .mvba
             .current_iteration
@@ -923,13 +931,13 @@ impl RustAcsBackend {
                 .entry(iteration)
                 .or_default()
                 .push(message);
-            return Ok(());
+            return Ok(false);
         }
         let Some(active) = round.mvba.current_iteration.as_mut() else {
-            return Ok(());
+            return Ok(false);
         };
         if iteration < active.index {
-            return Ok(());
+            return Ok(false);
         }
         let Some(raba) = active.raba.as_mut() else {
             round
@@ -938,10 +946,11 @@ impl RustAcsBackend {
                 .entry(iteration)
                 .or_default()
                 .push(message);
-            return Ok(());
+            return Ok(false);
         };
         let _ = Self::handle_raba_buffered_message(raba, message);
-        self.drive_round(round)
+        round.mark_mvba_dirty();
+        Ok(true)
     }
 
     pub(super) fn handle_coin_share(
@@ -950,18 +959,18 @@ impl RustAcsBackend {
         sender: usize,
         scope: CoinScope,
         share: Vec<u8>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if sender >= round.nodes() {
-            return Ok(());
+            return Ok(false);
         }
         let state = round.mvba.coin_states.entry(scope).or_default();
         if state.shares.contains_key(&sender) {
-            return Ok(());
+            return Ok(false);
         }
         let message = Self::coin_message(&round.sid, scope);
         let value = match parse_g1_compressed(&share) {
             Ok(value) => value,
-            Err(_) => return Ok(()),
+            Err(_) => return Ok(false),
         };
         let partial = PartialSignature {
             player_id: sender + 1,
@@ -970,9 +979,10 @@ impl RustAcsBackend {
         if sender != self.pid
             && threshold::sig::verify_share(&self.crypto.coin_pk, &partial, &message).is_err()
         {
-            return Ok(());
+            return Ok(false);
         }
         state.shares.insert(sender, share);
-        self.drive_round(round)
+        round.mark_mvba_dirty();
+        Ok(true)
     }
 }

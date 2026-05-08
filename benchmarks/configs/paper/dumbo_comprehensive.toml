@@ -200,3 +200,18 @@ batch_size = [32]
 rounds = 8
 global_timeout = 240.0
 byzantine_nodes = [{ pid = 11, behavior = "invalid_fetch_response" }]
+
+[[experiments]]
+name = "highload_n12_extended"
+description = "Extended N=12 high-load sweep to find the throughput knee point up to machine limit."
+backend = ["python_dumbo", "rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+rounds = 6
+repeats = 3
+global_timeout = 600.0
+pool_grace_ms = 100
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 4096

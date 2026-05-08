@@ -1,0 +1,22 @@
+[suite]
+name = "fin_rerun_after_fix"
+
+[defaults]
+rounds = 6
+repeats = 3
+global_timeout = 600.0
+transport = "quic"
+pool_grace_ms = 100
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "fin_rerun_32_to_16384"
+description = "FIN-only rerun after dirty-tracking fix, batch_size sweep to compare with pre-fix results."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]

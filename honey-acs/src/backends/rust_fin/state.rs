@@ -171,6 +171,9 @@ pub(super) struct RoundState {
     pub(super) proposals: Vec<PrbcState>,
     pub(super) mvba: MvbaState,
     pub(super) outbound: VecDeque<AcsEvent>,
+    pub(super) dirty_prbc_leaders: BTreeSet<usize>,
+    pub(super) wrbc_dirty: bool,
+    pub(super) mvba_dirty: bool,
 }
 
 impl RoundState {
@@ -183,6 +186,9 @@ impl RoundState {
             proposals: (0..nodes).map(|_| PrbcState::default()).collect(),
             mvba: MvbaState::new(nodes),
             outbound: VecDeque::new(),
+            dirty_prbc_leaders: BTreeSet::new(),
+            wrbc_dirty: false,
+            mvba_dirty: false,
         }
     }
 
@@ -210,6 +216,26 @@ impl RoundState {
             .iter()
             .filter(|instance| instance.delivered_digest.is_some())
             .count()
+    }
+
+    pub(super) fn mark_prbc_dirty(&mut self, leader: usize) {
+        self.dirty_prbc_leaders.insert(leader);
+    }
+
+    pub(super) fn take_dirty_prbc_leaders(&mut self) -> Vec<usize> {
+        self.dirty_prbc_leaders.iter().copied().collect::<Vec<_>>()
+    }
+
+    pub(super) fn clear_dirty_prbc_leader(&mut self, leader: usize) {
+        self.dirty_prbc_leaders.remove(&leader);
+    }
+
+    pub(super) fn mark_wrbc_dirty(&mut self) {
+        self.wrbc_dirty = true;
+    }
+
+    pub(super) fn mark_mvba_dirty(&mut self) {
+        self.mvba_dirty = true;
     }
 }
 

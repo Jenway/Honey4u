@@ -1,0 +1,40 @@
+[suite]
+name = "paper_grace_faulty"
+
+[defaults]
+rounds = 6
+repeats = 3
+global_timeout = 600.0
+transport = "quic"
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 8192
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "grace_slow2"
+description = "Grace window sweep under 2 slow-honest nodes (pids 9,10, 150ms delay)."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [4096]
+pool_grace_ms = [0, 50, 100, 200, 400, 800]
+network_faults = [
+  { label = "slow2x150", enabled = true, seed = 20260508, slow_honest = { pids = [9, 10], extra_delay_ms = 150 } },
+]
+
+[[experiments]]
+name = "grace_slow2_byz1"
+description = "Grace window sweep: 2 slow-honest + 1 silent byzantine (f=3 max boundary)."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [4096]
+pool_grace_ms = [0, 50, 100, 200, 400, 800]
+network_faults = [
+  { label = "slow2x150", enabled = true, seed = 20260508, slow_honest = { pids = [9, 10], extra_delay_ms = 150 } },
+]
+byzantine_nodes = [
+  { pid = 11, behavior = "silent" },
+]

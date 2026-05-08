@@ -1,0 +1,33 @@
+[suite]
+name = "paper_byzantine_boundary"
+
+[defaults]
+rounds = 8
+repeats = 3
+global_timeout = 600.0
+transport = "quic"
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 8192
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "byzantine_silent"
+description = "One silent node: delivers empty proposal, suppresses broadcasts."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [4096]
+pool_grace_ms = 100
+byzantine_nodes = [{ pid = 11, behavior = "silent" }]
+
+[[experiments]]
+name = "byzantine_invalid_fetch"
+description = "One node serves corrupted pool-fetch responses."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [4096]
+pool_grace_ms = 100
+byzantine_nodes = [{ pid = 11, behavior = "invalid_fetch_response" }]

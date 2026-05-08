@@ -1,0 +1,56 @@
+[suite]
+name = "paper_network_faults"
+
+[defaults]
+rounds = 6
+repeats = 3
+global_timeout = 300.0
+transport = "quic"
+pool_grace_ms = 100
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "fixed_delay"
+description = "Uniform per-frame fixed delay sweep."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [1024]
+network_faults = [
+  { label = "none", enabled = false },
+  { label = "fixed10", enabled = true, seed = 20260508, fixed_delay_ms = 10 },
+  { label = "fixed25", enabled = true, seed = 20260508, fixed_delay_ms = 25 },
+  { label = "fixed50", enabled = true, seed = 20260508, fixed_delay_ms = 50 },
+]
+
+[[experiments]]
+name = "jitter"
+description = "Per-frame bounded jitter sweep."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [1024]
+network_faults = [
+  { label = "none", enabled = false },
+  { label = "jitter10", enabled = true, seed = 20260508, jitter_ms = 10 },
+  { label = "jitter25", enabled = true, seed = 20260508, jitter_ms = 25 },
+  { label = "jitter50", enabled = true, seed = 20260508, jitter_ms = 50 },
+]
+
+[[experiments]]
+name = "slow_honest"
+description = "Single slow honest node sweep."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [1024]
+network_faults = [
+  { label = "none", enabled = false },
+  { label = "slow80", enabled = true, seed = 20260508, slow_honest = { pids = [11], extra_delay_ms = 80 } },
+  { label = "slow150", enabled = true, seed = 20260508, slow_honest = { pids = [11], extra_delay_ms = 150 } },
+  { label = "slow300", enabled = true, seed = 20260508, slow_honest = { pids = [11], extra_delay_ms = 300 } },
+]

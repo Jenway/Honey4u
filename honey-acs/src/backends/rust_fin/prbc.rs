@@ -82,7 +82,8 @@ impl RustAcsBackend {
         let mut changed = false;
         let threshold = self.threshold(round);
         let data_threshold = self.data_threshold(round);
-        for leader in 0..round.nodes() {
+        let leaders = round.take_dirty_prbc_leaders();
+        for leader in leaders {
             let mut send_ready_for = None;
             let mut maybe_output_for = None;
             {
@@ -141,6 +142,7 @@ impl RustAcsBackend {
             if let Some(roothash) = maybe_output_for {
                 changed |= self.output_prbc(round, leader, roothash)?;
             }
+            round.clear_dirty_prbc_leader(leader);
         }
         Ok(changed)
     }
@@ -155,16 +157,16 @@ impl RustAcsBackend {
         proof: MerkleProof,
         stripe: Vec<u8>,
         stripe_index: usize,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if leader >= round.nodes() || sender != leader || stripe_index != self.pid {
-            return Ok(());
+            return Ok(false);
         }
         if !merkle::verify_shard(&stripe, &proof, &roothash) {
-            return Ok(());
+            return Ok(false);
         }
         let proposal = &mut round.proposals[leader];
         if proposal.leader_root.is_some() {
-            return Ok(());
+            return Ok(false);
         }
         proposal.leader_root = Some(roothash);
         proposal
@@ -188,7 +190,8 @@ impl RustAcsBackend {
                 stripe_index: self.pid as u32,
             },
         )?;
-        self.drive_round(round)
+        round.mark_prbc_dirty(leader);
+        Ok(true)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -201,19 +204,19 @@ impl RustAcsBackend {
         proof: MerkleProof,
         stripe: Vec<u8>,
         stripe_index: usize,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if leader >= round.nodes() || stripe_index != sender {
-            return Ok(());
+            return Ok(false);
         }
         if !merkle::verify_shard(&stripe, &proof, &roothash) {
-            return Ok(());
+            return Ok(false);
         }
         let proposal = &mut round.proposals[leader];
         if let Some(existing) = proposal.echo_by_sender.get(&sender) {
             if *existing != roothash {
-                return Ok(());
+                return Ok(false);
             }
-            return Ok(());
+            return Ok(false);
         }
         proposal.echo_by_sender.insert(sender, roothash);
         proposal
@@ -226,7 +229,8 @@ impl RustAcsBackend {
             .entry(roothash)
             .or_default()
             .insert(stripe_index, proof);
-        self.drive_round(round)
+        round.mark_prbc_dirty(leader);
+        Ok(true)
     }
 
     pub(super) fn handle_prbc_ready(
@@ -236,20 +240,20 @@ impl RustAcsBackend {
         leader: usize,
         roothash: [u8; 32],
         signature: Vec<u8>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if leader >= round.nodes() || sender >= self.crypto.ecdsa_pks.len() {
-            return Ok(());
+            return Ok(false);
         }
         let signature: [u8; 64] = match signature.as_slice().try_into() {
             Ok(signature) => signature,
-            Err(_) => return Ok(()),
+            Err(_) => return Ok(false),
         };
         let proposal = &mut round.proposals[leader];
         if let Some(existing) = proposal.ready_by_sender.get(&sender) {
             if *existing != roothash {
-                return Ok(());
+                return Ok(false);
             }
-            return Ok(());
+            return Ok(false);
         }
         let sid = Self::prbc_sid(&round.sid, leader);
         let digest = Self::ready_digest(&sid, &roothash);
@@ -257,10 +261,10 @@ impl RustAcsBackend {
             match proposal.local_ready {
                 Some((local_root, local_signature))
                     if local_root == roothash && local_signature == signature => {}
-                _ => return Ok(()),
+                _ => return Ok(false),
             }
         } else if !ecdsa::verify(&self.crypto.ecdsa_pks[sender], &digest, &signature) {
-            return Ok(());
+            return Ok(false);
         }
         proposal.ready_by_sender.insert(sender, roothash);
         proposal
@@ -268,6 +272,7 @@ impl RustAcsBackend {
             .entry(roothash)
             .or_default()
             .insert(sender, signature);
-        self.drive_round(round)
+        round.mark_prbc_dirty(leader);
+        Ok(true)
     }
 }

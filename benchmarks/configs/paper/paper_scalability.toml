@@ -1,0 +1,22 @@
+[suite]
+name = "paper_scalability"
+
+[defaults]
+rounds = 6
+repeats = 3
+global_timeout = 600.0
+transport = "quic"
+pool_grace_ms = 100
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 16384
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "scalability_main"
+description = "TPS vs N sweep: both backends, batch=2048."
+backend = ["rust_fin", "python_dumbo"]
+reuse_enabled = [false, true]
+nodes = [4, 8, 12, 16]
+batch_size = [2048]

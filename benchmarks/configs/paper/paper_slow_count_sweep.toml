@@ -1,0 +1,32 @@
+[suite]
+name = "paper_slow_count_sweep"
+
+[defaults]
+rounds = 6
+repeats = 3
+global_timeout = 600.0
+transport = "quic"
+pool_grace_ms = 100
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "slow_count_sweep"
+description = "Slow-honest node count sweep: 0 to 12 nodes with 150ms extra delay."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [1024]
+network_faults = [
+  { label = "slow0", enabled = false },
+  { label = "slow1", enabled = true, seed = 20260508, slow_honest = { pids = [11], extra_delay_ms = 150 } },
+  { label = "slow2", enabled = true, seed = 20260508, slow_honest = { pids = [10, 11], extra_delay_ms = 150 } },
+  { label = "slow3", enabled = true, seed = 20260508, slow_honest = { pids = [9, 10, 11], extra_delay_ms = 150 } },
+  { label = "slow4", enabled = true, seed = 20260508, slow_honest = { pids = [8, 9, 10, 11], extra_delay_ms = 150 } },
+  { label = "slow6", enabled = true, seed = 20260508, slow_honest = { pids = [6, 7, 8, 9, 10, 11], extra_delay_ms = 150 } },
+  { label = "slow8", enabled = true, seed = 20260508, slow_honest = { pids = [4, 5, 6, 7, 8, 9, 10, 11], extra_delay_ms = 150 } },
+  { label = "slow12", enabled = true, seed = 20260508, slow_honest = { pids = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], extra_delay_ms = 150 } },
+]

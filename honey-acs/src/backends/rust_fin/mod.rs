@@ -16,7 +16,7 @@ use honey_wire::codec::hex_encode;
 use honey_wire::crypto_wire::{SigPrivateKeyShareWire, SigPublicParamsWire};
 use honey_wire::format::MerkleProofWire;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Mutex;
 
 mod crypto;
@@ -128,12 +128,16 @@ impl RustAcsBackend {
 
     fn drive_round(&self, round: &mut RoundState) -> Result<(), String> {
         loop {
-            let mut changed = false;
-            changed |= self.drive_prbc(round)?;
-            changed |= self.drive_wrbc(round)?;
-            changed |= self.drive_mvba(round)?;
-            changed |= self.maybe_finalize_decision(round)?;
-            if !changed {
+            let mut progressed = false;
+            if !round.dirty_prbc_leaders.is_empty() {
+                progressed |= self.drive_prbc(round)?;
+            }
+            if round.wrbc_dirty {
+                progressed |= self.drive_wrbc(round)?;
+            }
+            progressed |= self.drive_mvba(round)?;
+            progressed |= self.maybe_finalize_decision(round)?;
+            if !progressed {
                 break;
             }
         }
@@ -145,7 +149,7 @@ impl RustAcsBackend {
         round: &mut RoundState,
         sender: usize,
         message: RustAcsMessage,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         match message {
             RustAcsMessage::PrbcVal {
                 leader,
@@ -184,25 +188,25 @@ impl RustAcsBackend {
             } => self.handle_prbc_ready(round, sender, leader as usize, roothash, signature),
             RustAcsMessage::WrbcSend { proposer, value } => {
                 if round.decision_emitted {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.handle_wrbc_send(round, sender, proposer as usize, value)
             }
             RustAcsMessage::WrbcEcho { proposer, digest } => {
                 if round.decision_emitted {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.handle_wrbc_echo(round, sender, proposer as usize, digest)
             }
             RustAcsMessage::WrbcReady { proposer, digest } => {
                 if round.decision_emitted {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.handle_wrbc_ready(round, sender, proposer as usize, digest)
             }
             RustAcsMessage::WrbcValue { proposer, value } => {
                 if round.decision_emitted {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.handle_wrbc_value(round, sender, proposer as usize, value)
             }
@@ -212,7 +216,7 @@ impl RustAcsBackend {
                 value,
             } => {
                 if round.decision_emitted {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.buffer_or_handle_raba_message(
                     round,
@@ -230,7 +234,7 @@ impl RustAcsBackend {
                 value,
             } => {
                 if round.decision_emitted {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.buffer_or_handle_raba_message(
                     round,
@@ -248,7 +252,7 @@ impl RustAcsBackend {
                 values,
             } => {
                 if round.decision_emitted {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.buffer_or_handle_raba_message(
                     round,
@@ -262,7 +266,7 @@ impl RustAcsBackend {
             }
             RustAcsMessage::RabaFinish { iteration, value } => {
                 if round.decision_emitted {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.buffer_or_handle_raba_message(
                     round,
@@ -272,7 +276,7 @@ impl RustAcsBackend {
             }
             RustAcsMessage::CoinShare { scope, share } => {
                 if round.decision_emitted {
-                    return Ok(());
+                    return Ok(false);
                 }
                 self.handle_coin_share(round, sender, scope, share)
             }
@@ -324,11 +328,12 @@ impl AcsBackend for RustAcsBackend {
                 stripe_index: recipient as u32,
             };
             if recipient == self.pid {
-                self.handle_message(round, self.pid, message)?;
+                let _ = self.handle_message(round, self.pid, message)?;
             } else {
                 self.queue_send(round, recipient, message)?;
             }
         }
+        self.drive_round(round)?;
         Ok(())
     }
 
@@ -343,12 +348,16 @@ impl AcsBackend for RustAcsBackend {
         let Some(round) = state.current_round.as_mut() else {
             return Ok(0);
         };
+        let mut changed = false;
         for item in items {
             let envelope = Self::decode_envelope(item)?;
             if envelope.round_id as usize != round.round_id {
                 continue;
             }
-            self.handle_message(round, envelope.sender as usize, envelope.message)?;
+            changed |= self.handle_message(round, envelope.sender as usize, envelope.message)?;
+        }
+        if changed {
+            self.drive_round(round)?;
         }
         if round.decision_emitted {
             state.rounds_finished = state.rounds_finished.max(state.rounds_started);
