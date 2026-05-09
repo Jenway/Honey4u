@@ -394,7 +394,7 @@ fn pct_change(new_val: f64, old_val: f64) -> f64 {
 }
 
 fn default_output_dir() -> PathBuf {
-    // Timestamped directory under benchmarks/results/
+    // Timestamped directory under honey-bench/results/
     let stamp = {
         use std::time::{SystemTime, UNIX_EPOCH};
         let secs = SystemTime::now()
@@ -404,7 +404,7 @@ fn default_output_dir() -> PathBuf {
         // Format as YYYYMMDDTHHMMSSz (rough, UTC not guaranteed)
         format!("{secs}")
     };
-    PathBuf::from("benchmarks/results").join(format!("dumbo-paper-suite-{stamp}"))
+    PathBuf::from(crate::BENCH_RESULTS_DIR).join(format!("dumbo-paper-suite-{stamp}"))
 }
 
 // ---------------------------------------------------------------------------

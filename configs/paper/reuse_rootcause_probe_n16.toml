@@ -5,7 +5,7 @@ faulty = 5
 rounds = 4
 batch_size = 2048
 global_timeout = 120
-result_path = "benchmarks/results/reuse-rootcause-probe-n16-20260429.json"
+result_path = "honey-bench/results/reuse-rootcause-probe-n16-20260429.json"
 
 [config]
 acs_backend = "rust_fin"

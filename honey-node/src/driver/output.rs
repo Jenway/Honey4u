@@ -5,6 +5,7 @@ use honey_acs::AcsBackendStats;
 use honey_transport::TransportHandle;
 use serde_json::{Value, json};
 use std::fs;
+use std::path::Path;
 
 fn timing_summary_json(samples: &[f64]) -> Value {
     if samples.is_empty() {
@@ -310,6 +311,11 @@ pub(in crate::driver) fn write_output(
     rendered: &str,
 ) -> DriverResult<()> {
     if let Some(result_path) = result_path {
+        if let Some(parent) = Path::new(result_path).parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|err| DriverError::output(err.to_string()))?;
+        }
         fs::write(result_path, rendered).map_err(|err| DriverError::output(err.to_string()))?;
     } else {
         println!("{rendered}");

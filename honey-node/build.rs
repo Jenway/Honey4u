@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     #[cfg(target_os = "windows")]
-    copy_python_dlls();
+    if env::var_os("CARGO_FEATURE_PYTHON_BACKEND").is_some() {
+        copy_python_dlls();
+    }
 }
 
 #[cfg(target_os = "windows")]

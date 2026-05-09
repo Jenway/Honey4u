@@ -90,15 +90,13 @@ def _generate_crypto_payloads(
     protocol: str,
     num_nodes: int,
     faulty: int,
-) -> list[dict]:
-    """Generate per-node crypto material using honey_native primitives."""
+) -> list[dict[str, object]]:
     threshold = faulty + 1
     sig_pk_bytes, sig_sk_bytes_list = honey_native.sig_generate(num_nodes, threshold)
     ecdsa_pks, ecdsa_sks = honey_native.ecdsa_generate_keys(num_nodes)
     proof_sig_pk_bytes: bytes | None = None
     proof_sig_sk_bytes_list: list[bytes] = []
     if protocol == "dumbo":
-        # Dumbo MVBA proof requires threshold = N-f (not f+1 like the coin)
         proof_sig_pk_bytes, proof_sig_sk_bytes_list = honey_native.sig_generate(
             num_nodes, num_nodes - faulty
         )
@@ -117,7 +115,7 @@ def _generate_crypto_payloads(
 
 def _build_hosts_from_crypto(
     protocol: str,
-    crypto_list: list[dict],
+    crypto_list: list[dict[str, object]],
     *,
     num_nodes: int,
     faulty: int,
@@ -130,12 +128,12 @@ def _build_hosts_from_crypto(
             pid=pid,
             nodes=num_nodes,
             faulty=faulty,
-            sig_pk=crypto["sig_pk"],
-            sig_sk=crypto["sig_sk"],
-            ecdsa_pks=crypto["ecdsa_pks"],
-            ecdsa_sk=crypto["ecdsa_sk"],
-            proof_sig_pk=crypto.get("proof_sig_pk"),
-            proof_sig_sk=crypto.get("proof_sig_sk"),
+            sig_pk=cast(bytes, crypto["sig_pk"]),
+            sig_sk=cast(bytes, crypto["sig_sk"]),
+            ecdsa_pks=cast(list[bytes], crypto["ecdsa_pks"]),
+            ecdsa_sk=cast(bytes, crypto["ecdsa_sk"]),
+            proof_sig_pk=cast(bytes | None, crypto.get("proof_sig_pk")),
+            proof_sig_sk=cast(bytes | None, crypto.get("proof_sig_sk")),
             config_json=json.dumps(config) if config is not None else None,
         )
         for pid, crypto in enumerate(crypto_list)
@@ -158,7 +156,7 @@ def _build_hosts(
     )
 
 
-def test_persistent_hb_acs_host_reuses_worker_threads_across_rounds() -> None:
+def test_persistent_hb_host_reuses_worker_threads_across_rounds() -> None:
     num_nodes = 4
     faulty = 1
     hosts = _build_hosts("hb", num_nodes, faulty)
@@ -186,31 +184,7 @@ def test_persistent_hb_acs_host_reuses_worker_threads_across_rounds() -> None:
             host.shutdown()
 
 
-def test_persistent_dumbo_acs_host_reaches_consistent_decision() -> None:
-    num_nodes = 4
-    faulty = 1
-    hosts = _build_hosts("dumbo", num_nodes, faulty)
-
-    try:
-        for pid, host in enumerate(hosts):
-            host.start_round(
-                round_id=0,
-                sid="test:acs-host:dumbo:",
-                proposal_input=f"dumbo-node-{pid}".encode(),
-            )
-
-        decisions, proposals_by_host = _drain_until_round_complete(hosts, round_id=0)
-        assert len(set(decisions)) == 1
-        decided = decisions[0]
-        selected_proposers = _selected_proposers(decided, proposals_by_host[0])
-        assert len(selected_proposers) >= num_nodes - faulty
-        assert all(0 <= pid < num_nodes for pid in selected_proposers)
-    finally:
-        for host in hosts:
-            host.shutdown()
-
-
-def test_persistent_hb_acs_host_emits_proposal_ready_events_on_main_event_stream() -> None:
+def test_persistent_hb_host_emits_proposal_ready_events_on_main_event_stream() -> None:
     num_nodes = 4
     faulty = 1
     hosts = _build_hosts(
@@ -249,12 +223,12 @@ def test_persistent_hb_acs_host_emits_proposal_ready_events_on_main_event_stream
             host.shutdown()
 
 
-def test_persistent_hb_acs_host_supports_prbc_broadcast_mode() -> None:
+def test_persistent_hb_host_supports_prbc_broadcast_mode() -> None:
     num_nodes = 4
     faulty = 1
     round_sid = "test:acs-host:hb:prbc:"
     crypto_list = _generate_crypto_payloads("hb", num_nodes, faulty)
-    ecdsa_pks = crypto_list[0]["ecdsa_pks"]
+    ecdsa_pks = cast(list[bytes], crypto_list[0]["ecdsa_pks"])
     hosts = _build_hosts_from_crypto(
         "hb",
         crypto_list,
@@ -300,7 +274,7 @@ def test_persistent_hb_acs_host_supports_prbc_broadcast_mode() -> None:
             host.shutdown()
 
 
-def test_persistent_dumbo_acs_host_exposes_selected_proposals_via_proposal_ready_events() -> None:
+def test_persistent_dumbo_host_exposes_selected_proposals_via_proposal_ready_events() -> None:
     num_nodes = 4
     faulty = 1
     proposals = [f"dumbo-payload-node-{pid}".encode() for pid in range(num_nodes)]

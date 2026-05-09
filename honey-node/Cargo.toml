@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["python-backend"]
+default = []
 python-backend = ["honey-acs/python-backend", "dep:pyo3", "dep:pyo3-build-config"]
 quic = ["honey-transport/quic"]
 

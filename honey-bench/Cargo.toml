@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+python-backend = ["honey-node/python-backend"]
 quic = ["honey-node/quic"]
 
 [dependencies]
-honey-acs = { path = "../../honey-acs" }
-honey-node = { path = "../../honey-node" }
-honey-wire = { path = "../../honey-wire" }
+honey-acs = { path = "../honey-acs" }
+honey-node = { path = "../honey-node", default-features = false }
+honey-wire = { path = "../honey-wire" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"

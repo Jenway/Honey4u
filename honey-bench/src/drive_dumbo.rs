@@ -34,13 +34,11 @@ pub fn run_drive_dumbo_multiprocess(
         .unwrap_or(false);
 
     debug_acs_driver("dumbo-mp:serialize_hb_crypto_payloads:start");
-    let hb_crypto_payloads =
-        serialize_crypto_payloads(AcsBackendKind::PythonHb, args.nodes, args.faulty)?;
+    let hb_crypto_payloads = serialize_hb_crypto_payloads(args.nodes, args.faulty)?;
     debug_acs_driver("dumbo-mp:serialize_hb_crypto_payloads:done");
 
     debug_acs_driver("dumbo-mp:serialize_acs_crypto_payloads:start");
-    let acs_crypto_payloads =
-        serialize_crypto_payloads(AcsBackendKind::PythonDumbo, args.nodes, args.faulty)?;
+    let acs_crypto_payloads = serialize_crypto_payloads(args.acs_backend, args.nodes, args.faulty)?;
     debug_acs_driver("dumbo-mp:serialize_acs_crypto_payloads:done");
 
     let addresses = allocate_loopback_addresses(args.nodes)?;

@@ -16,7 +16,7 @@ bench*.svg
 bench*.json
 
 .tmp*
-benchmarks/results
+honey-bench/results
 Dory-BFT-Consensus
 Dumbo_NG
 jumbo

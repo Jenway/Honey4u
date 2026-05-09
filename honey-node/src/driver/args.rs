@@ -8,7 +8,8 @@ pub(crate) struct NodeRuntimeArgs {
     pub(crate) pid: usize,
     #[arg(long, default_value = "driver:hb")]
     pub(crate) sid: String,
-    #[arg(long, value_parser = AcsBackendKind::parse, default_value = "python_hb")]
+    #[cfg_attr(feature = "python-backend", arg(long, value_parser = AcsBackendKind::parse, default_value = "python_hb"))]
+    #[cfg_attr(not(feature = "python-backend"), arg(long, value_parser = AcsBackendKind::parse, default_value = "rust_fin"))]
     pub(crate) acs_backend: AcsBackendKind,
     #[arg(long, default_value_t = 4)]
     pub(crate) nodes: usize,

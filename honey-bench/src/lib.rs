@@ -2,7 +2,13 @@
 
 use honey_acs::AcsBackendKind;
 
-use honey_node::keygen::{generate_dumbo_crypto_payloads_json, generate_hb_crypto_payloads_json};
+#[cfg(feature = "python-backend")]
+use honey_node::keygen::generate_dumbo_crypto_payloads_json;
+#[cfg(not(feature = "python-backend"))]
+use honey_node::keygen::generate_dumbo_crypto_payloads_json as generate_acs_crypto_payloads_json;
+#[cfg(feature = "python-backend")]
+use honey_node::keygen::generate_dumbo_crypto_payloads_json as generate_acs_crypto_payloads_json;
+use honey_node::keygen::generate_hb_crypto_payloads_json;
 use honey_wire::phase_stats::{DriverPhaseStats, driver_phase_stats_json};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -21,6 +27,9 @@ pub mod tps;
 pub mod tps_cmd;
 
 pub use drive_dumbo::run_drive_dumbo_multiprocess;
+
+const BENCH_RESULTS_DIR: &str = "honey-bench/results";
+const BENCH_TMP_RESULTS_DIR: &str = "honey-bench/results/.tmp_multiprocess_results";
 
 // Re-export commonly-used types for main.rs
 
@@ -117,6 +126,9 @@ fn node_command(binary: &Path) -> Command {
 
 #[cfg(target_os = "windows")]
 fn configure_embedded_python_env(command: &mut Command) {
+    if !cfg!(feature = "python-backend") {
+        return;
+    }
     let Some(venv_root) = discover_venv_root() else {
         return;
     };
@@ -244,18 +256,22 @@ fn build_args(file_config: BenchDriverConfigFile) -> Result<BenchDriverArgs, Str
         Some(value) => BenchDriverMode::parse(value)?,
         None => BenchDriverMode::Benchmark,
     };
+    #[cfg(feature = "python-backend")]
+    let default_backend = AcsBackendKind::PythonHb;
+    #[cfg(not(feature = "python-backend"))]
+    let default_backend = AcsBackendKind::RustFin;
     let protocol = file_config
         .protocol
         .as_deref()
         .map(AcsBackendKind::parse)
         .transpose()?
-        .unwrap_or(AcsBackendKind::PythonHb);
+        .unwrap_or(default_backend);
     let acs_backend = file_config
         .acs_backend
         .as_deref()
         .map(AcsBackendKind::parse)
         .transpose()?
-        .unwrap_or(AcsBackendKind::PythonHb);
+        .unwrap_or(default_backend);
     let nodes = file_config.nodes.unwrap_or(4);
     let faulty = file_config.faulty.unwrap_or(1);
     let rounds = file_config.rounds.unwrap_or(1);
@@ -352,8 +368,7 @@ fn toml_to_json_value(value: &toml::Value) -> Result<Value, String> {
 fn run_bench_rust_driver(args: BenchDriverArgs, node_binary: &Path) -> Result<(), String> {
     let addresses = allocate_loopback_addresses(args.nodes)?;
     let addresses_json = serde_json::to_string(&addresses).map_err(|err| err.to_string())?;
-    let hb_crypto_payloads =
-        serialize_crypto_payloads(AcsBackendKind::PythonHb, args.nodes, args.faulty)?;
+    let hb_crypto_payloads = serialize_hb_crypto_payloads(args.nodes, args.faulty)?;
     let acs_crypto_payloads = serialize_crypto_payloads(args.acs_backend, args.nodes, args.faulty)?;
     let result_dir = build_result_dir("hb-rust-driver", &args.sid)?;
     let start_at_ms = current_time_millis()?
@@ -499,12 +514,18 @@ fn serialize_crypto_payloads(
     faulty: usize,
 ) -> Result<Vec<String>, String> {
     match protocol {
+        #[cfg(feature = "python-backend")]
         AcsBackendKind::PythonHb => generate_hb_crypto_payloads_json(nodes, faulty),
-        AcsBackendKind::PythonDumbo
-        | AcsBackendKind::RustFin
-        | AcsBackendKind::RustDumbo
-        | AcsBackendKind::RustHb => generate_dumbo_crypto_payloads_json(nodes, faulty),
+        #[cfg(feature = "python-backend")]
+        AcsBackendKind::PythonDumbo => generate_acs_crypto_payloads_json(nodes, faulty),
+        AcsBackendKind::RustFin | AcsBackendKind::RustDumbo | AcsBackendKind::RustHb => {
+            generate_acs_crypto_payloads_json(nodes, faulty)
+        }
     }
+}
+
+fn serialize_hb_crypto_payloads(nodes: usize, faulty: usize) -> Result<Vec<String>, String> {
+    generate_hb_crypto_payloads_json(nodes, faulty)
 }
 
 fn allocate_loopback_addresses(num_nodes: usize) -> Result<Vec<(String, u16)>, String> {
@@ -525,7 +546,7 @@ fn allocate_loopback_addresses(num_nodes: usize) -> Result<Vec<(String, u16)>, S
 }
 
 fn build_result_dir(prefix: &str, sid: &str) -> Result<PathBuf, String> {
-    let scratch_root = PathBuf::from(".tmp_multiprocess_results");
+    let scratch_root = PathBuf::from(BENCH_TMP_RESULTS_DIR);
     fs::create_dir_all(&scratch_root).map_err(|err| err.to_string())?;
     let safe_sid: String = sid
         .chars()
@@ -601,6 +622,11 @@ fn failed_result_dir_hint(result_dir: &Path) -> String {
 
 fn write_output(result_path: Option<&str>, rendered: &str) -> Result<(), String> {
     if let Some(result_path) = result_path {
+        if let Some(parent) = Path::new(result_path).parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
         fs::write(result_path, rendered).map_err(|err| err.to_string())?;
     } else {
         println!("{rendered}");

@@ -5,6 +5,13 @@ members = [
     "honey-acs",
     "honey-acs/honey-native",
     "honey-node",
-    "benchmarks/honey-bench",
+    "honey-bench",
+]
+default-members = [
+    "honey-crypto",
+    "honey-wire",
+    "honey-acs",
+    "honey-node",
+    "honey-bench",
 ]
 resolver = "2"

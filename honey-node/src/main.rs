@@ -43,6 +43,11 @@ fn write_early_failure_result(
         },
     });
     if let Ok(rendered) = serde_json::to_string(&payload) {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            let _ = fs::create_dir_all(parent);
+        }
         let _ = fs::write(path, rendered);
     }
 }

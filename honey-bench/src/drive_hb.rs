@@ -59,8 +59,7 @@ fn run_drive_honeybadger_multiprocess(
     node_binary: &Path,
 ) -> Result<String, String> {
     debug_acs_driver("hb-mp:serialize_hb_crypto_payloads:start");
-    let hb_crypto_payloads =
-        serialize_crypto_payloads(AcsBackendKind::PythonHb, args.nodes, args.faulty)?;
+    let hb_crypto_payloads = serialize_hb_crypto_payloads(args.nodes, args.faulty)?;
     debug_acs_driver("hb-mp:serialize_hb_crypto_payloads:done");
     let acs_crypto_payloads = if !args.acs_backend.is_dumbo() {
         hb_crypto_payloads.clone()
