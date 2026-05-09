@@ -17,9 +17,8 @@ cross-round broadcast reuse under the Honey4u runtime, not a generic consensus f
 - `honey-transport/`: local TCP transport implementation and transport handle abstraction used by
   the Rust driver.
 - `honey-node/`: standalone node/driver binary and local TCP runtime.
-- `benchmarks/honey-bench/`: Rust benchmark orchestrator for config-file driven benchmark suites.
-- `benchmarks/cli/`: Python benchmark entrypoints such as `tps.py` and `dumbo_reuse_sweep.py`.
-- `tests/`: root integration and benchmark tests.
+- `honey-bench/`: Rust benchmark orchestrator for config-file driven benchmark suites and TPS runs.
+- `configs/`: benchmark and thesis experiment TOML configurations.
 - `paper/`: thesis sources and local reference material.
 
 The old root-level `packages/` and `native/` prefixes have been removed. Python ACS sources now
@@ -47,7 +46,7 @@ The Rust crates used by the current driver are:
 Additional workspace members:
 
 - `honey-acs/honey-native`: PyO3 extension exposed to Python as `honey_native`.
-- `benchmarks/honey-bench`: Rust benchmark suite runner that spawns or drives `honey-node`.
+- `honey-bench`: Rust benchmark suite runner that spawns or drives `honey-node`.
 
 ## Python Packages
 
@@ -72,7 +71,7 @@ honey-transport ------> honey-wire
 honey-node -----------> honey-acs, honey-wire, honey-crypto, honey-transport
 honey-native ---------> honey-wire, honey-crypto
 Python honey_acs -----> honey-native
-benchmarks/honey-bench -> honey-node
+honey-bench ----------> honey-node
 ```
 
 Practical reading:
@@ -97,6 +96,7 @@ Practical reading:
   reusable cross-round proposal artifacts when configured, and exchanges TPKE share bundles bound
   to the selected proposal ids and digests.
 - `honey-bench run` is config-file driven through `--config <path>` and spawns `honey-node`.
+- `honey-bench tps` is the current single-run and sweep benchmark CLI.
 - Thesis-oriented benchmark batches are driven by `honey-bench suite --suite-config <path>`.
 
 ## Current Thesis Status
@@ -105,7 +105,7 @@ Practical reading:
   remaining work is thesis finalization rather than protocol-core completion.
 - The cross-round reuse mechanism is implemented.
 - The current checkout does not contain the historical `paper-final-*` result directories referred
-  to by older planning notes. The visible `benchmarks/results/dumbo-paper-suite-*` directories are
+  to by older planning notes. The visible `honey-bench/results/dumbo-paper-suite-*` directories are
   incomplete/failed smoke outputs and should not be used as formal thesis evidence.
 - The remaining work is mainly thesis/result reconciliation, a clean formal rerun or restoration of
   archived result artifacts, a minimal cross-machine rerun, and manual thesis cover metadata.
@@ -118,7 +118,7 @@ cargo build
 cargo test
 uv run pytest
 cargo run -p honey-bench -- suite \
-  --suite-config benchmarks/configs/paper/dumbo_comprehensive.toml \
+  --suite-config configs/paper/dumbo_comprehensive.toml \
   --list-experiments
 typst compile paper/main_refer.typ
 ```
@@ -126,6 +126,4 @@ typst compile paper/main_refer.typ
 See these files for the current authoritative status:
 
 - [AGENTS.md](AGENTS.md): repository-specific engineering guidance
-- [TODO.md](TODO.md): final-stage task tracking and current priorities
-- [paper/experiment-checklist.md](paper/experiment-checklist.md): formal experiment freeze plan
 - [TARGET.md](TARGET.md): original task book

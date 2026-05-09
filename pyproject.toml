@@ -33,7 +33,6 @@ pythonpath = [
 testpaths = [
     "honey-acs/packages/honey-acs/tests",
     "honey-acs/honey-native/tests",
-    "tests",
 ]
 
 [tool.ty.environment]
@@ -48,9 +47,6 @@ include = [
     "honey-acs/honey-native/tests/native/test_ecdsa_and_crypto_params.py",
 ]
 exclude = [
-    "benchmarks",
-    "refer",
-    "refer_dag",
     ".tmp*",
 ]
 
