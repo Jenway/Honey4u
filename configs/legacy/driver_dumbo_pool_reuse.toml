@@ -1,6 +1,7 @@
 # Rust-owned Dumbo outer driver with broadcast pool reuse enabled.
 mode = "dumbo"
 sid = "bench:driver:dumbo:reuse"
+acs_backend = "rust_fin"
 nodes = 4
 faulty = 1
 rounds = 3

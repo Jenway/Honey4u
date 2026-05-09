@@ -1,0 +1,58 @@
+[suite]
+name = "paper_highload"
+
+[defaults]
+rounds = 6
+repeats = 3
+global_timeout = 600.0
+transport = "quic"
+pool_grace_ms = 100
+pool_reuse_limit_per_round = 4
+pool_expire_rounds = 10
+pool_mempool_max = 4096
+enable_pool_reference_proposals = true
+enable_pool_fetch_fallback = true
+
+[[experiments]]
+name = "highload_base"
+description = "Main N=12 high-load sweep across both backends up to 16K batch size."
+backend = ["rust_fin", "python_dumbo"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+
+[[experiments]]
+name = "highload_deep"
+description = "Deeper N=12 large-batch sweep to extend the throughput knee study."
+backend = ["rust_fin", "python_dumbo"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [32768, 65536, 131072, 262144, 524288]
+rounds = 4
+repeats = 2
+global_timeout = 3600.0
+pool_mempool_max = 524288
+
+[[experiments]]
+name = "highload_densify_fin"
+description = "Post-fix FIN-only densify points around the large-batch knee."
+backend = ["rust_fin"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [24576, 98304, 196608]
+rounds = 4
+repeats = 2
+global_timeout = 3600.0
+pool_mempool_max = 524288
+
+[[experiments]]
+name = "highload_densify_py"
+description = "Python Dumbo-only densify points around the large-batch knee."
+backend = ["python_dumbo"]
+reuse_enabled = [false, true]
+nodes = [12]
+batch_size = [24576, 49152]
+rounds = 4
+repeats = 2
+global_timeout = 3600.0
+pool_mempool_max = 524288

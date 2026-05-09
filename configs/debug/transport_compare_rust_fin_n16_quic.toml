@@ -1,14 +1,15 @@
 mode = "dumbo"
-sid = "bench:dumbo:transport:scope:rust_dumbo:n16:b2048:slow25p11-15"
+sid = "bench:dumbo:transport:compare:rust_fin:n16:b2048:r2:quic"
 nodes = 16
 faulty = 5
 rounds = 2
 batch_size = 2048
 global_timeout = 120
-result_path = "honey-bench/results/transport-scope-probe-rust-dumbo-n16-20260429.json"
+result_path = "honey-bench/results/transport-compare-rust-fin-n16-quic-20260429.json"
+acs_backend = "rust_fin"
 
 [config]
-acs_backend = "rust_dumbo"
+transport = "quic"
 enable_broadcast_pool_reuse = false
 enable_pool_reference_proposals = false
 enable_pool_fetch_fallback = false
@@ -16,5 +17,4 @@ pool_grace_ms = 0
 pool_reuse_limit_per_round = 0
 pool_expire_rounds = 3
 pool_mempool_max = 4096
-network_faults = { enabled = true, seed = 20260429, slow_honest = { extra_delay_ms = 25, pids = [11, 12, 13, 14, 15] } }
 byzantine_nodes = []

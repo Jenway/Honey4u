@@ -9,8 +9,9 @@
 ## Current Branch Focus
 - The active benchmark and test runner mode is `rust-driver`: `honey-node` spawns N subprocesses, each running the full protocol over local TCP.
 - ACS execution under `rust-driver` is no longer Python-only. The driver can run the Python ACS host through PyO3 or one of the Rust-native ACS hosts selected by `config_json`.
-- `honey-bench run` now takes benchmark configuration from a TOML file via `--config <path>` and spawns `honey-node` subprocesses. Benchmark helper scripts generate or point to TOML configs instead of assembling long CLI flag lists.
-- Current benchmark work is centered on the Rust `honey-bench` CLI: use `honey-bench tps` for general TPS/latency runs and `honey-bench suite` plus TOML configs under `configs/paper/` for thesis-oriented experiment batches.
+- `honey-bench` is now suite-only: benchmark execution goes through `honey-bench suite --suite-config <path>`, and helper scripts should generate or point to suite TOML files instead of assembling long CLI flag lists.
+- `suite` remains the only benchmark CLI entrypoint, but it still supports both HoneyBadger-style and Dumbo-style benchmark execution internally based on the configured ACS backend.
+- Current benchmark work is centered on the Rust `honey-bench suite` CLI plus the curated TOML configs under `configs/paper/core/` and `configs/paper/appendix/`. The `paper/core/` label should track the current thesis Chapter 4 main experiment narrative, not a generic notion of importance.
 - The current checkout does not contain the older `paper-final-*` formal result directories referenced by some historical notes. The visible `honey-bench/results/dumbo-paper-suite-*` directories are incomplete/failed smoke outputs and must not be treated as formal evidence. Restore the archived artifacts or rerun the TOML suites before quoting exact thesis numbers.
 - The current worktree includes controlled runtime fault injection at the `rust-driver` boundary: network faults (`fixed_delay_ms`, `jitter_ms`, `slow_honest`) and initial Byzantine node behaviors (`silent`, `invalid_fetch_response`). Treat those capabilities as implemented tooling, but do not generalize them to full WAN or broad Byzantine robustness claims without fresh evidence.
 - A top-level Rust workspace exists at `Cargo.toml` (project root) with members: `honey-crypto`, `honey-wire`, `honey-acs`, `honey-acs/honey-native`, `honey-node`, and `honey-bench`. The `honey-transport/` crate is a path dependency used by `honey-node` but is not currently listed as a workspace member.
@@ -39,18 +40,18 @@
 - `honey-node`'s binary entry (`honey-node/src/main.rs` → `cli.rs`) delegates to `driver/mod.rs`, which owns the full rust-driver node loop under `honey-node/src/driver/`.
 - Key submodules of `honey-node/src/driver/`: `encryption/` (HoneyBadger batch encryption/decryption shell), `mempool/` (ACS proposal payload bundle/reference encoding, reusable proposal mempool, and fetch fallback), `frame.rs` (driver TCP frames and pool-fetch wire), `round/` (round inbox, state, metrics, and per-round loop), `config.rs`/`args.rs` (runtime config and CLI parsing), and `output.rs` (result JSON rendering).
 - Python tests use `pytest` plus `pytest-asyncio`. Protocol tests live alongside the code they test: `honey-acs/packages/honey-acs/tests/acs/`, `honey-acs/packages/honey-acs/tests/subprotocols/`, and `honey-acs/honey-native/tests/native/`.
-- Benchmark code lives under `honey-bench/`, and benchmark TOML configs live under `configs/`.
+- Benchmark code lives under `honey-bench/`, and benchmark configs live under `configs/` with the following intent split: `smoke/`, `paper/core/`, `paper/appendix/`, `paper/exploratory/`, `legacy/`, and `debug/`.
 - Benchmark output snapshots and ad hoc reports may be written under `honey-bench/results/`.
-- Thesis sources live under `paper/`. In this checkout, `paper/main_refer.typ` is the active full thesis manuscript source; `paper/main.typ` is a separate shorter draft/template and should not be edited unless explicitly requested. `paper/main_refer2.typ` is an untracked design-note draft. `paper/sdu-thesis.typ` is the local SDU Typst template, `paper/refer.bib` is the bibliography database, and `paper/reference/` stores local PDF references.
+- Thesis sources live under `paper/`. In this checkout, `paper/main.typ` is the active thesis manuscript source. `paper/main_refer.typ` is an older alternate draft, `paper/main_refer2.typ` is an untracked design-note draft, `paper/sdu-thesis.typ` is the local SDU Typst template, `paper/refer.bib` is the bibliography database, and `paper/reference/` stores local PDF references.
 - The root project uses `uv` workspaces; both `honey-acs/packages/honey-acs` and `honey-acs/honey-native` are workspace members (see `pyproject.toml`).
 - The old root-level `packages/` and `native/` prefixes have been removed; do not add new code under those paths.
 
 ## Benchmark Status
-- The general benchmark entrypoint is `honey-bench tps`. It reports throughput, multiple elapsed-time views, transaction and round latency, subprotocol timing summaries, queue backlog, and chain-digest agreement/divergence.
-- When runtime faults are configured, `honey-bench tps` also records transport perturbation counters and node-level byzantine action counters.
+- The general benchmark entrypoint is `honey-bench suite`. It expands suite TOML experiments, executes the selected cases, and writes aggregated summaries, deltas, raw per-run JSON, and a manifest.
+- When runtime faults are configured, suite outputs also record transport perturbation counters and node-level byzantine action counters through the aggregated raw and summary artifacts.
 - Older planning notes mention reuse-sweep and backend-comparison result directories, but those directories are not present in the current checkout. Do not quote their exact numbers from memory; restore the artifacts or rerun the relevant benchmark configs first.
 - Backend comparison runs can be driven through the current TOML-suite path (`honey-bench suite`) or through the legacy Python benchmark helper when appropriate, but the current checkout has no archived formal `rust_dumbo` comparison.
-- `configs/paper/` TOML configs (consumed by `honey-bench suite`) cover thesis-oriented experiment groups for high-load baselines, grace sensitivity, network perturbation, and initial byzantine-node scenarios.
+- `configs/paper/core/` holds the configs that best align with the current thesis Chapter 4 mainline result narrative; `configs/paper/appendix/` holds appendix/supplementary configs; `configs/paper/exploratory/` holds pilot and tuning configs that informed those final suites.
 - Current visible suite outputs under `honey-bench/results/dumbo-paper-suite-*` have `executed_runs == 0` where manifests exist, and empty summary/delta data. Treat them as failed smoke artifacts, not thesis evidence.
 - Do not claim that the repository already has realistic WAN evidence or general Byzantine robustness. The implemented jitter/fixed-delay/slow-honest and byzantine-boundary capabilities are local runtime perturbation tools until backed by fresh successful result directories.
 - Treat `honey-bench/results/` as experiment artifacts. Keep them out of commits unless the task explicitly asks to check in new reports or reference outputs.
@@ -61,14 +62,14 @@
 - The formal task description is in `TARGET.md`. The thesis topic is narrowly defined: mitigate bandwidth waste in ACS-based asynchronous BFT caused by honest-but-delayed broadcast outputs being discarded by the current round.
 - The task book sets four concrete success conditions: implement the cross-round reuse module, preserve safety/liveness, obtain a throughput improvement of at least 10% in high-load settings, and provide a stable, well-documented system plus a complete thesis.
 - In the current repository state, the implementation side of the task book is effectively satisfied: the reuse module, runtime fault injection, benchmark configs, and driver metrics are implemented. The performance-evidence side must be reconciled for this checkout because the historical formal `paper-final-*` result directories are absent.
-- The active full manuscript source in this checkout is `paper/main_refer.typ`. It compiles, but it still contains historical result claims that cannot currently be verified from `honey-bench/results/`; keep those claims conservative until artifacts are restored or rerun.
+- The active full manuscript source in this checkout is `paper/main.typ`. Keep exact result claims conservative until the supporting artifacts in `honey-bench/results/` are restored or rerun and rechecked against the manuscript.
 - Preferred next-work order for agents:
-  1. restore or rerun the formal benchmark result directories needed by `paper/main_refer.typ`, then regenerate the final tables/figures and tighten wording
+  1. restore or rerun the formal benchmark result directories needed by `paper/main.typ`, then regenerate the final tables/figures and tighten wording
   2. finish thesis cleanup, threat-to-validity wording, abstract/conclusion consistency, and conservative claim review
   3. run one minimal cross-machine rerun
   4. if time remains after the required delivery items are done, tighten Rust fetch-stat appendix wording
 - Practical delivery order for the current workspace:
-  1. finalize `paper/main_refer.typ`
+  1. finalize `paper/main.typ`
   2. run one minimal cross-machine rerun
   3. fill manual cover metadata fields
   4. export the final PDF only after one last conservative wording pass
@@ -83,13 +84,13 @@
   beyond that point is optional follow-on work, not a blocker for closing the current task book.
 - Treat the thesis/task-book delivery as fully closed only when all four practical delivery items above are done.
 - Equivalent completion criteria for future agents:
-  1. `paper/main_refer.typ` has final-form body text, tables, captions, appendix placement, and threat-to-validity wording, with all exact result numbers traceable to present artifacts
+  1. `paper/main.typ` has final-form body text, tables, captions, appendix placement, and threat-to-validity wording, with all exact result numbers traceable to present artifacts
   2. at least one minimal cross-machine trend rerun has been completed and archived with run metadata
   3. the manual thesis cover metadata fields have been filled locally and the final PDF exports cleanly
   4. the final wording keeps `fixed-delay` as appendix-grade pressure testing, keeps `fetch` as a boundary observation, and does not generalize the results to arbitrary ACS black boxes, realistic WAN validation, or broad Byzantine robustness
 - Deprioritize the following until thesis-result integration is done: standalone WAN simulators, new protocol families/backends, generalized byzantine attack frameworks, and cosmetic large-scale refactors.
 - The mid-term report is in `mid-term.md`. It records the already-established narrative that the project targets ACS-style HoneyBadger/Dumbo protocols rather than DAG-style protocols, and it reports preliminary local-TCP results around `N=12, f=3`.
-- The current thesis manuscript source is `paper/main_refer.typ`. Treat `paper/main.typ` as a separate shorter draft/template unless the user explicitly asks to edit it.
+- The current thesis manuscript source is `paper/main.typ`. Treat `paper/main_refer.typ` as an older alternate draft unless the user explicitly asks to edit it.
 - The thesis must stay academically conservative. Do not write that the reuse mechanism applies to arbitrary ACS black boxes. The current argument is strongest when the reused object already carries a strong availability guarantee such as PRBC-style output/proof material.
 - Likewise, do not claim that FIN-ACS itself has already been fully adopted as the thesis baseline. What is implemented and benchmarked in the repository is a Rust FIN-style ACS backend inside the current Honey4u runtime, not a paper-faithful end-to-end reimplementation of every external codebase that was discussed during exploration.
 - The papers in `paper/reference/` are the primary local references for protocol analysis. Prefer grounding architectural comparisons and thesis statements in those PDFs rather than in remembered summaries of third-party code.
@@ -112,8 +113,8 @@
 - Build the full Rust workspace: `cargo build`
 - Run the full Rust test suite with Cargo: `cargo test`
 - Build the root Python package wheel/sdist if needed: `uv build`
-- Compile the current thesis manuscript PDF: `typst compile paper/main_refer.typ`
-- Compile the template/demo PDF: `typst compile paper/main.typ`
+- Compile the current thesis manuscript PDF: `typst compile paper/main.typ`
+- Compile the alternate draft PDF if needed: `typst compile paper/main_refer.typ`
 - Run repository hooks in one shot: `uv run pre-commit run --all-files`
 
 ## Lint, Format, And Typecheck Commands
@@ -142,7 +143,7 @@
 - The Python package consumes `honey-acs/honey-native` through the `uv` workspace; the Rust workspace is defined at the project root `Cargo.toml`.
 - Building the Rust workspace pulls in all crates (`honey-crypto`, `honey-wire`, `honey-acs`, `honey-native`, `honey-node`, `honey-bench`); keep the root `Cargo.lock` in sync if a workspace dependency changes.
 - Running Rust workspace commands may create or refresh `Cargo.lock` and `target/`; treat both as generated unless the task explicitly includes workspace lock updates.
-- `honey-bench run` and `honey-bench suite` are config-file driven. Prefer editing or generating TOML benchmark configs rather than extending the CLI argument surface.
+- `honey-bench` is suite-config driven. Prefer editing or generating suite TOML benchmark configs rather than extending the CLI argument surface.
 - `honey-node` is the internal per-node process entrypoint spawned by the benchmark driver. It uses explicit flags directly and no longer has a `run-driver-node` subcommand.
 - `ty` is configured with `error-on-warning = true`, so warnings should be treated as failures.
 - `ty` currently checks `honey-acs/packages/honey-acs/src/honey_acs` and `honey-acs/honey-native/tests/native/test_ecdsa_and_crypto_params.py` only (see `pyproject.toml [tool.ty.src]`).
@@ -151,7 +152,7 @@
 - Local benchmark/profiling runs may leave artifacts under `honey-bench/results/` and `.codex`; do not include them in a source commit unless the user explicitly wants report outputs checked in.
 - When running formal benchmarks for the thesis, prefer preserving the generated TOML configs, raw JSON outputs, run date, and commit hash together so the experiment remains reproducible on another machine.
 - The current code and configs support the reuse-vs-baseline, backend-comparison, and intentionally narrow local network-disturbance / boundary Byzantine experiments, but this checkout does not include successful formal result artifacts for those claims. Do not imply realistic WAN validation or broad Byzantine robustness.
-- `configs/paper/dumbo_smoke.toml` and `configs/paper/dumbo_comprehensive.toml` now include network-fault experiments plus initial `byzantine_silent_*` / `byzantine_invalid_fetch_response_*` entries. Use them for reruns instead of inventing ad hoc configs.
+- `configs/smoke/dumbo_smoke.toml` is the preferred smoke-suite entrypoint. For thesis reruns, prefer the curated `configs/paper/core/` and `configs/paper/appendix/` configs over the exploratory configs unless you are intentionally revisiting old tuning work.
 - The benchmark runtime metric shape expected by the Rust benchmark aggregation path is `{sample_count, total_seconds, max_seconds}` under `METRICS.snapshot()["timings"]`; keep Rust-side metric output aligned with this shape.
 
 ## Python Style

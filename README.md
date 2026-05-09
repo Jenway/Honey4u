@@ -17,8 +17,10 @@ cross-round broadcast reuse under the Honey4u runtime, not a generic consensus f
 - `honey-transport/`: local TCP transport implementation and transport handle abstraction used by
   the Rust driver.
 - `honey-node/`: standalone node/driver binary and local TCP runtime.
-- `honey-bench/`: Rust benchmark orchestrator for config-file driven benchmark suites and TPS runs.
-- `configs/`: benchmark and thesis experiment TOML configurations.
+- `honey-bench/`: Rust benchmark orchestrator for config-file driven benchmark suites.
+- `configs/`: benchmark and thesis experiment configurations, split into `smoke/`, `paper/core/`,
+  `paper/appendix/`, `paper/exploratory/`, `legacy/`, and `debug/`. Here `paper/core/` follows
+  the current Chapter 4 main experiment narrative in the thesis source.
 - `paper/`: thesis sources and local reference material.
 
 The old root-level `packages/` and `native/` prefixes have been removed. Python ACS sources now
@@ -95,9 +97,10 @@ Practical reading:
 - The driver only forwards ACS wire events, resolves already-available proposal payloads, fetches
   reusable cross-round proposal artifacts when configured, and exchanges TPKE share bundles bound
   to the selected proposal ids and digests.
-- `honey-bench run` is config-file driven through `--config <path>` and spawns `honey-node`.
-- `honey-bench tps` is the current single-run and sweep benchmark CLI.
-- Thesis-oriented benchmark batches are driven by `honey-bench suite --suite-config <path>`.
+- Benchmark execution is driven through `honey-bench suite --suite-config <path>`.
+- Even one-off and smoke runs are represented as suite TOML files rather than a separate single-run CLI schema.
+- `suite` is the only benchmark CLI entrypoint, but it can still dispatch internally to either the
+  HoneyBadger-style or Dumbo-style benchmark driver path based on the configured ACS backend.
 
 ## Current Thesis Status
 
@@ -118,12 +121,13 @@ cargo build
 cargo test
 uv run pytest
 cargo run -p honey-bench -- suite \
-  --suite-config configs/paper/dumbo_comprehensive.toml \
+  --suite-config configs/paper/core/paper_highload.toml \
   --list-experiments
-typst compile paper/main_refer.typ
+typst compile paper/main.typ
 ```
 
 See these files for the current authoritative status:
 
 - [AGENTS.md](AGENTS.md): repository-specific engineering guidance
+- [configs/README.md](configs/README.md): benchmark-config directory layout and recommended entrypoints
 - [TARGET.md](TARGET.md): original task book
