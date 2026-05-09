@@ -1,5 +1,8 @@
 use super::*;
-use honey_wire::phase_stats::{aggregate_driver_phase_stats, driver_phase_stats_from_value};
+use honey_wire::phase_stats::{
+    DriverPhaseStats, aggregate_driver_phase_stats, driver_phase_stats_from_value,
+    driver_phase_stats_json,
+};
 
 fn transport_label(config_json: &str) -> &'static str {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(config_json)
@@ -54,7 +57,7 @@ fn json_string_owned_field(value: &Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing string field: {key}"))
 }
 
-fn run_drive_honeybadger_multiprocess(
+pub fn run_drive_honeybadger_multiprocess(
     args: &BenchHoneyBadgerArgs,
     node_binary: &Path,
 ) -> Result<String, String> {
@@ -379,9 +382,4 @@ fn run_drive_honeybadger_multiprocess(
         "rounds": rounds,
     }))
     .map_err(|err| err.to_string())
-}
-
-pub fn run_drive_honeybadger(args: BenchHoneyBadgerArgs, node_binary: &Path) -> Result<(), String> {
-    let rendered = run_drive_honeybadger_multiprocess(&args, node_binary)?;
-    write_output(args.result_path.as_deref(), &rendered)
 }

@@ -409,8 +409,3 @@ pub fn run_drive_dumbo_multiprocess(
     }))
     .map_err(|e| e.to_string())
 }
-
-pub fn run_drive_dumbo(args: BenchDumboArgs, node_binary: &Path) -> Result<(), String> {
-    let rendered = run_drive_dumbo_multiprocess(&args, node_binary)?;
-    write_output(args.result_path.as_deref(), &rendered)
-}

@@ -4,38 +4,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut argv = std::env::args();
     let _bin = argv.next();
     let Some(command) = argv.next() else {
-        return Err(String::from(
-            "missing command; expected: run --config <path>  |  suite --suite-config <path>  |  tps [OPTIONS]",
-        )
-        .into());
+        return Err(String::from("missing command; expected: suite --suite-config <path>").into());
     };
     match command.as_str() {
-        "run" => cmd_run(argv),
         "suite" => cmd_suite(argv),
-        "tps" => cmd_tps(argv),
-        _ => Err(format!("unknown command: {command}; expected: run | suite | tps").into()),
+        _ => Err(format!("unknown command: {command}; expected: suite").into()),
     }
-}
-
-fn cmd_run(mut argv: std::env::Args) -> Result<(), Box<dyn std::error::Error>> {
-    let mut config_path: Option<String> = None;
-    while let Some(arg) = argv.next() {
-        match arg.as_str() {
-            "--config" => {
-                if config_path.is_some() {
-                    return Err(String::from("run accepts exactly one --config <path>").into());
-                }
-                config_path = Some(
-                    argv.next()
-                        .ok_or_else(|| String::from("--config requires a value"))?,
-                );
-            }
-            _ => return Err(format!("unknown argument: {arg}").into()),
-        }
-    }
-    let config_path = config_path.ok_or_else(|| String::from("run requires --config <path>"))?;
-    let node_binary = resolve_node_binary()?;
-    honey_bench::run_config_path(Path::new(&config_path), &node_binary).map_err(Into::into)
 }
 
 fn cmd_suite(mut argv: std::env::Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -112,10 +86,6 @@ fn cmd_suite(mut argv: std::env::Args) -> Result<(), Box<dyn std::error::Error>>
         output_dir,
     };
     honey_bench::suite::run_suite(Path::new(&suite_config), &node_binary, opts).map_err(Into::into)
-}
-
-fn cmd_tps(argv: std::env::Args) -> Result<(), Box<dyn std::error::Error>> {
-    honey_bench::tps_cmd::cmd_tps(argv)
 }
 
 fn resolve_node_binary() -> Result<PathBuf, String> {
