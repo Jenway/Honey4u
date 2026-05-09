@@ -1,6 +1,6 @@
 // layouts/frontmatter.typ
 #import "../fonts.typ": *
-#import "../utils.typ": front-title, fakebold
+#import "../utils.typ": fakebold, front-title, front-title-en
 
 #let render-zh-abstract(info) = {
   front-title([摘#h(2em)要])
@@ -15,7 +15,7 @@
 }
 
 #let render-en-abstract(info) = {
-  front-title([ABSTRACT])
+  front-title-en([ABSTRACT])
   set text(font: (en, 宋体), size: fontsize.小四, top-edge: "ascender", bottom-edge: "descender")
   set par(first-line-indent: (amount: 2em, all: true), leading: 23pt - 1em, spacing: 23pt - 1em, justify: true)
   info.abstract_en

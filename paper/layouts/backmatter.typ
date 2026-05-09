@@ -30,6 +30,8 @@
 
 #let render-appendix(info) = {
   heading(level: 1, numbering: none)[附#h(2em)录]
+  counter(heading).update(0)
+  set heading(numbering: none)
   section-text(info.appendix)
 }
 

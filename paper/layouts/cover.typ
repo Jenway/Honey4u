@@ -13,7 +13,7 @@
       stroke: (bottom: 0.5pt),
       inset: (bottom: 0.2em),
     )[
-      #text(font: 宋体, size: fontsize.四号, weight: "regular")[#value]
+      #text(font: 楷体_GB2312, size: fontsize.三号, weight: "regular")[#value]
     ]
   ]
 }
@@ -30,11 +30,11 @@
       v(1.3cm)
     }
     #scale(x: 76%, reflow: true)[
-      #text(font: ((name: en, covers: "latin-in-cjk"), 黑体), size: 62pt, tracking: 0.2em)[毕业论文]
+      #text(font: ((name: en, covers: "latin-in-cjk"), 方正大黑), size: 62pt, tracking: 0.2em)[毕业论文]
       #h(-0.1em) // 拉近括号
       #text(font: 楷体_GB2312, size: 62pt, tracking: 0.2em)[（]
       #h(-0.1em) // 拉近括号
-      #text(font: ((name: en, covers: "latin-in-cjk"), 黑体), size: 62pt, tracking: 0.2em)[设计]
+      #text(font: ((name: en, covers: "latin-in-cjk"), 方正大黑), size: 62pt, tracking: 0.2em)[设计]
       #h(-0.1em) // 拉近括号
       #text(font: 楷体_GB2312, size: 62pt, tracking: 0.2em)[）]
     ]
@@ -62,7 +62,7 @@
       )
     ]
     #v(1fr)
-    #text(font: 楷体, size: fontsize.四号, weight: "bold")[#info.date]
+    #text(font: 楷体_GB2312, size: fontsize.三号, weight: "bold")[#info.date]
     #v(0.5cm)
   ]
 }

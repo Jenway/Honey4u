@@ -131,6 +131,8 @@
 
   show heading.where(level: 1): it => {
     pagebreak(weak: true)
+    counter(figure.where(kind: table)).update(0)
+    counter(math.equation).update(0)
     v(18.4pt)
     align(center)[
       #set text(font: 黑体, size: if heading-is-cjk(it.body) { fontsize.三号 } else { 15pt }, weight: "bold")
@@ -196,6 +198,12 @@
         #set text(font: 黑体, size: fontsize.小二, weight: "bold")
         #it
       ]
+      v(0.5em)
+    }
+    show heading.where(level: 2): it => {
+      v(0.5em)
+      set text(font: 黑体, size: fontsize.四号, weight: "bold")
+      it
       v(0.5em)
     }
     render-appendix(info)
