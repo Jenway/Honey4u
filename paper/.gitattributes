@@ -1,10 +1,2 @@
 assets/SDUWords.pdf filter=lfs diff=lfs merge=lfs -text
-reference filter=lfs diff=lfs merge=lfs -text
-reference/Guo[[:space:]]等[[:space:]]-[[:space:]]2022[[:space:]]-[[:space:]]Speeding[[:space:]]Dumbo[[:space:]]Pushing[[:space:]]Asynchronous[[:space:]]BFT[[:space:]]Closer[[:space:]]to[[:space:]]Practice.pdf filter=lfs diff=lfs merge=lfs -text
-reference/Lu[[:space:]]等[[:space:]]-[[:space:]]2020[[:space:]]-[[:space:]]Dumbo-MVBA[[:space:]]Optimal[[:space:]]Multi-valued[[:space:]]Validated[[:space:]]Asynchronous[[:space:]]Byzantine[[:space:]]Agreement,[[:space:]]Revisited.pdf filter=lfs diff=lfs merge=lfs -text
-reference/Miller[[:space:]]等[[:space:]]-[[:space:]]2016[[:space:]]-[[:space:]]The[[:space:]]Honey[[:space:]]Badger[[:space:]]of[[:space:]]BFT[[:space:]]Protocols.pdf filter=lfs diff=lfs merge=lfs -text
-reference/Yang[[:space:]]等[[:space:]]-[[:space:]]2022[[:space:]]-[[:space:]]DispersedLedger[[:space:]]High-Throughput[[:space:]]Byzantine[[:space:]]Consensus[[:space:]]on[[:space:]]Variable[[:space:]]Bandwidth[[:space:]]Networks.pdf filter=lfs diff=lfs merge=lfs -text
-reference/Duan[[:space:]]等[[:space:]]-[[:space:]]2023[[:space:]]-[[:space:]]FIN[[:space:]]Practical[[:space:]]Signature-Free[[:space:]]Asynchronous[[:space:]]Common[[:space:]]Subset[[:space:]]in[[:space:]]Constant[[:space:]]Time.pdf filter=lfs diff=lfs merge=lfs -text
-reference/Gao[[:space:]]等[[:space:]]-[[:space:]]2022[[:space:]]-[[:space:]]Dumbo-NG[[:space:]]Fast[[:space:]]Asynchronous[[:space:]]BFT[[:space:]]Consensus[[:space:]]with[[:space:]]Throughput-Oblivious[[:space:]]Latency.pdf filter=lfs diff=lfs merge=lfs -text
-reference/Guo[[:space:]]等[[:space:]]-[[:space:]]2020[[:space:]]-[[:space:]]Dumbo[[:space:]]Faster[[:space:]]Asynchronous[[:space:]]BFT[[:space:]]Protocols.pdf filter=lfs diff=lfs merge=lfs -text
 assets/cover.jpg filter=lfs diff=lfs merge=lfs -text
