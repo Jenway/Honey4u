@@ -3,7 +3,7 @@ use super::super::encryption::{HbPkePrivateKeyShare, HbPkePublicParams};
 use super::super::frame::PoolFetchWire;
 use super::metrics::{DriverPhaseStats, RoundMetricsSnapshot};
 use crate::driver::args::NodeRuntimeArgs;
-use honey_acs::AcsBackend;
+use honey_acs::{AcsBackend, AcsRuntimeCapabilities};
 use honey_transport::TransportHandle;
 use std::collections::BTreeMap;
 
@@ -77,6 +77,7 @@ pub(in crate::driver) struct DriverRoundCtx<'a> {
     pub(in crate::driver) private_share: &'a HbPkePrivateKeyShare,
     pub(in crate::driver) args: &'a NodeRuntimeArgs,
     pub(in crate::driver) broadcast_pool_config: &'a BroadcastPoolConfig,
+    pub(in crate::driver) runtime_capabilities: AcsRuntimeCapabilities,
     pub(in crate::driver) byzantine_node_config: ByzantineNodeConfig,
 }
 

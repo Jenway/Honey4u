@@ -1,4 +1,5 @@
 use crate::driver::error::{DriverError, DriverResult};
+use honey_acs::{AcsBackendKind, AcsRuntimeCapabilities};
 use honey_transport::NetworkFaultConfig;
 use serde_json::Value;
 
@@ -98,6 +99,32 @@ pub(super) fn parse_broadcast_pool_config(config_json: &str) -> DriverResult<Bro
         reuse_limit_per_round,
         grace_ms,
     })
+}
+
+pub(super) fn validate_broadcast_pool_config(
+    backend: AcsBackendKind,
+    capabilities: AcsRuntimeCapabilities,
+    config: &BroadcastPoolConfig,
+) -> DriverResult<()> {
+    if config.enable_reuse && !capabilities.supports_cross_round_reuse {
+        return Err(DriverError::config(format!(
+            "acs_backend={} does not support cross-round reuse with the current config",
+            backend.as_str()
+        )));
+    }
+    if config.enable_reference_proposals && !capabilities.supports_cross_round_reuse {
+        return Err(DriverError::config(format!(
+            "acs_backend={} does not support reference proposals with the current config",
+            backend.as_str()
+        )));
+    }
+    if config.enable_fetch_fallback && !capabilities.supports_pool_fetch_fallback {
+        return Err(DriverError::config(format!(
+            "acs_backend={} does not support pool fetch fallback with the current config",
+            backend.as_str()
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn parse_network_fault_config(
@@ -206,8 +233,9 @@ fn parse_slow_honest_extra_delay_ms(network_faults: &Value, pid: usize) -> Drive
 mod tests {
     use super::{
         ByzantineBehavior, parse_broadcast_pool_config, parse_byzantine_node_config,
-        parse_network_fault_config,
+        parse_network_fault_config, validate_broadcast_pool_config,
     };
+    use honey_acs::AcsBackendKind;
 
     #[test]
     fn parse_broadcast_pool_config_reads_grace_ms() {
@@ -218,6 +246,26 @@ mod tests {
 
         assert!(config.enable_reuse);
         assert_eq!(config.grace_ms, 75);
+    }
+
+    #[test]
+    fn validate_broadcast_pool_config_rejects_unsupported_reuse() {
+        let config = parse_broadcast_pool_config(
+            r#"{"enable_broadcast_pool_reuse": true, "hb_broadcast_protocol": "rbc"}"#,
+        )
+        .expect("config should parse");
+        let capabilities = AcsBackendKind::RustHb
+            .runtime_capabilities(r#"{"hb_broadcast_protocol":"rbc"}"#)
+            .expect("capabilities should parse");
+
+        let error = validate_broadcast_pool_config(AcsBackendKind::RustHb, capabilities, &config)
+            .expect_err("rbc backend must reject reuse");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not support cross-round reuse")
+        );
     }
 
     #[test]

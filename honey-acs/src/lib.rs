@@ -135,6 +135,27 @@ pub enum AcsBackendKind {
     RustHb,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BenchmarkProtocolFamily {
+    HoneyBadger,
+    Dumbo,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProposalAvailabilityKind {
+    Rbc,
+    Prbc,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AcsRuntimeCapabilities {
+    pub benchmark_family: BenchmarkProtocolFamily,
+    pub availability_kind: ProposalAvailabilityKind,
+    pub requires_proof_signing_keys: bool,
+    pub supports_cross_round_reuse: bool,
+    pub supports_pool_fetch_fallback: bool,
+}
+
 impl AcsBackendKind {
     pub fn parse(s: &str) -> Result<Self, String> {
         match s {
@@ -169,13 +190,75 @@ impl AcsBackendKind {
         }
     }
 
-    pub fn is_dumbo(self) -> bool {
+    pub fn benchmark_protocol_family(self) -> BenchmarkProtocolFamily {
         match self {
             #[cfg(feature = "python-backend")]
-            Self::PythonDumbo => true,
-            Self::RustFin | Self::RustDumbo => true,
-            _ => false,
+            Self::PythonHb => BenchmarkProtocolFamily::HoneyBadger,
+            #[cfg(feature = "python-backend")]
+            Self::PythonDumbo => BenchmarkProtocolFamily::Dumbo,
+            Self::RustHb => BenchmarkProtocolFamily::HoneyBadger,
+            Self::RustFin | Self::RustDumbo => BenchmarkProtocolFamily::Dumbo,
         }
+    }
+
+    pub fn runtime_capabilities(self, config_json: &str) -> Result<AcsRuntimeCapabilities, String> {
+        let parsed = serde_json::from_str::<Value>(config_json).map_err(|err| err.to_string())?;
+        let hb_broadcast_protocol = parsed
+            .get("hb_broadcast_protocol")
+            .and_then(Value::as_str)
+            .unwrap_or("rbc");
+        let hb_availability_kind = match hb_broadcast_protocol {
+            "rbc" => ProposalAvailabilityKind::Rbc,
+            "prbc" => ProposalAvailabilityKind::Prbc,
+            other => {
+                return Err(format!(
+                    "unsupported hb_broadcast_protocol in config_json: {other}"
+                ));
+            }
+        };
+
+        let capabilities = match self {
+            #[cfg(feature = "python-backend")]
+            Self::PythonHb => AcsRuntimeCapabilities {
+                benchmark_family: BenchmarkProtocolFamily::HoneyBadger,
+                availability_kind: hb_availability_kind,
+                requires_proof_signing_keys: false,
+                supports_cross_round_reuse: hb_availability_kind == ProposalAvailabilityKind::Prbc,
+                supports_pool_fetch_fallback: hb_availability_kind
+                    == ProposalAvailabilityKind::Prbc,
+            },
+            #[cfg(feature = "python-backend")]
+            Self::PythonDumbo => AcsRuntimeCapabilities {
+                benchmark_family: BenchmarkProtocolFamily::Dumbo,
+                availability_kind: ProposalAvailabilityKind::Prbc,
+                requires_proof_signing_keys: true,
+                supports_cross_round_reuse: true,
+                supports_pool_fetch_fallback: true,
+            },
+            Self::RustFin => AcsRuntimeCapabilities {
+                benchmark_family: BenchmarkProtocolFamily::Dumbo,
+                availability_kind: ProposalAvailabilityKind::Prbc,
+                requires_proof_signing_keys: false,
+                supports_cross_round_reuse: true,
+                supports_pool_fetch_fallback: true,
+            },
+            Self::RustDumbo => AcsRuntimeCapabilities {
+                benchmark_family: BenchmarkProtocolFamily::Dumbo,
+                availability_kind: ProposalAvailabilityKind::Prbc,
+                requires_proof_signing_keys: true,
+                supports_cross_round_reuse: true,
+                supports_pool_fetch_fallback: true,
+            },
+            Self::RustHb => AcsRuntimeCapabilities {
+                benchmark_family: BenchmarkProtocolFamily::HoneyBadger,
+                availability_kind: hb_availability_kind,
+                requires_proof_signing_keys: false,
+                supports_cross_round_reuse: hb_availability_kind == ProposalAvailabilityKind::Prbc,
+                supports_pool_fetch_fallback: hb_availability_kind
+                    == ProposalAvailabilityKind::Prbc,
+            },
+        };
+        Ok(capabilities)
     }
 }
 
@@ -197,6 +280,7 @@ fn json_string_array_field(value: &Value, key: &str) -> Result<Vec<String>, Stri
 
 pub fn parse_acs_crypto_payload(
     backend: AcsBackendKind,
+    config_json: &str,
     payload: &str,
 ) -> Result<AcsCryptoMaterial, String> {
     let decoded = serde_json::from_str::<Value>(payload).map_err(|err| err.to_string())?;
@@ -204,7 +288,8 @@ pub fn parse_acs_crypto_payload(
         .into_iter()
         .map(|value| decode_hex(&value))
         .collect::<Result<Vec<_>, _>>()?;
-    let (proof_sig_pk, proof_sig_sk) = if backend.is_dumbo() {
+    let capabilities = backend.runtime_capabilities(config_json)?;
+    let (proof_sig_pk, proof_sig_sk) = if capabilities.requires_proof_signing_keys {
         (
             Some(decode_hex(json_string_field(&decoded, "proof_sig_pk")?)?),
             Some(decode_hex(json_string_field(&decoded, "proof_sig_sk")?)?),
@@ -230,7 +315,7 @@ pub fn build_acs_backend(
     crypto_json: &str,
     config_json: &str,
 ) -> Result<Box<dyn AcsBackend>, String> {
-    let crypto = parse_acs_crypto_payload(backend, crypto_json)?;
+    let crypto = parse_acs_crypto_payload(backend, config_json, crypto_json)?;
     match backend {
         #[cfg(feature = "python-backend")]
         AcsBackendKind::PythonHb | AcsBackendKind::PythonDumbo => {

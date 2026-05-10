@@ -429,13 +429,18 @@ def build_persistent_acs_host_from_json(
     config_json: str | None = None,
 ) -> PersistentAcsHost:
     protocol_family = "hb" if backend == "python_hb" else "dumbo"
+    config_kwargs = _config_kwargs_from_json(config_json)
     return _build_persistent_acs_host(
         backend=backend,
         pid=pid,
         nodes=nodes,
         faulty=faulty,
-        crypto=build_crypto_params_from_json(protocol_family, crypto_json),
-        config_kwargs=_config_kwargs_from_json(config_json),
+        crypto=build_crypto_params_from_json(
+            protocol_family,
+            crypto_json,
+            config=config_kwargs,
+        ),
+        config_kwargs=config_kwargs,
     )
 
 
@@ -454,6 +459,7 @@ def build_persistent_acs_host(
     proof_sig_sk: bytes | None = None,
 ) -> PersistentAcsHost:
     protocol_family = "hb" if backend == "python_hb" else "dumbo"
+    config_kwargs = _config_kwargs_from_json(config_json)
     return _build_persistent_acs_host(
         backend=backend,
         pid=pid,
@@ -468,7 +474,7 @@ def build_persistent_acs_host(
             proof_sig_pk=proof_sig_pk,
             proof_sig_sk=proof_sig_sk,
         ),
-        config_kwargs=_config_kwargs_from_json(config_json),
+        config_kwargs=config_kwargs,
     )
 
 

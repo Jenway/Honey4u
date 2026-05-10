@@ -16,7 +16,7 @@ fn build_hosts(nodes: usize, faulty: usize, mode: HbBroadcastMode) -> Vec<RustHb
                 pid,
                 nodes,
                 faulty,
-                crate::parse_acs_crypto_payload(AcsBackendKind::RustHb, &payload)
+                crate::parse_acs_crypto_payload(AcsBackendKind::RustHb, config_json, &payload)
                     .expect("crypto payload should parse"),
                 config_json,
             )

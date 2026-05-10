@@ -1,6 +1,6 @@
 use crate::host_crypto::{generate_dumbo_crypto_payloads_json, generate_hb_crypto_payloads_json};
 use crate::proposal::ProposalStore;
-use crate::{AcsBackend, AcsBackendKind, AcsEvent, AcsRoundOutcome};
+use crate::{AcsBackend, AcsBackendKind, AcsEvent, AcsRoundOutcome, BenchmarkProtocolFamily};
 use std::collections::BTreeMap;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -129,10 +129,9 @@ pub fn serialize_crypto_payloads(
     nodes: usize,
     faulty: usize,
 ) -> Result<Vec<String>, String> {
-    if backend.is_dumbo() {
-        generate_dumbo_crypto_payloads_json(nodes, faulty)
-    } else {
-        generate_hb_crypto_payloads_json(nodes, faulty)
+    match backend.benchmark_protocol_family() {
+        BenchmarkProtocolFamily::HoneyBadger => generate_hb_crypto_payloads_json(nodes, faulty),
+        BenchmarkProtocolFamily::Dumbo => generate_dumbo_crypto_payloads_json(nodes, faulty),
     }
 }
 

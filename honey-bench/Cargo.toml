@@ -2,12 +2,10 @@
 name = "honey-bench"
 version = "0.1.0"
 edition = "2024"
-
-[features]
-python-backend = ["honey-node/python-backend"]
-quic = ["honey-node/quic"]
+default-run = "honey-bench"
 
 [dependencies]
+clap = { version = "=4.6.0", features = ["derive"] }
 honey-acs = { path = "../honey-acs" }
 honey-node = { path = "../honey-node", default-features = false }
 honey-wire = { path = "../honey-wire" }

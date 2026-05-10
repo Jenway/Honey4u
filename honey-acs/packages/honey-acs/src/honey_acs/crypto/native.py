@@ -46,7 +46,7 @@ class NativeMerkleRuntime:
 
 
 def build_runtime_crypto(
-    protocol: str,
+    protocol_family: str,
     *,
     sig_pk: bytes,
     sig_sk: bytes,
@@ -56,9 +56,9 @@ def build_runtime_crypto(
     proof_sig_sk: bytes | None = None,
 ) -> AcsRuntimeCrypto:
     proof = None
-    if protocol == "dumbo":
+    if proof_sig_pk is not None or proof_sig_sk is not None:
         if proof_sig_pk is None or proof_sig_sk is None:
-            raise ValueError("Dumbo crypto material requires proof signature keys")
+            raise ValueError("proof signature keys must be provided together")
         proof = honey_native.ThresholdSignatureRuntime.from_bytes(proof_sig_pk, proof_sig_sk)
     return AcsRuntimeCrypto(
         coin=honey_native.ThresholdSignatureRuntime.from_bytes(sig_pk, sig_sk),  # ty: ignore[invalid-argument-type]

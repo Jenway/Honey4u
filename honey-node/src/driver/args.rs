@@ -3,7 +3,7 @@ use clap::Parser;
 use honey_acs::AcsBackendKind;
 
 #[derive(Parser)]
-pub(crate) struct NodeRuntimeArgs {
+pub struct NodeRuntimeArgs {
     #[arg(short, long, default_value_t = 0)]
     pub(crate) pid: usize,
     #[arg(long, default_value = "driver:hb")]

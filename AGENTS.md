@@ -2,16 +2,16 @@
 
 ## Purpose
 - This repository contains a Python 3.14 implementation of HoneyBadger/Dumbo-style BFT protocols plus a native Rust extension exposed as `honey_native` through PyO3.
-- The Rust workspace also contains `honey-node`, a standalone binary that drives the full protocol stack over multi-process local TCP, including both Python-hosted and Rust-native ACS backends.
+- The Rust workspace contains the `honey-node` runtime crate/binary and the `honey-bench` package, which provides the suite runner.
 - Use this file as the primary repository-specific guide for coding agents working in `D:\codeFiles\Honey4u`.
 - Keep changes small, protocol-aware, and consistent with the existing code rather than introducing new abstractions by default.
 
 ## Current Branch Focus
 - The active benchmark and test runner mode is `rust-driver`: `honey-node` spawns N subprocesses, each running the full protocol over local TCP.
 - ACS execution under `rust-driver` is no longer Python-only. The driver can run the Python ACS host through PyO3 or one of the Rust-native ACS hosts selected by `config_json`.
-- `honey-bench` is now suite-only: benchmark execution goes through `honey-bench suite --suite-config <path>`, and helper scripts should generate or point to suite TOML files instead of assembling long CLI flag lists.
-- `suite` remains the only benchmark CLI entrypoint, but it still supports both HoneyBadger-style and Dumbo-style benchmark execution internally based on the configured ACS backend.
-- Current benchmark work is centered on the Rust `honey-bench suite` CLI plus the curated TOML configs under `configs/paper/core/` and `configs/paper/appendix/`. The `paper/core/` label should track the current thesis Chapter 4 main experiment narrative, not a generic notion of importance.
+- `honey-bench` is now suite-only: benchmark execution goes through `honey-bench --suite-config <path>`, and helper scripts should generate or point to suite TOML files instead of assembling long CLI flag lists.
+- The CLI is suite-only, but it still supports both HoneyBadger-style and Dumbo-style benchmark execution internally based on the configured ACS backend.
+- Current benchmark work is centered on the Rust `honey-bench` CLI plus the curated TOML configs under `configs/paper/core/` and `configs/paper/appendix/`. The `paper/core/` label should track the current thesis Chapter 4 main experiment narrative, not a generic notion of importance.
 - The current checkout does not contain the older `paper-final-*` formal result directories referenced by some historical notes. The visible `honey-bench/results/dumbo-paper-suite-*` directories are incomplete/failed smoke outputs and must not be treated as formal evidence. Restore the archived artifacts or rerun the TOML suites before quoting exact thesis numbers.
 - The current worktree includes controlled runtime fault injection at the `rust-driver` boundary: network faults (`fixed_delay_ms`, `jitter_ms`, `slow_honest`) and initial Byzantine node behaviors (`silent`, `invalid_fetch_response`). Treat those capabilities as implemented tooling, but do not generalize them to full WAN or broad Byzantine robustness claims without fresh evidence.
 - A top-level Rust workspace exists at `Cargo.toml` (project root) with members: `honey-crypto`, `honey-wire`, `honey-acs`, `honey-acs/honey-native`, `honey-node`, and `honey-bench`. The `honey-transport/` crate is a path dependency used by `honey-node` but is not currently listed as a workspace member.
@@ -19,7 +19,7 @@
 - The project scope is intentionally limited to ACS-based asynchronous BFT in the HoneyBadger/Dumbo family; do not preserve extensibility for DAG-style, dispersed-ledger, or unrelated consensus families unless the task explicitly requires it.
 - HoneyBadger outer orchestration, ACS scheduling, and other runtime-facing control logic are valid Rust-downshift targets; agents should not keep them in Python just to preserve a generic or overly extensible framework shape.
 - The three Rust ACS backends live in the `honey-acs` crate under `honey-acs/src/backends/rust_fin/`, `honey-acs/src/backends/rust_dumbo/`, and `honey-acs/src/backends/rust_hb/`; each is a `mod.rs` root plus focused submodules.
-- The rust-driver node implementation lives under `honey-node/src/driver/`; it is the binary-only module tree orchestrating round execution, HoneyBadger TPKE, ACS proposal payload resolution, cross-round reuse, and the fetch fallback protocol.
+- The rust-driver node implementation lives under `honey-node/src/driver/`; it is the runtime module tree orchestrating round execution, HoneyBadger TPKE, ACS proposal payload resolution, cross-round reuse, and the fetch fallback protocol.
 - Current-round sealed transaction batches must enter the protocol as ACS proposal payload bytes. Do not add a separate driver-level reliable-broadcast path for current-round batches; correctness-critical availability belongs to the ACS backend's RBC/PRBC/ACS machinery.
 - Generated benchmark reports appear under `honey-bench/results/`; treat them as artifacts rather than source.
 
@@ -34,10 +34,10 @@
 - The rust-driver broadcast mempool runtime lives in `honey-node/src/driver/mempool/pool.rs` and `honey-node/src/driver/mempool/fetch.rs`; Python-side configuration for it flows through `honey-acs/packages/honey-acs/src/honey_acs/params.py`.
 - Telemetry and metrics live in `honey-acs/packages/honey-acs/src/honey_acs/telemetry.py`.
 - Protocol exceptions live in `honey-acs/packages/honey-acs/src/honey_acs/exceptions.py`.
-- The Rust workspace is defined at the project root `Cargo.toml`; the core workspace members are `honey-crypto/` (shared crypto), `honey-wire/` (wire-format and codec layer), `honey-acs/` (ACS protocol backends), `honey-node/` (standalone driver/runtime binary), `honey-acs/honey-native/` (PyO3 extension), and `honey-bench/` (Rust benchmark orchestrator). `honey-transport/` is a path dependency that owns transport handles and local TCP.
+- The Rust workspace is defined at the project root `Cargo.toml`; the core workspace members are `honey-crypto/` (shared crypto), `honey-wire/` (wire-format and codec layer), `honey-acs/` (ACS protocol backends), `honey-node/` (driver/runtime crate/binary), `honey-acs/honey-native/` (PyO3 extension), and `honey-bench/` (benchmark orchestrator). `honey-transport/` is a path dependency that owns transport handles and local TCP.
 - Crate boundaries: `honey-wire` may depend on `honey-crypto` but must not depend on `honey-node` or driver runtime code; `honey-acs` depends on `honey-crypto` and `honey-wire`; `honey-transport` depends on `honey-wire`; `honey-node` depends on `honey-acs`, `honey-wire`, `honey-crypto`, and `honey-transport` and owns runtime orchestration.
-- `honey-node`'s library surface (`honey-node/src/lib.rs`) currently exposes only `keygen` (cryptographic key-pair generation) and `ledger` (SQLite persistence).
-- `honey-node`'s binary entry (`honey-node/src/main.rs` → `cli.rs`) delegates to `driver/mod.rs`, which owns the full rust-driver node loop under `honey-node/src/driver/`.
+- `honey-node`'s library surface (`honey-node/src/lib.rs`) exposes `keygen`, `ledger`, and the reusable node runtime API under `runtime`.
+- The executable `honey-node` lives in the `honey-node` package and delegates to `honey_node::runtime`, which in turn calls into `honey-node/src/driver/`.
 - Key submodules of `honey-node/src/driver/`: `encryption/` (HoneyBadger batch encryption/decryption shell), `mempool/` (ACS proposal payload bundle/reference encoding, reusable proposal mempool, and fetch fallback), `frame.rs` (driver TCP frames and pool-fetch wire), `round/` (round inbox, state, metrics, and per-round loop), `config.rs`/`args.rs` (runtime config and CLI parsing), and `output.rs` (result JSON rendering).
 - Python tests use `pytest` plus `pytest-asyncio`. Protocol tests live alongside the code they test: `honey-acs/packages/honey-acs/tests/acs/`, `honey-acs/packages/honey-acs/tests/subprotocols/`, and `honey-acs/honey-native/tests/native/`.
 - Benchmark code lives under `honey-bench/`, and benchmark configs live under `configs/` with the following intent split: `smoke/`, `paper/core/`, `paper/appendix/`, `paper/exploratory/`, `legacy/`, and `debug/`.
@@ -47,10 +47,10 @@
 - The old root-level `packages/` and `native/` prefixes have been removed; do not add new code under those paths.
 
 ## Benchmark Status
-- The general benchmark entrypoint is `honey-bench suite`. It expands suite TOML experiments, executes the selected cases, and writes aggregated summaries, deltas, raw per-run JSON, and a manifest.
+- The general benchmark entrypoint is `honey-bench`. It expands suite TOML experiments, executes the selected cases, and writes aggregated summaries, deltas, raw per-run JSON, and a manifest.
 - When runtime faults are configured, suite outputs also record transport perturbation counters and node-level byzantine action counters through the aggregated raw and summary artifacts.
 - Older planning notes mention reuse-sweep and backend-comparison result directories, but those directories are not present in the current checkout. Do not quote their exact numbers from memory; restore the artifacts or rerun the relevant benchmark configs first.
-- Backend comparison runs can be driven through the current TOML-suite path (`honey-bench suite`) or through the legacy Python benchmark helper when appropriate, but the current checkout has no archived formal `rust_dumbo` comparison.
+- Backend comparison runs can be driven through the current TOML-suite path (`honey-bench --suite-config ...`) or through the legacy Python benchmark helper when appropriate, but the current checkout has no archived formal `rust_dumbo` comparison.
 - `configs/paper/core/` holds the configs that best align with the current thesis Chapter 4 mainline result narrative; `configs/paper/appendix/` holds appendix/supplementary configs; `configs/paper/exploratory/` holds pilot and tuning configs that informed those final suites.
 - Current visible suite outputs under `honey-bench/results/dumbo-paper-suite-*` have `executed_runs == 0` where manifests exist, and empty summary/delta data. Treat them as failed smoke artifacts, not thesis evidence.
 - Do not claim that the repository already has realistic WAN evidence or general Byzantine robustness. The implemented jitter/fixed-delay/slow-honest and byzantine-boundary capabilities are local runtime perturbation tools until backed by fresh successful result directories.
@@ -144,7 +144,8 @@
 - Building the Rust workspace pulls in all crates (`honey-crypto`, `honey-wire`, `honey-acs`, `honey-native`, `honey-node`, `honey-bench`); keep the root `Cargo.lock` in sync if a workspace dependency changes.
 - Running Rust workspace commands may create or refresh `Cargo.lock` and `target/`; treat both as generated unless the task explicitly includes workspace lock updates.
 - `honey-bench` is suite-config driven. Prefer editing or generating suite TOML benchmark configs rather than extending the CLI argument surface.
-- `honey-node` is the internal per-node process entrypoint spawned by the benchmark driver. It uses explicit flags directly and no longer has a `run-driver-node` subcommand.
+- Runtime features such as `quic` and `python-backend` belong to `honey-node`, not `honey-bench`.
+- `honey-bench` should be pointed at an explicit worker executable with `--node-binary <path>` or `HONEY_NODE_BINARY` whenever it needs to spawn nodes.
 - `ty` is configured with `error-on-warning = true`, so warnings should be treated as failures.
 - `ty` currently checks `honey-acs/packages/honey-acs/src/honey_acs` and `honey-acs/honey-native/tests/native/test_ecdsa_and_crypto_params.py` only (see `pyproject.toml [tool.ty.src]`).
 - Ruff excludes `honey-acs/honey-native`, so do not expect Python lint commands to touch Rust sources.

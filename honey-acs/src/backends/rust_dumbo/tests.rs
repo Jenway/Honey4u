@@ -12,8 +12,12 @@ fn build_hosts(nodes: usize, faulty: usize) -> Vec<RustDumboAcsBackend> {
                 pid,
                 nodes,
                 faulty,
-                crate::parse_acs_crypto_payload(AcsBackendKind::RustDumbo, &payload)
-                    .expect("crypto payload should parse"),
+                crate::parse_acs_crypto_payload(
+                    AcsBackendKind::RustDumbo,
+                    r#"{"acs_backend":"rust_dumbo"}"#,
+                    &payload,
+                )
+                .expect("crypto payload should parse"),
                 r#"{"acs_backend":"rust_dumbo"}"#,
             )
             .expect("Rust Dumbo ACS host should construct")

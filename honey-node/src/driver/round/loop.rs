@@ -80,7 +80,8 @@ fn run_driver_round_inner(
     let byzantine_is_silent = ctx.byzantine_node_config.is_silent();
     let mut metrics = RoundMetricsRecorder::new(ctx.args.nodes);
 
-    let reuse_enabled = ctx.args.acs_backend.is_dumbo() && ctx.broadcast_pool_config.enable_reuse;
+    let reuse_enabled = ctx.runtime_capabilities.supports_cross_round_reuse
+        && ctx.broadcast_pool_config.enable_reuse;
     let proposal_input = if byzantine_is_silent {
         metrics.byzantine().empty_proposal();
         encode_bundle_acs_payload(b"", &[])
@@ -212,7 +213,9 @@ fn run_driver_round_inner(
         if let Some(selected_proposal_ids) = selected_proposal_ids.as_ref() {
             if proposal_resolver.is_none() {
                 proposal_resolver = Some(IncrementalProposalResolver::new(
-                    reuse_enabled && ctx.broadcast_pool_config.enable_fetch_fallback,
+                    ctx.runtime_capabilities.supports_pool_fetch_fallback
+                        && reuse_enabled
+                        && ctx.broadcast_pool_config.enable_fetch_fallback,
                 ));
             }
             let pool = rust_broadcast_mempool.as_mut().ok_or_else(|| {
@@ -421,6 +424,7 @@ fn timeout_stage_label(snapshot: TimeoutStageSnapshot<'_>) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::driver) fn run_driver_rounds(
     host: &dyn AcsBackend,
     transport: &dyn TransportHandle,
@@ -428,6 +432,7 @@ pub(in crate::driver) fn run_driver_rounds(
     private_share: &HbPkePrivateKeyShare,
     args: &NodeRuntimeArgs,
     broadcast_pool_config: &BroadcastPoolConfig,
+    runtime_capabilities: honey_acs::AcsRuntimeCapabilities,
     byzantine_node_config: ByzantineNodeConfig,
 ) -> DriverResult<(DriverNodeResult, QueuePeaksSnapshot)> {
     let mut queue_peaks = QueuePeaksSnapshot::default();
@@ -444,6 +449,7 @@ pub(in crate::driver) fn run_driver_rounds(
         private_share,
         args,
         broadcast_pool_config,
+        runtime_capabilities,
         byzantine_node_config,
     };
 

@@ -5,9 +5,11 @@
 //! and dispatching to the matching internal protocol driver directly (no subprocess).
 
 use crate::stats::{self, ConsistencySummary, LatencyStats, PeakStats, TimingStats};
-use crate::{BenchDumboArgs, BenchHoneyBadgerArgs};
-use crate::{drive_dumbo, drive_hb};
-use honey_acs::AcsBackendKind;
+use crate::{
+    BenchBackendKind, BenchDriveArgs, BenchmarkProtocolFamily, current_build_info,
+    format_build_info, load_node_binary_build_info, run_drive_multiprocess,
+    suggested_node_build_command,
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -384,20 +386,22 @@ fn reuse_mode_label(enabled: bool) -> &'static str {
     if enabled { "reuse_on" } else { "reuse_off" }
 }
 
-fn protocol_family_for_backend(backend: &str) -> &'static str {
-    match backend {
-        "python_hb" | "rust_hb" => "hb",
-        "python_dumbo" | "rust_fin" | "rust_dumbo" => "dumbo",
-        _ => "unknown",
+fn protocol_family_label(family: BenchmarkProtocolFamily) -> &'static str {
+    match family {
+        BenchmarkProtocolFamily::HoneyBadger => "hb",
+        BenchmarkProtocolFamily::Dumbo => "dumbo",
     }
 }
 
-fn backend_delta_baseline(backend: &str) -> Option<&'static str> {
-    match protocol_family_for_backend(backend) {
-        "hb" => Some("python_hb"),
-        "dumbo" => Some("python_dumbo"),
-        _ => None,
-    }
+fn protocol_family_for_backend(backend: &str) -> Result<BenchmarkProtocolFamily, String> {
+    Ok(BenchBackendKind::parse(backend)?.benchmark_protocol_family())
+}
+
+fn backend_delta_baseline(backend: &str) -> Result<&'static str, String> {
+    Ok(match protocol_family_for_backend(backend)? {
+        BenchmarkProtocolFamily::HoneyBadger => "python_hb",
+        BenchmarkProtocolFamily::Dumbo => "python_dumbo",
+    })
 }
 
 fn fmean(values: &[f64]) -> f64 {
@@ -898,7 +902,9 @@ fn case_label(case: &ExperimentCase, repeat_index: usize) -> String {
 fn case_sid(experiment_name: &str, case: &ExperimentCase, repeat_index: usize) -> String {
     format!(
         "bench:suite:{}:{}:{}:{}:{}:n{}:b{}:nf{}:rep{}",
-        protocol_family_for_backend(&case.backend),
+        protocol_family_label(
+            protocol_family_for_backend(&case.backend).expect("validated backend must parse"),
+        ),
         experiment_name,
         case.backend,
         case.transport,
@@ -963,7 +969,9 @@ byzantine_nodes = {byz_json}
         pool_reuse_limit_per_round = case.pool_reuse_limit_per_round,
         pool_expire_rounds = case.pool_expire_rounds,
         pool_mempool_max = case.pool_mempool_max,
-        mode = protocol_family_for_backend(&case.backend),
+        mode = protocol_family_label(
+            protocol_family_for_backend(&case.backend).expect("validated backend must parse"),
+        ),
     )
 }
 
@@ -1465,7 +1473,7 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
     let candidate_backends: std::collections::BTreeSet<String> = summaries
         .iter()
         .filter_map(|s| {
-            let baseline = backend_delta_baseline(&s.key.backend)?;
+            let baseline = backend_delta_baseline(&s.key.backend).ok()?;
             (s.key.backend != baseline).then_some(s.key.backend.clone())
         })
         .collect();
@@ -1474,13 +1482,16 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
     let mut deltas = Vec::new();
 
     for s in summaries {
-        let Some(baseline_backend) = backend_delta_baseline(&s.key.backend) else {
+        let Ok(baseline_backend) = backend_delta_baseline(&s.key.backend) else {
             continue;
         };
-        let protocol_family = protocol_family_for_backend(&s.key.backend);
+        let Ok(protocol_family) = protocol_family_for_backend(&s.key.backend) else {
+            continue;
+        };
+        let protocol_family_name = protocol_family_label(protocol_family);
         let fingerprint = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            protocol_family,
+            protocol_family_name,
             s.key.experiment,
             s.key.reuse_mode,
             s.key.transport,
@@ -1509,7 +1520,10 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
         };
 
         for backend in &candidate_backends {
-            if protocol_family_for_backend(backend) != protocol_family {
+            let Ok(candidate_family) = protocol_family_for_backend(backend) else {
+                continue;
+            };
+            if candidate_family != protocol_family {
                 continue;
             }
             let cand_key = AggKey {
@@ -1521,7 +1535,7 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
             };
             deltas.push(json!({
                 "experiment": s.key.experiment,
-                "protocol_family": protocol_family,
+                "protocol_family": protocol_family_name,
                 "reuse_mode": s.key.reuse_mode,
                 "transport": s.key.transport,
                 "nodes": s.key.nodes,
@@ -1545,6 +1559,53 @@ fn build_backend_deltas(summaries: &[Summary]) -> Vec<Value> {
         }
     }
     deltas
+}
+
+fn validate_suite_node_capabilities(
+    node_binary: &Path,
+    selected: &[&(ExperimentMeta, Vec<ExperimentCase>)],
+) -> Result<(), String> {
+    let build_info = load_node_binary_build_info(node_binary).map_err(|message| {
+        format!(
+            "{message}\nrebuild with:\n  cargo build -p honey-node --release [--features \"quic python-backend\"]"
+        )
+    })?;
+    let mut requires_quic = false;
+    let mut requires_python_backend = false;
+
+    for (_, cases) in selected {
+        for case in cases {
+            if case.transport == "quic" {
+                requires_quic = true;
+            }
+            if BenchBackendKind::parse(&case.backend)?.requires_python_backend() {
+                requires_python_backend = true;
+            }
+        }
+    }
+
+    let mut missing = Vec::new();
+    if requires_quic && !build_info.quic {
+        missing.push("quic");
+    }
+    if requires_python_backend && !build_info.python_backend {
+        missing.push("python-backend");
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let mut expected = current_build_info();
+    expected.package = String::from("honey-node");
+    expected.quic = requires_quic;
+    expected.python_backend = requires_python_backend;
+    Err(format!(
+        "node binary '{}' is missing required capabilities for the selected suite cases:\n  need: {}\n  node: {}\nrebuild with:\n  {}",
+        node_binary.display(),
+        format_build_info(&expected),
+        format_build_info(&build_info),
+        suggested_node_build_command(node_binary, &expected),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1936,6 +1997,8 @@ pub fn run_suite(suite_path: &Path, node_binary: &Path, opts: SuiteRunOpts) -> R
     let selected_names: Vec<&str> = selected.iter().map(|(m, _)| m.name.as_str()).collect();
     let total_runs: usize = selected.iter().map(|(m, _)| m.run_count).sum();
 
+    validate_suite_node_capabilities(node_binary, &selected)?;
+
     eprintln!(
         "[suite] name={suite_name} experiments={} planned_runs={total_runs}",
         selected_names.join(",")
@@ -1985,38 +2048,23 @@ pub fn run_suite(suite_path: &Path, node_binary: &Path, opts: SuiteRunOpts) -> R
                 let toml_path = configs_dir.join(format!("{label}.toml"));
                 fs::write(&toml_path, render_config_toml(&sid, case)).map_err(|e| e.to_string())?;
 
-                // Build BenchDumboArgs and call driver directly
+                // Build benchmark args and call the unified multiprocess driver directly.
                 let config_json = build_config_json(case);
-                let bench_args = BenchDumboArgs {
+                let bench_args = BenchDriveArgs {
                     sid: sid.clone(),
-                    acs_backend: AcsBackendKind::parse(&case.backend)?,
+                    acs_backend: BenchBackendKind::parse(&case.backend)?,
                     nodes: case.nodes,
                     faulty: case.faulty,
                     rounds: case.rounds,
                     batch_size: case.batch_size,
                     global_timeout: case.global_timeout,
                     config_json,
-                    result_path: None,
                     ledger_dir: None,
                     tx_json: None,
                 };
 
                 let t0 = Instant::now();
-                let run_result = if bench_args.acs_backend.is_dumbo() {
-                    drive_dumbo::run_drive_dumbo_multiprocess(&bench_args, node_binary)
-                } else {
-                    let hb_args = BenchHoneyBadgerArgs {
-                        sid: bench_args.sid.clone(),
-                        acs_backend: bench_args.acs_backend,
-                        nodes: bench_args.nodes,
-                        faulty: bench_args.faulty,
-                        rounds: bench_args.rounds,
-                        batch_size: bench_args.batch_size,
-                        global_timeout: bench_args.global_timeout,
-                        config_json: bench_args.config_json.clone(),
-                    };
-                    drive_hb::run_drive_honeybadger_multiprocess(&hb_args, node_binary)
-                };
+                let run_result = run_drive_multiprocess(&bench_args, node_binary);
                 let elapsed = t0.elapsed().as_secs_f64();
 
                 let result_json_str = match run_result {

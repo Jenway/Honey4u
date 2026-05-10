@@ -16,8 +16,8 @@ cross-round broadcast reuse under the Honey4u runtime, not a generic consensus f
 - `honey-acs/`: Rust ACS protocol crate plus the co-located Python ACS package and PyO3 extension.
 - `honey-transport/`: local TCP transport implementation and transport handle abstraction used by
   the Rust driver.
-- `honey-node/`: standalone node/driver binary and local TCP runtime.
-- `honey-bench/`: Rust benchmark orchestrator for config-file driven benchmark suites.
+- `honey-node/`: reusable node/driver runtime crate and local TCP runtime logic.
+- `honey-bench/`: Rust benchmark package that provides the suite runner `honey-bench`.
 - `configs/`: benchmark and thesis experiment configurations, split into `smoke/`, `paper/core/`,
   `paper/appendix/`, `paper/exploratory/`, `legacy/`, and `debug/`. Here `paper/core/` follows
   the current Chapter 4 main experiment narrative in the thesis source.
@@ -41,14 +41,15 @@ The Rust crates used by the current driver are:
   the co-located Python package and `honey-native` extension source tree.
 - `honey-transport`: transport crate used by the node driver. It owns `LocalTcpTransport`,
   `TransportHandle`, wakeup handling, and optional transport backends/features.
-- `honey-node`: pure driver/runtime layer. It owns CLI parsing, ledger/keygen helpers exposed to
-  bindings, HoneyBadger TPKE batch sealing/opening, mempool reuse, fetch fallback, and the
-  per-round driver loop under `honey-node/src/driver/`.
+- `honey-node`: pure driver/runtime layer. It owns the reusable node runtime API, ledger/keygen
+  helpers exposed to bindings, HoneyBadger TPKE batch sealing/opening, mempool reuse, fetch
+  fallback, and the per-round driver loop under `honey-node/src/driver/`.
 
 Additional workspace members:
 
 - `honey-acs/honey-native`: PyO3 extension exposed to Python as `honey_native`.
-- `honey-bench`: Rust benchmark suite runner that spawns or drives `honey-node`.
+- `honey-bench`: Rust benchmark package. Its top-level CLI runs suites and spawns an explicitly
+  selected `honey-node` worker binary.
 
 ## Python Packages
 
@@ -82,7 +83,7 @@ Practical reading:
 - `honey-acs` depends on `honey-crypto` and `honey-wire` for protocol backends.
 - `honey-transport` owns the local TCP implementation used by the driver.
 - `honey-node` depends on `honey-acs`, `honey-wire`, `honey-crypto`, and `honey-transport`, and
-  remains the driver/runtime boundary.
+  remains the driver/runtime boundary implemented as a reusable crate.
 - Python `honey_acs` depends on the `honey_native` extension.
 - `honey-native` bridges Python to selected Rust helpers from `honey-crypto` and `honey-wire`.
 
@@ -97,10 +98,13 @@ Practical reading:
 - The driver only forwards ACS wire events, resolves already-available proposal payloads, fetches
   reusable cross-round proposal artifacts when configured, and exchanges TPKE share bundles bound
   to the selected proposal ids and digests.
-- Benchmark execution is driven through `honey-bench suite --suite-config <path>`.
+- Benchmark execution is driven through `honey-bench --suite-config <path>`.
 - Even one-off and smoke runs are represented as suite TOML files rather than a separate single-run CLI schema.
-- `suite` is the only benchmark CLI entrypoint, but it can still dispatch internally to either the
-  HoneyBadger-style or Dumbo-style benchmark driver path based on the configured ACS backend.
+- The CLI is suite-only, but it still dispatches internally to either the HoneyBadger-style or
+  Dumbo-style benchmark driver path based on the configured ACS backend.
+- Runtime features such as `quic` and `python-backend` belong to `honey-node`, not `honey-bench`.
+- Run `honey-bench` with `--node-binary <path>` to point at the exact worker executable to spawn.
+- `HONEY_NODE_BINARY` is also supported as an environment override.
 
 ## Current Thesis Status
 
@@ -120,7 +124,9 @@ uv sync --dev --locked
 cargo build
 cargo test
 uv run pytest
-cargo run -p honey-bench -- suite \
+cargo build -p honey-node --release --features quic
+cargo run -p honey-bench -- \
+  --node-binary target/release/honey-node.exe \
   --suite-config configs/paper/core/paper_highload.toml \
   --list-experiments
 typst compile paper/main.typ

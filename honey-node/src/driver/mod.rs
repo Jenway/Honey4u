@@ -19,6 +19,7 @@ mod round;
 
 use config::{
     parse_broadcast_pool_config, parse_byzantine_node_config, parse_network_fault_config,
+    validate_broadcast_pool_config,
 };
 use error::{DriverError, DriverResult};
 use frame::parse_addresses_json;
@@ -30,6 +31,15 @@ pub(super) const DRIVER_IDLE_BACKOFF: Duration = Duration::from_micros(50);
 
 pub(crate) fn run_driver_node(args: NodeRuntimeArgs) -> DriverResult<()> {
     let broadcast_pool_config = parse_broadcast_pool_config(&args.config_json)?;
+    let runtime_capabilities = args
+        .acs_backend
+        .runtime_capabilities(&args.config_json)
+        .map_err(DriverError::config)?;
+    validate_broadcast_pool_config(
+        args.acs_backend,
+        runtime_capabilities,
+        &broadcast_pool_config,
+    )?;
     let network_fault_config = parse_network_fault_config(&args.config_json, args.pid)?;
     let byzantine_node_config = parse_byzantine_node_config(&args.config_json, args.pid)?;
     let addresses = parse_addresses_json(&args.addresses_json)?;
@@ -54,6 +64,7 @@ pub(crate) fn run_driver_node(args: NodeRuntimeArgs) -> DriverResult<()> {
         &private_share,
         &args,
         &broadcast_pool_config,
+        runtime_capabilities,
         byzantine_node_config,
     );
     let host_stats = host

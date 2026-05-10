@@ -12,7 +12,7 @@ fn build_hosts(backend: AcsBackendKind, nodes: usize, faulty: usize) -> Vec<Rust
                 pid,
                 nodes,
                 faulty,
-                crate::parse_acs_crypto_payload(backend, &payload)
+                crate::parse_acs_crypto_payload(backend, r#"{"acs_backend":"rust"}"#, &payload)
                     .expect("crypto payload should parse"),
                 r#"{"acs_backend":"rust"}"#,
             )
