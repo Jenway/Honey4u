@@ -132,7 +132,7 @@
 #let _chart-scale-x-log(v, x-min, x-max, width) = {
   let minl = _chart-log2(x-min)
   let maxl = _chart-log2(x-max)
-  ( _chart-log2(v) - minl ) / (maxl - minl) * width
+  (_chart-log2(v) - minl) / (maxl - minl) * width
 }
 
 #let _chart-scale-x-lin(v, x-min, x-max, width) = {
@@ -191,8 +191,14 @@
       content((left - 0.14, y), anchor: "east", text(font: ("Times New Roman", "SimSun"), size: 8pt)[#label])
     }
 
-    content((plot-w / 2, bottom - 0.55), anchor: "north", text(font: ("Times New Roman", "SimSun"), size: 9pt)[#x-label])
-    content((left - 0.85, plot-h / 2), angle: 90deg, anchor: "south", text(font: ("Times New Roman", "SimSun"), size: 9pt)[#y-label])
+    content((plot-w / 2, bottom - 0.55), anchor: "north", text(
+      font: ("Times New Roman", "SimSun"),
+      size: 9pt,
+    )[#x-label])
+    content((left - 0.85, plot-h / 2), angle: 90deg, anchor: "south", text(
+      font: ("Times New Roman", "SimSun"),
+      size: 9pt,
+    )[#y-label])
 
     for entry in series {
       let pts = entry.at("data").map(((x, y)) => (x-map(x), y-map(y)))
@@ -205,13 +211,17 @@
     let legend-x = if legend-anchor == "north-west" { 0.35 } else { plot-w - 1.55 }
     let legend-anchor-pos = if legend-anchor == "north-west" { "north-west" } else { "north-east" }
     let legend-box-a = if legend-anchor == "north-west" { (0.18, plot-h - 0.2) } else { (plot-w - 1.72, plot-h - 0.2) }
-    let legend-box-b = if legend-anchor == "north-west" { (1.85, plot-h - 0.98) } else { (plot-w - 0.18, plot-h - 0.98) }
+    let legend-box-b = if legend-anchor == "north-west" { (1.85, plot-h - 0.98) } else {
+      (plot-w - 0.18, plot-h - 0.98)
+    }
     rect(legend-box-a, legend-box-b, fill: white, stroke: 0.5pt + rgb("999999"))
     for (idx, entry) in series.enumerate() {
       let y = plot-h - 0.38 - idx * 0.28
       line((legend-x, y), (legend-x + 0.28, y), stroke: entry.at("stroke"))
       circle((legend-x + 0.14, y), radius: 0.04, fill: entry.at("color"), stroke: entry.at("color"))
-      content((legend-x + 0.38, y), anchor: "west", text(font: ("Times New Roman", "SimSun"), size: 8pt)[#entry.at("label")])
+      content((legend-x + 0.38, y), anchor: "west", text(font: ("Times New Roman", "SimSun"), size: 8pt)[#entry.at(
+        "label",
+      )])
     }
   })
 }
@@ -249,13 +259,49 @@
               label: [开启复用],
               color: rgb("2E6F40"),
               stroke: 1.4pt + rgb("2E6F40"),
-              data: ((32, 343), (64, 687), (128, 1370), (256, 2735), (512, 5436), (1024, 10695), (2048, 20801), (4096, 39263), (8192, 68854), (16384, 108320), (24576, 107927), (32768, 125082), (65536, 165708), (98304, 176139), (131072, 170837), (196608, 123646), (262144, 100008)),
+              data: (
+                (32, 343),
+                (64, 687),
+                (128, 1370),
+                (256, 2735),
+                (512, 5436),
+                (1024, 10695),
+                (2048, 20801),
+                (4096, 39263),
+                (8192, 68854),
+                (16384, 108320),
+                (24576, 107927),
+                (32768, 125082),
+                (65536, 165708),
+                (98304, 176139),
+                (131072, 170837),
+                (196608, 123646),
+                (262144, 100008),
+              ),
             ),
             (
               label: [关闭复用],
               color: rgb("666666"),
               stroke: 1.4pt + rgb("666666"),
-              data: ((32, 276), (64, 551), (128, 1109), (256, 2206), (512, 4403), (1024, 8720), (2048, 16836), (4096, 31845), (8192, 56122), (16384, 88840), (24576, 90178), (32768, 104015), (65536, 129557), (98304, 157713), (131072, 128824), (196608, 124474), (262144, 86256)),
+              data: (
+                (32, 276),
+                (64, 551),
+                (128, 1109),
+                (256, 2206),
+                (512, 4403),
+                (1024, 8720),
+                (2048, 16836),
+                (4096, 31845),
+                (8192, 56122),
+                (16384, 88840),
+                (24576, 90178),
+                (32768, 104015),
+                (65536, 129557),
+                (98304, 157713),
+                (131072, 128824),
+                (196608, 124474),
+                (262144, 86256),
+              ),
             ),
           ),
         )
@@ -288,13 +334,42 @@
               label: [开启复用],
               color: rgb("2E6F40"),
               stroke: 1.4pt + rgb("2E6F40"),
-              data: ((32, 318), (64, 641), (128, 1257), (256, 2502), (512, 5021), (1024, 9980), (2048, 19189), (4096, 36380), (8192, 62803), (16384, 98729), (24576, 103974), (32768, 124658), (49152, 144337)),
+              data: (
+                (32, 318),
+                (64, 641),
+                (128, 1257),
+                (256, 2502),
+                (512, 5021),
+                (1024, 9980),
+                (2048, 19189),
+                (4096, 36380),
+                (8192, 62803),
+                (16384, 98729),
+                (24576, 103974),
+                (32768, 124658),
+                (49152, 144337),
+              ),
             ),
             (
               label: [关闭复用],
               color: rgb("666666"),
               stroke: 1.4pt + rgb("666666"),
-              data: ((32, 255), (64, 506), (128, 1022), (256, 2038), (512, 4007), (1024, 7985), (2048, 15532), (4096, 29474), (8192, 52270), (16384, 83489), (24576, 87324), (32768, 103748), (49152, 124705), (131072, 159077)),
+              data: (
+                (32, 255),
+                (64, 506),
+                (128, 1022),
+                (256, 2038),
+                (512, 4007),
+                (1024, 7985),
+                (2048, 15532),
+                (4096, 29474),
+                (8192, 52270),
+                (16384, 83489),
+                (24576, 87324),
+                (32768, 103748),
+                (49152, 124705),
+                (131072, 159077),
+              ),
             ),
           ),
         )
@@ -393,6 +468,9 @@
 ]
 
 #let algox(..lines, caption: "", label-name: "algox-ref") = {
+  set text(
+    font: ("Times New Roman", "SimSun"),
+  )
   let nxt = state("algox-" + label-name, false)
   [
     #let new-label = label(label-name)
