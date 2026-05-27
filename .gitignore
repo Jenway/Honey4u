@@ -26,3 +26,4 @@ honeyBFT
 .serena
 .spec-workflow
 target
+benchmarks/

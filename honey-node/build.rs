@@ -2,7 +2,10 @@
 //! can find them at runtime without PATH manipulation.
 //! On Windows, the executable's own directory is the first DLL search path.
 
+#[cfg(target_os = "windows")]
 use std::env;
+
+#[cfg(target_os = "windows")]
 use std::path::{Path, PathBuf};
 
 fn main() {
