@@ -38,9 +38,13 @@
   acknowledgements: [
     感谢我的导师高英梓老师。高老师在本课题的内容与方向、毕设各阶段工作规划、原型系统与实验设计等方面给予我很多非常有益的建议和指导；本课题“回收迟到诚实广播数据并跨轮次复用”的思路也同样来自于高老师。
 
-    本课题原型系统中的 Dumbo ACS 协议代码来自于开源社区，FIN-style ACS 协议黑盒的实现则参考了 JUMBO 论文的开源实现。
+    本课题原型系统中的 Dumbo ACS 协议代码来自于开源社区，FIN-style ACS 协议的实现则参考了 JUMBO 论文的开源实现。
+
+    感谢我的父母及家人，我是在他们的关怀和帮助下顺利完成学业的。
 
     祝愿所有帮助过我的人幸福快乐。
+
+    我向我的大学生涯说再见。
 
     本课题在设计与撰写过程中使用了生成式大语言模型辅助。
   ],
@@ -454,7 +458,7 @@
 = 背景与相关工作
 
 // 约 2000 字
-共识协议，即分布式系统中多个节点就某个数据或状态达成一致意见的规则与机制 @LiuYiZhongQuKuaiLianGongShiJiZhiYanJiuZongShu2019 @YuanYongQuKuaiLianJiShuFaZhanXianZhuangYuZhanWang2016，其中 BFT 共识协议保证了在有节点作恶的情况下仍然保证协议正确。而从时间假设来说，又可以分为：同步、弱同步与异步共识协议，异步共识协议无需通超时机制来判断对方是否失效，能够在网络条件极不稳定时仍保证活性。
+共识协议，即分布式系统中多个节点就某个数据或状态达成一致意见的规则与机制 @LiuYiZhongQuKuaiLianGongShiJiZhiYanJiuZongShu2019 @YuanYongQuKuaiLianJiShuFaZhanXianZhuangYuZhanWang2016，其中 BFT 共识协议保证了在存在恶意节点的情况下协议仍能正确运行。而从时间假设来说，又可以分为：同步、弱同步与异步共识协议，异步共识协议无需通过超时机制来判断对方是否失效，能够在网络条件极不稳定时仍保证活性。
 
 换言之，异步 BFT 共识协议在至多 $f$ 个节点任意作恶、网络消息延迟无上界的条件下，仍能确保诚实节点对同一批交易或区块顺序达成一致。
 
@@ -464,11 +468,11 @@
 
 自 HoneyBadgerBFT @millerHoneyBadgerBFT2016 首次证明异步 BFT 在实际广域网中的可行性以来，基于 ACS 范式的架构便成为了该领域的主流。ACS 允许 $N$ 个节点各自提出输入值，并确保所有诚实节点最终输出完全相同的、包含至少 $N-f$ 个提案的公共子集。文献@millerHoneyBadgerBFT2016 指出：通过结合门限加密技术，ACS 可被直接转化为异步原子广播（Asynchronous Atomic Broadcast, AAB），进而构建完整的共识账本。
 
-ACS 的早期理论来源可以追溯到 Ben-Or、Kelmer 与 Rabin 对异步安全计算和公共子集问题的研究 @ben-orAsynchronousSecureComputations1994。文献@ben-orAsynchronousSecureComputations1994 中提出的 ACS 范式（其核心结构由 $N$ 个可靠广播（Reliable Broadcast, RBC）实例与 $N$ 个异步二元拜占庭共识（Asynchronous Binary Agreement, ABA）实例组成）被许多文献称之 BKR94 范式。HoneyBadgerBFT 便是该范式的典型代表。
+ACS 的早期理论来源可以追溯到 Ben-Or、Kelmer 与 Rabin 对异步安全计算和公共子集问题的研究 @ben-orAsynchronousSecureComputations1994。文献@ben-orAsynchronousSecureComputations1994 中提出的 ACS 范式（其核心结构由 $N$ 个可靠广播（Reliable Broadcast, RBC）实例与 $N$ 个异步二元拜占庭共识（Asynchronous Binary Agreement, ABA）实例组成）被许多文献称为 BKR94 范式。HoneyBadgerBFT 便是该范式的典型代表。
 
-另一个比较主要的范式被称之为 CKPS01 @cachinSecureEfficientAsynchronous2001 范式，由 Cachin 等人于 2001 年提出，该范式利用多值拜占庭共识（Multi-valued validated asynchronous Byzantine agreement, MVBA）代替了复杂的 $N$ 个 ABA 实例。正如文献 @millerHoneyBadgerBFT2016 中所指出的：在早期实现中，CKPS01 范式要求将完整的提案负载直接输入给 MVBA，导致极高的通信复杂度。
+另一种主要范式称为 CKPS01 @cachinSecureEfficientAsynchronous2001 范式，由 Cachin 等人于 2001 年提出，该范式利用多值拜占庭共识（Multi-valued validated asynchronous Byzantine agreement, MVBA）代替了复杂的 $N$ 个 ABA 实例。正如文献 @millerHoneyBadgerBFT2016 中所指出的：在早期实现中，CKPS01 范式要求将完整的提案负载直接输入给 MVBA，导致极高的通信复杂度。
 
-Dumbo 协议 @guoDumboFasterAsynchronous2020 对 CKPS01 范式做出了关键的修改。Dumbo 结合了两种范式的优点，通过引入可证明可靠广播（Provable Reliable Broadcast, PRBC），在广播阶段完成大负载的传输与可用性证明，随后仅将轻量级的证明（Proof）作为向量输入给后端的 MVBA。这种设计将 ACS 的一致性阶段从“对每个提案进行 $N$ 次二值决定”转化为“围绕一个已验证的候选向量达成一次决定”，从而显著降低了延迟并提升了吞吐量。
+Dumbo 协议 @guoDumboFasterAsynchronous2020 对 CKPS01 范式做出了关键的修改。Dumbo 综合了两类范式的特点，通过引入可证明可靠广播（Provable Reliable Broadcast, PRBC），在广播阶段完成大负载的传输与可用性证明，随后仅将轻量级的证明（Proof）作为向量输入给后端的 MVBA。这种设计将 ACS 的一致性阶段从“对每个提案进行 $N$ 次二值决定”转化为“围绕一个已验证的候选向量达成一次决定”，从而显著降低了延迟并提升了吞吐量。
 
 Dumbo2 ACS 结构中的 MVBA 是作为一个可插拔的“黑盒”组件存在的，有诸多研究（如 Dumbo-MVBA @luDumboMVBAOptimalMultivalued2020、sDumbo @guoSpeedingDumboPushing2022、以及基于无签名设置的 FIN @duanFINPracticalSignaturefree2023）聚焦于优化 MVBA 内部的密码学开销或通信轮数。由于本文的跨轮次复用机制作用于 ACS 的输入边界而非内部逻辑，因此在后续设计中，上述 MVBA 变体均可视作透明的底层黑盒。此外，PACE @zhangPACEFullyParallelizable2022 等工作通过引入可重提的一致性框架（RABA）对 BKR94 结构进行了改良，这些工作在广义上均属于经典串行 ACS 的演进。
 
@@ -488,7 +492,7 @@ Dumbo2 ACS 结构中的 MVBA 是作为一个可插拔的“黑盒”组件存在
 
 第三种方案是放弃 ACS 结构，使用新的共识范式。以 Narwhal and Tusk @danezisNarwhalTuskDAGbased2022 为代表的 DAG 共识协议，通过在底层内存池节点间维护图结构的偏序关系，实现了广播与共识的完全并发。Bolt-Dumbo Transformer @luBoltdumboTransformerAsynchronous2022 则在 DAG 与传统 ACS 之间搭建了通用适配框架，实现了乐观路径与异步回退的灵活切换。
 
-这些并行化方案往往以增加协议状态机复杂度和元数据维护开销为代价。本文的研究主要是对传统且部署广泛的串行 ACS 结构进行局部优化，不涉及对共识内核进行并发重构，
+这些并行化方案往往以增加协议状态机复杂度和元数据维护开销为代价。本文的研究主要是对传统且部署广泛的串行 ACS 结构进行局部优化，不涉及对共识内核进行并发重构。
 
 == 迟到广播与带宽浪费问题
 
@@ -1225,9 +1229,9 @@ bytes/tx 指标在 $b >= 16,384$ 后稳定于 148–155 bytes/tx（FIN 复用开
 
 在系统评估方面，本文基于 Rust 语言开发了原型系统，并在 $N=12$ 的多进程仿真环境中完成了对比实验。结果表明，该机制在接入 Dumbo 与 FIN 两种主流 ACS 后端时，均能将端到端吞吐量稳定提升 10% 至 20%。该方案为现有的串行异步共识系统提供了一种低侵入、易落地的性能优化途径。
 
-在研究过程中，本文观察到：广播浪费问题来源于于严格串行 ACS 结构对共识历史中偏序信息（Partial Order）的主动抛弃。
+在研究过程中，本文观察到：广播浪费问题来源于严格串行 ACS 结构对共识历史中偏序信息（Partial Order）的主动抛弃。
 
-近年来，学术界提出了一些完全并行的异步共识方案（如 Dumbo-NG 或基于 DAG 的 Narwhal and Tusk）。这些方案通过在协议底层维护多轮水位线或图结构等复杂的偏序关系，实现了广播与共识的完全解耦。在这种架构下，“迟到”的数据能被后续的偏序边直接引用，从根本上规避了带宽浪费问题。
+近年来，学术界提出了一些完全并行的异步共识方案（如 Dumbo-NG 或基于 DAG 的 Narwhal and Tusk）。这些方案通过在协议底层维护多轮水位线或图结构等复杂的偏序关系，实现了广播与共识的完全解耦。在这种架构下，“迟到”的数据能被后续的偏序边直接引用，显著缓解了带宽浪费问题。
 
 不过，维护全局的偏序关系不可避免地会带来更高的系统状态复杂度和更复杂的元数据维护机制。相比之下，本文提出的跨轮复用机制，是在不引入复杂偏序逻辑的前提下，对经典串行 ACS 架构进行的一种局部性能补偿。能以较低的工程代价，对原本会被丢弃的广播成果进行回收。
 
