@@ -10,7 +10,7 @@
   major: "计算机科学与技术",
   grade: "2022级",
   supervisor: "高英梓",
-  date: "2026年5月9日",
+  date: "2026年5月31日",
 
   // 中文摘要一般 300 - 800 个汉字
   abstract_zh: [
@@ -55,7 +55,15 @@
 
     #thesis-table(
       columns: (0.7fr, 1fr, 1fr, 1fr, 1fr),
-      header: ([批处理], [FIN reuse_on], [FIN reuse_off], [Dumbo reuse_on], [Dumbo reuse_off]),
+      header: (
+        table.cell(rowspan: 2)[场景],
+        table.cell(colspan: 2)[FIN],
+        table.cell(colspan: 2)[Dumbo],
+        table.hline(stroke: 0.75pt),
+        [开启复用], [关闭复用],
+        [开启复用], [关闭复用],
+      ),
+      header-rows: 2,
       rows: (
         [32],
         [343],
@@ -156,8 +164,16 @@
     @tbl_highload_latency 报告了高负载基准测试下各配置的单轮端到端延迟均值，用于辅助分析吞吐量在极大负载下出现衰减的超线性延迟成因。
 
     #thesis-table(
-      columns: (0.7fr, 1fr, 1fr, 1fr, 1fr),
-      header: ([批处理], [FIN reuse_on], [FIN reuse_off], [Dumbo reuse_on], [Dumbo reuse_off]),
+      columns: (1.1fr, 0.9fr, 0.9fr, 0.9fr, 0.9fr),
+      header: (
+        table.cell(rowspan: 2)[批处理规模],
+        table.cell(colspan: 2)[FIN],
+        table.cell(colspan: 2)[Dumbo],
+        table.hline(stroke: 0.75pt),
+        [开启复用], [关闭复用],
+        [开启复用], [关闭复用],
+      ),
+      header-rows: 2,
       rows: (
         [32],
         [221 ms],
@@ -218,7 +234,13 @@
 
     #thesis-table(
       columns: (0.7fr, 1fr, 1fr),
-      header: ([批处理], [FIN reuse_on], [FIN reuse_off]),
+      header: (
+        table.cell(rowspan: 2)[批处理规模],
+        table.cell(colspan: 2)[通信成本（bytes/tx）],
+        table.hline(stroke: 0.75pt),
+        [FIN 开启复用], [FIN 关闭复用],
+      ),
+      header-rows: 2,
       rows: (
         [32],
         [573],
@@ -310,7 +332,19 @@
 
     #thesis-table(
       columns: (0.7fr, 1fr, 1fr, 1fr, 1fr),
-      header: ([节点数 $N$], [FIN reuse_on], [FIN reuse_off], [Dumbo reuse_on], [Dumbo reuse_off]),
+
+  header: (
+    table.cell(rowspan: 2)[节点数 $N$],
+    table.cell(colspan: 2)[FIN],
+    table.cell(colspan: 2)[Dumbo],
+    table.hline(stroke: 0.75pt),
+
+    [开启复用], [关闭复用],
+    [开启复用], [关闭复用],
+    ),
+  header-rows: 2,
+
+
       rows: (
         [4],
         [157,545],
@@ -836,7 +870,16 @@ $
 
 #thesis-table(
   columns: (0.9fr, 1.2fr, 1.2fr, 1fr),
-  header: ([批处理规模], [FIN 复用增益], [Dumbo 复用增益], [bytes/tx 差值]),
+  header: (
+    table.cell(rowspan: 2)[批处理规模],
+    table.cell(colspan: 2)[复用增益（百分比）],
+
+    table.cell(rowspan: 2)[bytes/tx 差值],
+
+    table.hline(stroke: 0.75pt),
+    [FIN], [Dumbo],
+    ),
+  header-rows: 2,
   rows: (
     [32],
     [+24.1%],
@@ -901,7 +944,16 @@ FIN 与 Dumbo 在可对比范围内（$b <= 32768$）的增益曲线高度一致
 
 #thesis-table(
   columns: (0.9fr, 1.2fr, 1.2fr),
-  header: ([节点数 $N$], [FIN 复用增益], [Dumbo 复用增益]),
+
+  header: (
+    table.cell(rowspan: 2)[节点数 $N$],
+    table.cell(colspan: 2)[复用增益（百分比）],
+
+  table.hline(stroke: 0.75pt),
+  [FIN], [Dumbo],
+    ),
+  header-rows: 2,
+
   rows: (
     [4],
     [-3.5%],
@@ -932,7 +984,18 @@ Dumbo 后端呈现相同的上升趋势，但在 $N=4$ 时仍保持 $+24.5%$ 的
 
 #thesis-table(
   columns: (1.3fr, 1fr, 1fr, 1fr),
-  header: ([场景], [reuse_off TPS], [reuse_on TPS], [复用增益]),
+  header: (
+
+  table.cell(rowspan: 2)[场景],
+  table.cell(colspan: 2)[吞吐量（tx/s）],
+  table.cell(rowspan: 2)[复用增益],
+
+  table.hline(stroke: 0.75pt),
+
+  [关闭复用], [开启复用],
+
+  ),
+  header-rows: 2,
   rows: (
     [无扰动],
     [42,249],
@@ -975,7 +1038,7 @@ Dumbo 后端呈现相同的上升趋势，但在 $N=4$ 时仍保持 $+24.5%$ 的
     [46,988],
     [+8.3%],
   ),
-  caption: "固定传输延迟与随机抖动下 FIN 后端的吞吐量变化（b=1024, N=12）。",
+  caption: "固定传输延迟与随机抖动下 FIN 后端的吞吐量变化（b=1024, N=12）",
   label-name: "tbl_network_faults",
 )
 
@@ -994,7 +1057,19 @@ Dumbo 后端呈现相同的上升趋势，但在 $N=4$ 时仍保持 $+24.5%$ 的
 
 #thesis-table(
   columns: (1.3fr, 1fr, 1fr, 1fr),
-  header: ([慢节点数], [reuse_off TPS], [reuse_on TPS], [复用增益]),
+  header: (
+
+  table.cell(rowspan: 2)[慢节点数],
+  table.cell(colspan: 2)[吞吐量（tx/s）],
+  table.cell(rowspan: 2)[复用增益],
+
+  table.hline(stroke: 0.75pt),
+
+  [关闭复用], [开启复用],
+
+  ),
+  header-rows: 2,
+
   rows: (
     [0],
     [41,903],
@@ -1037,13 +1112,23 @@ Dumbo 后端呈现相同的上升趋势，但在 $N=4$ 时仍保持 $+24.5%$ 的
 
 #thesis-table(
   columns: (1fr, 0.9fr, 0.9fr, 0.8fr),
-  header: ([拜占庭行为], [reuse_off TPS], [reuse_on TPS], [复用增益]),
+  header: (
+    table.cell(rowspan: 2)[拜占庭行为],
+    table.cell(colspan: 2)[吞吐量（tx/s）],
+    table.cell(rowspan: 2)[复用增益],
+
+    table.hline(stroke: 0.75pt),
+
+    [复用关闭], [复用开启],
+    ),
+  header-rows: 2,
+
   rows: (
     [静默节点],
     [106,972],
     [128,375],
     [+20.0%],
-    [无效 Fetch],
+    [无效拉取响应],
     [117,035],
     [135,582],
     [+15.9%],
@@ -1064,7 +1149,20 @@ Dumbo 后端呈现相同的上升趋势，但在 $N=4$ 时仍保持 $+24.5%$ 的
 
 #thesis-table(
   columns: (0.8fr, 1fr, 1fr, 1fr, 1fr),
-  header: ([grace_ms], [2慢 off], [2慢 on], [2慢+1静默 off], [2慢+1静默 on]),
+
+  header: (
+    table.cell(rowspan: 2)[宽限窗口 (ms)],
+    table.cell(colspan: 2)[2慢节点],
+    table.cell(colspan: 2)[2慢节点+1静默节点],
+
+  table.hline(stroke: 0.75pt),
+  [关闭复用], [开启复用],
+  [关闭复用], [开启复用],
+    ),
+
+
+  header-rows: 2,
+
   rows: (
     [0],
     [122,328],
@@ -1097,7 +1195,7 @@ Dumbo 后端呈现相同的上升趋势，但在 $N=4$ 时仍保持 $+24.5%$ 的
     [113,930],
     [125,789],
   ),
-  caption: "f=3 边界故障条件下宽限窗口的TPS_wall（b=4096, N=12）",
+  caption: "f=3 边界故障条件下宽限窗口的端到端吞吐量（b=4096, N=12）",
   label-name: "tbl_grace_faulty",
 )
 

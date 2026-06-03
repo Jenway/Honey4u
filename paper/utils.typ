@@ -95,7 +95,7 @@
   ]
 }
 
-#let thesis-table(columns: (), header: (), rows: (), caption: "", label-name: "") = {
+#let thesis-table(columns: (), header: (), rows: (), caption: "", label-name: "", header-rows: 1) = {
   let new-label = if label-name != "" { label(label-name) } else { none }
   set figure.caption(position: top)
   [
@@ -109,7 +109,7 @@
         inset: (x: 0.35em, y: 0.3em),
         align: center + horizon,
         table.hline(y: 0, stroke: 1.5pt),
-        table.hline(y: 1, stroke: 0.75pt),
+        table.hline(y: header-rows, stroke: 0.75pt),
         table.header(..header),
         ..rows,
         table.hline(y: auto, stroke: 1.5pt),
